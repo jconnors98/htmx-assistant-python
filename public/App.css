@@ -1,124 +1,137 @@
-/* Base styles */
+
+/* Base font and layout */
 body {
-  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  font-family: Arial, sans-serif;
+  background-color: #f9f9f9;
   margin: 0;
   padding: 2rem;
-  background-color: #f9fafb;
-  color: #222;
-  line-height: 1.6;
+  color: #333;
 }
 
 h1 {
   font-size: 2rem;
-  margin-bottom: 1rem;
+  color: #800020;
+  margin-bottom: 0.5rem;
 }
 
 p {
   margin-bottom: 1rem;
+  max-width: 900px;
 }
 
 /* Chat container */
 #chat {
-  max-width: 800px;
+  max-width: 900px;
   margin: 2rem auto;
-  padding: 1rem;
-  border: 1px solid #e5e7eb;
+  padding: 1.5rem;
   background-color: #ffffff;
-  border-radius: 8px;
-  box-shadow: 0 0 10px rgba(0, 0, 0, 0.05);
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+  min-height: 300px;
+  overflow-y: auto;
 }
 
 /* Chat bubbles */
 .chat-entry {
-  margin: 1rem 0;
   display: flex;
-  flex-direction: column;
+  margin-bottom: 1rem;
 }
 
 .chat-entry.user {
-  align-items: flex-end;
+  justify-content: flex-end;
 }
 
 .chat-entry.assistant {
-  align-items: flex-start;
+  justify-content: flex-start;
 }
 
 .chat-entry .bubble {
-  max-width: 80%;
+  max-width: 75%;
   padding: 0.75rem 1rem;
-  border-radius: 12px;
-  position: relative;
+  border-radius: 20px;
+  line-height: 1.4;
   white-space: pre-wrap;
 }
 
 .chat-entry.user .bubble {
-  background-color: #d1fae5;
-  color: #065f46;
-  border-top-right-radius: 0;
+  background-color: #800020;
+  color: white;
+  border-bottom-right-radius: 0;
 }
 
 .chat-entry.assistant .bubble {
-  background-color: #e0e7ff;
-  color: #1e40af;
-  border-top-left-radius: 0;
+  background-color: #f1f1f1;
+  color: #333;
+  border-bottom-left-radius: 0;
 }
 
-/* Input area */
+/* Prompt and input area */
 #form {
-  margin-top: 2rem;
   display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.75rem;
+  max-width: 900px;
+  margin: 2rem auto 0;
 }
 
-#prompt {
-  flex: 1;
-  min-width: 200px;
-  padding: 0.5rem;
-  border: 1px solid #ccc;
-  border-radius: 6px;
-}
-
-button {
-  padding: 0.5rem 1rem;
-  background-color: #2563eb;
-  color: white;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-button:hover {
-  background-color: #1d4ed8;
-}
-
-/* Prompt buttons */
 .prompt-buttons {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
-  margin-bottom: 1rem;
 }
 
 .prompt-buttons button {
-  background-color: #f3f4f6;
-  color: #111827;
-  border: 1px solid #d1d5db;
+  background-color: #800020;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 20px;
+  cursor: pointer;
+  font-size: 0.95rem;
+  transition: background-color 0.2s;
 }
 
 .prompt-buttons button:hover {
-  background-color: #e5e7eb;
+  background-color: #a61b2c;
 }
 
-/* Footer */
-footer {
-  text-align: center;
-  font-size: 0.9rem;
-  margin-top: 3rem;
-  color: #6b7280;
+/* Input field and send/clear buttons */
+#prompt {
+  width: 100%;
+  padding: 0.75rem;
+  font-size: 1rem;
+  border: 2px solid #800020;
+  border-radius: 8px;
+  resize: vertical;
+  min-height: 60px;
 }
 
-/* Chat UI styling confirmed */
+button[type="submit"],
+button[type="button"] {
+  background-color: #800020;
+  color: white;
+  border: none;
+  padding: 0.6rem 1rem;
+  font-size: 1rem;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-top: 0.5rem;
+}
 
-echo "/* force rebuild */" >> public/App.css
+button:hover {
+  background-color: #a61b2c;
+}
 
+/* Typing animation (optional) */
+.typing {
+  font-style: italic;
+  color: #555;
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  0% { opacity: 0.3; }
+  50% { opacity: 1; }
+  100% { opacity: 0.3; }
+}
