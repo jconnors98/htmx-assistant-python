@@ -119,3 +119,6 @@ footer {
 }
 
 /* Chat UI styling confirmed */
+
+echo "/* force rebuild */" >> public/App.css
+
