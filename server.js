@@ -1,85 +1,85 @@
+// server.js — Node + HTMX + OpenAI integration
+
+import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
-import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import { OpenAI } from "openai";
+import { marked } from "marked";
 
 // Load environment variables
 dotenv.config();
 
-// Create Express app
+// Initialize Express app
 const app = express();
 const port = process.env.PORT || 3000;
 
-// __dirname workaround for ES modules
+// Workaround for __dirname in ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Middleware
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// Initialize OpenAI
+// Serve static frontend (HTML + CSS)
+app.use(express.static(path.join(__dirname, "public")));
+
+// Initialize OpenAI with API key from .env
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// Intitialize Open AI Assistant
-const ASSISTANT_ID = process.env.ASSISTANT_ID;
-
-
-// POST /ask route
+// POST /ask — receives message from HTMX and responds with assistant reply
 app.post("/ask", async (req, res) => {
-  const { message } = req.body;
+  const message = req.body.message?.trim();
 
   if (!message) {
-    return res.status(400).json({ error: "Message is required." });
+    return res.send("<div class='message assistant'>⚠️ Message is required.</div>");
   }
 
   try {
-    console.log("💬 Incoming message:", message);
-
-    const thread = await openai.beta.threads.create();
-    console.log("🧵 Thread created:", thread.id);
-
-    const userMsg = await openai.beta.threads.messages.create(thread.id, {
-      role: "user",
-      content: message,
+    // Call OpenAI (GPT-4 or 3.5)
+    const response = await openai.chat.completions.create({
+      model: "gpt-4",
+      messages: [
+        {
+          role: "system",
+          content: `You are a helpful assistant for the TalentCentral platform.
+You help users find construction jobs, training programs, and resources in British Columbia.`
+        },
+        {
+          role: "user",
+          content: message
+        }
+      ]
     });
-    console.log("📨 User message added:", userMsg.id);
 
-    const run = await openai.beta.threads.runs.createAndPoll(thread.id, {
-      assistant_id: process.env.ASSISTANT_ID,
-    });
-    console.log("⚙️ Run status:", run.status);
+    const rawReply = response.choices?.[0]?.message?.content || "🤖 No response.";
+    const assistantReply = marked.parse(rawReply); // Convert markdown to HTML
 
-    const messages = await openai.beta.threads.messages.list(thread.id);
-    console.log("📥 Messages returned:", JSON.stringify(messages.data, null, 2));
+    const html = `
+      <div class="message assistant">
+        <strong>You:</strong> ${message}<br/>
+        <strong>Assistant:</strong>
+        <div class="markdown">${assistantReply}</div>
+        <div class="source-tag">Powered by OpenAI</div>
+      </div>
+    `;
 
-    const assistantMessage = messages.data.find(
-      (msg) => msg.role === "assistant"
-    );
-
-    const final = assistantMessage?.content?.[0]?.text?.value;
-
-    console.log("🧠 Assistant reply:", final || "❌ No reply found");
-
-    res.json({
-      response: final || "Hmm, I couldn't find a good answer for that.",
-    });
+    res.send(html);
   } catch (err) {
-    console.error("❌ Error during OpenAI call:", err);
-    res.status(500).json({ error: "Server error." });
+    console.error("❌ Error calling OpenAI:", err);
+    res.send("<div class='message assistant'>❌ Error getting response from assistant.</div>");
   }
 });
 
-// ✅ Serve static React frontend from /client/build
-app.use(express.static(path.join(__dirname, "client", "build")));
-
+// Fallback route for unknown GETs — return HTMX UI
 app.get("*", (req, res) => {
-  res.sendFile(path.join(__dirname, "client", "build", "index.html"));
+  res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
-// Start the server
+// Start server
 app.listen(port, () => {
-  console.log(`✅ TalentCentral Assistant running on port ${port}`);
+  console.log(`✅ Assistant is running at http://localhost:${port}`);
 });

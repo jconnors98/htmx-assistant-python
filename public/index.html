@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TalentCentral Assistant</title>
+  <script src="https://unpkg.com/htmx.org@1.9.2"></script>
+  <link rel="stylesheet" href="app.css" />
+</head>
+<body>
+  <div class="app-container">
+    <h1>Builders Life TalentCentral Assistant</h1>
+
+    <p class="intro">
+      Your one-stop destination for construction jobs and career support in BC.
+      Whether you're just starting out, changing careers, or looking to grow in the
+      construction industry, we connect you with job opportunities, training
+      programs, and resources from the British Columbia Construction Association
+      (BCCA) and its partners. Start here to explore the tools and support you need
+      to build your future in construction.
+    </p>
+
+    <!-- 💬 Chat window -->
+    <div class="chat-box" id="chat-box">
+      <div class="prompt-bubble">
+        <button
+          hx-post="/ask"
+          hx-vals='{"message":"What programs are available?"}'
+          hx-target="#chat-box"
+          hx-swap="beforeend">What programs are available?</button>
+
+        <button
+          hx-post="/ask"
+          hx-vals='{"message":"How do I apply?"}'
+          hx-target="#chat-box"
+          hx-swap="beforeend">How do I apply?</button>
+
+        <button
+          hx-post="/ask"
+          hx-vals='{"message":"Where is the job board?"}'
+          hx-target="#chat-box"
+          hx-swap="beforeend">Where is the job board?</button>
+      </div>
+
+      <!-- Messages injected here -->
+      <div id="chat-end"></div>
+    </div>
+
+    <!-- ✏️ Input area -->
+    <form class="input-area"
+      hx-post="/ask"
+      hx-target="#chat-box"
+      hx-swap="beforeend"
+      onsubmit="this.reset(); return true;"
+    >
+      <input
+        type="text"
+        name="message"
+        placeholder="Ask the Assistant about jobs, training programs, or how to apply..."
+        required
+      />
+      <button type="submit">Send</button>
+    </form>
+
+    <!-- 🧹 Chat controls -->
+    <div class="chat-actions">
+      <button class="clear-btn" onclick="document.getElementById('chat-box').innerHTML = ''">
+        Clear Chat
+      </button>
+    </div>
+  </div>
+
+  <!-- 📜 Scroll to bottom on new message -->
+  <script>
+    document.body.addEventListener("htmx:afterSwap", function (e) {
+      if (e.detail.target.id === "chat-box") {
+        document.getElementById("chat-end")?.scrollIntoView({ behavior: "smooth" });
+      }
+    });
+  </script>
+</body>
+</html>

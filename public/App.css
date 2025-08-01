@@ -1,0 +1,208 @@
+body {
+  font-family: Arial, sans-serif;
+  margin: 0;
+  padding: 20px;
+  background-color: #f7f7f7;
+  color: #800020;
+}
+
+.app-container {
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+h1 {
+  text-align: center;
+  color: #800020;
+}
+
+.intro {
+  font-size: 15px;
+  line-height: 1.5;
+  margin: 10px 0 20px;
+  color: #333;
+  text-align: center;
+}
+
+.chat-box {
+  background: white;
+  border: 1px solid #ccc;
+  border-radius: 10px;
+  padding: 15px;
+  height: 300px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.message {
+  margin: 5px 0;
+  padding: 10px;
+  border-radius: 8px;
+  max-width: 75%;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+  font-size: 15px;
+}
+
+.message.user {
+  background-color: #800020;
+  color: white;
+  align-self: flex-end;
+}
+
+.message.assistant {
+  background-color: white;
+  color: black;
+  align-self: flex-start;
+}
+
+/* ✅ FIXED: Bullet alignment and spacing */
+.message.assistant ul,
+.message.assistant ol {
+  padding-left: 1.5em;
+  margin: 0.5em 0;
+  list-style: disc outside;
+}
+
+.message.assistant li {
+  margin: 0.2em 0;
+  line-height: 1.4;
+  padding-left: 0;
+  text-indent: 0;
+}
+
+.message.assistant h1,
+.message.assistant h2,
+.message.assistant h3 {
+  margin: 8px 0 4px;
+  font-weight: bold;
+}
+
+.message.assistant a {
+  color: #800020;
+  text-decoration: underline;
+}
+
+.input-area {
+  display: flex;
+  margin-top: 15px;
+  gap: 10px;
+}
+
+input[type="text"] {
+  flex-grow: 1;
+  padding: 10px;
+  border: 1px solid #800020;
+  border-radius: 6px;
+  font-size: 16px;
+}
+
+button {
+  background-color: #800020;
+  color: white;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+button:hover {
+  background-color: #a10028;
+}
+
+.prompt-bubble {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.prompt-bubble button {
+  background-color: #800020;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.prompt-bubble button:hover {
+  background-color: #a10028;
+}
+
+.chat-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+.clear-btn {
+  background-color: #ddd;
+  color: #800020;
+  border: 1px solid #800020;
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.clear-btn:hover {
+  background-color: #ccc;
+}
+
+.typing {
+  font-style: italic;
+  opacity: 0.6;
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0% { opacity: 0.6; }
+  50% { opacity: 1; }
+  100% { opacity: 0.6; }
+}
+
+.typing-indicator {
+  display: inline-block;
+  font-size: 24px;
+  font-weight: bold;
+  letter-spacing: 2px;
+  animation: blink 1.5s infinite;
+}
+
+.typing-indicator span {
+  animation: blink 1.5s infinite alternate;
+  margin-right: 2px;
+  color: #555;
+}
+
+.typing-indicator span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.typing-indicator span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes blink {
+  0% { opacity: 0.2; }
+  100% { opacity: 1; }
+}
+
+.source-tag {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #666;
+}
+
+.source-tag a {
+  color: #007acc;
+  text-decoration: none;
+}
+
+.source-tag a:hover {
+  text-decoration: underline;
+}
