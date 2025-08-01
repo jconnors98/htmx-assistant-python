@@ -135,3 +135,38 @@ button:hover {
   50% { opacity: 1; }
   100% { opacity: 0.3; }
 }
+
+
+/* --- UI Enhancements per latest request --- */
+
+textarea {
+  width: 400px;
+  height: 300px;
+  border-radius: 12px;
+  padding: 10px;
+  border: 2px solid #800020;
+  resize: none;
+  font-size: 1rem;
+}
+
+.prompt-button {
+  background-color: #800020;
+  color: white;
+  border: none;
+  border-radius: 20px;
+  padding: 10px 15px;
+  margin: 5px;
+  cursor: pointer;
+}
+.prompt-button:hover {
+  background-color: #a00030;
+}
+
+h1 {
+  text-align: center;
+}
+
+.chat p strong {
+  display: block;
+  margin-top: 15px;
+}
