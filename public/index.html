@@ -19,39 +19,21 @@
     </p>
 
     <!-- Chat Box -->
-    <div id="chat-box" class="chat-box">
-      <!-- Prompt Buttons as assistant bubble -->
-      <div class="chat-entry assistant">
+    <div id="chat-box" class="chat-box" onscroll="handleScroll()">
+      <!-- Prompt buttons as assistant message -->
+      <div class="chat-entry assistant" id="prompt-buttons-entry">
         <div class="bubble">
           <div class="prompt-buttons">
-            <button
-              class="prompt-button"
-              hx-post="/ask"
-              hx-vals='{"message":"What programs are available?"}'
-              hx-target="#chat-box"
-              hx-swap="beforeend">What programs are available?</button>
-
-            <button
-              class="prompt-button"
-              hx-post="/ask"
-              hx-vals='{"message":"How do I apply?"}'
-              hx-target="#chat-box"
-              hx-swap="beforeend">How do I apply?</button>
-
-            <button
-              class="prompt-button"
-              hx-post="/ask"
-              hx-vals='{"message":"Where is the job board?"}'
-              hx-target="#chat-box"
-              hx-swap="beforeend">Where is the job board?</button>
+            <button class="prompt-button" onclick="handlePromptClick(this)" data-message="What programs are available?">What programs are available?</button>
+            <button class="prompt-button" onclick="handlePromptClick(this)" data-message="How do I apply?">How do I apply?</button>
+            <button class="prompt-button" onclick="handlePromptClick(this)" data-message="Where is the job board?">Where is the job board?</button>
           </div>
         </div>
       </div>
-
       <div id="chat-end"></div>
     </div>
 
-    <!-- Input Form -->
+    <!-- Input -->
     <form id="form"
       hx-post="/ask"
       hx-target="#chat-box"
@@ -75,38 +57,84 @@
         </button>
       </div>
     </form>
+
+    <!-- Scroll Buttons -->
+    <button class="scroll-btn top" onclick="document.getElementById('chat-box').scrollTo({ top: 0, behavior: 'smooth' })">↑ Top</button>
+    <button class="scroll-btn bottom" id="scroll-bottom-btn" onclick="scrollToBottom()">↓ Bottom</button>
   </div>
 
-  <!-- Typing + Enter-to-Send -->
+  <!-- Scripts -->
   <script>
+    function handlePromptClick(button) {
+      const message = button.getAttribute('data-message');
+
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/ask', true);
+      xhr.setRequestHeader('Content-Type', 'application/json');
+      xhr.setRequestHeader('HX-Request', 'true');
+
+      xhr.onreadystatechange = function () {
+        if (xhr.readyState === XMLHttpRequest.DONE && xhr.status === 200) {
+          document.getElementById('chat-box').insertAdjacentHTML('beforeend', xhr.responseText);
+          document.getElementById("chat-end")?.scrollIntoView({ behavior: "smooth" });
+        }
+      };
+
+      xhr.send(JSON.stringify({ message }));
+
+      const promptBlock = document.getElementById('prompt-buttons-entry');
+      if (promptBlock) promptBlock.remove();
+
+      const typing = document.createElement("div");
+      typing.className = "chat-entry assistant typing";
+      typing.id = "thinking-bubble";
+      typing.innerHTML = `<div class="bubble typing">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      </div>`;
+      document.getElementById("chat-box").appendChild(typing);
+    }
+
     document.body.addEventListener("htmx:beforeRequest", function () {
       const typing = document.createElement("div");
       typing.className = "chat-entry assistant typing";
       typing.id = "thinking-bubble";
-      typing.innerHTML = `
-        <div class="bubble typing">
-          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-        </div>`;
+      typing.innerHTML = `<div class="bubble typing">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      </div>`;
       document.getElementById("chat-box").appendChild(typing);
     });
 
     document.body.addEventListener("htmx:afterSwap", function () {
       const typing = document.getElementById("thinking-bubble");
       if (typing) typing.remove();
-      document.getElementById("chat-end")?.scrollIntoView({ behavior: "smooth" });
+      scrollToBottom();
     });
 
     document.addEventListener('DOMContentLoaded', function () {
-      const promptInput = document.getElementById('prompt');
-      promptInput.focus();
-
-      promptInput.addEventListener('keydown', function (e) {
+      const input = document.getElementById('prompt');
+      input.focus();
+      input.addEventListener('keydown', function (e) {
         if (e.key === 'Enter' && !e.shiftKey) {
           e.preventDefault();
           document.querySelector('#form button[type="submit"]').click();
         }
       });
     });
+
+    function scrollToBottom() {
+      const chat = document.getElementById('chat-box');
+      chat.scrollTo({ top: chat.scrollHeight, behavior: 'smooth' });
+    }
+
+    function handleScroll() {
+      const chat = document.getElementById('chat-box');
+      const scrollBtn = document.getElementById('scroll-bottom-btn');
+      if (chat.scrollTop + chat.clientHeight < chat.scrollHeight - 100) {
+        scrollBtn.style.display = 'block';
+      } else {
+        scrollBtn.style.display = 'none';
+      }
+    }
   </script>
 </body>
 </html>
