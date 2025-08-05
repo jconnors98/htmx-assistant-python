@@ -88,19 +88,10 @@ Avoid linking to unapproved commercial job boards or aggregators.`,
     let rawReply = response.choices?.[0]?.message?.content || "🤖 No response.";
     let htmlReply = marked.parse(rawReply);
 
-    // Force all links to open in new tab
+    // Auto-link plain URLs not already wrapped in hrefs
     htmlReply = htmlReply.replace(
-      /<a\s+href="([^"]+)"(?![^>]*target)/g,
-      `<a href="$1" target="_blank" rel="noopener"`
-    );
-
-    // Auto-link plain URLs
-    htmlReply = htmlReply.replace(
-      /((https?:\/\/|www\.)[^\s<]+)/g,
-      (match) => {
-        const url = match.startsWith("http") ? match : `https://${match}`;
-        return `<a href="${url}" target="_blank" rel="noopener">${match}</a>`;
-      }
+      /(?<!href=")(https?:\/\/[^\s<]+)/g,
+      (match) => `<a href="${match}" target="_blank" rel="noopener">${match}</a>`
     );
 
     // Final sanitization
