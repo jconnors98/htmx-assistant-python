@@ -59,7 +59,10 @@ When you reference websites, follow this policy:
 🏆 **Tier 1 – Always prioritize**:
 - https://www.stepbc.ca
 - https://www.bccassn.com
-- https://www.apprenticejobmatch.ca
+- https://www.talentcentral.ca
+- https://www.buildingbuilders.ca
+- https://www.builderscode.ca
+- https://bccassn.com/skilled-workforce/bcca-integrating-newcomers/
 
 🎯 **Tier 2 – Use if relevant**:
 - https://skilledtradesbc.ca
@@ -67,14 +70,15 @@ When you reference websites, follow this policy:
 - https://ita.bc.ca
 - https://mybcca.ca
 
-🆗 **Tier 3 – Only if necessary**:
-- Other reputable Canadian government sites or nonprofit organizations.
 
 🚫 **Never link to or recommend these**:
 - indeed.ca
+- https://icba.ca
 - monster.ca
 - glassdoor.ca
 - ziprecruiter.com
+
+Do not exclude other websites — general results are allowed — but always present trusted sources first when applicable.`,
 
 Always provide links using markdown format like:
 [Skilled Trades BC](https://skilledtradesbc.ca)
