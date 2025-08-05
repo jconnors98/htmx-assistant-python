@@ -16,7 +16,9 @@ User question: "${userQuery}"
 
   const model = genAI.getGenerativeModel({ model: "gemini-pro" });
 
-  const result = await model.generateContent(prompt);
+  const chat = model.startChat({ history: [] });
+
+  const result = await chat.sendMessage(prompt);
   const response = await result.response;
   return response.text();
 }
