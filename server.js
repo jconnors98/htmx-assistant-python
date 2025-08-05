@@ -7,7 +7,7 @@ import dotenv from "dotenv";
 import { OpenAI } from "openai";
 import { marked } from "marked";
 import sanitizeHtml from "sanitize-html";
-import { askGemini } from "./gemini.js"; // make sure this file exists
+import { askGemini } from "./gemini.js";
 
 dotenv.config();
 
@@ -17,7 +17,7 @@ if (!process.env.OPENAI_API_KEY || !process.env.GEMINI_API_KEY) {
   process.exit(1);
 }
 
-// Setup __dirname workaround
+// Setup __dirname for ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -30,6 +30,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, "public")));
 
+// Security headers
 app.use((req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
@@ -37,10 +38,10 @@ app.use((req, res, next) => {
   next();
 });
 
-// Init OpenAI
+// Init OpenAI client
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// POST /ask — handle chat messages
+// POST /ask — handle chat
 app.post("/ask", async (req, res) => {
   const message = req.body.message?.trim();
 
@@ -53,8 +54,8 @@ app.post("/ask", async (req, res) => {
   }
 
   try {
-    // Run GPT and Gemini simultaneously
-    const [gptResult, geminiResult] = await Promise.all([
+    // Run GPT and Gemini in parallel
+    const [gptResult, geminiText] = await Promise.all([
       openai.chat.completions.create({
         model: "gpt-4",
         messages: [
@@ -62,58 +63,74 @@ app.post("/ask", async (req, res) => {
             role: "system",
             content: `You're a helpful, warm assistant supporting users on the TalentCentral platform. Help with construction jobs, training, and workforce programs in BC. Speak naturally.`,
           },
-          {
-            role: "user",
-            content: message,
-          },
+          { role: "user", content: message },
         ],
       }),
       askGemini(message),
     ]);
 
     const gptText = gptResult.choices?.[0]?.message?.content || "🤖 GPT had no response.";
-    const geminiText = geminiResult || "🤖 Gemini had no response.";
+    const geminiContent = geminiText || "🤖 Gemini had no response.";
 
-    // Markdown → HTML → sanitize
-    const format = (text) =>
-      sanitizeHtml(marked.parse(text), {
-        allowedTags: sanitizeHtml.defaults.allowedTags.concat(["img"]),
-        allowedAttributes: {
-          a: ["href", "target", "rel"],
-          img: ["src", "alt"],
+    // Ask GPT to blend the two responses
+    const blended = await openai.chat.completions.create({
+      model: "gpt-4",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You're a writing assistant. Combine the two answers into a clear, helpful, friendly response for users asking about construction careers or training in BC. Do not repeat points. Include links in markdown if available.",
         },
-      });
+        {
+          role: "user",
+          content: `Blend these two answers:\n\n🔮 GPT says:\n${gptText}\n\n🌐 Gemini says:\n${geminiContent}`,
+        },
+      ],
+    });
+
+    const finalReply = blended.choices?.[0]?.message?.content || "🤖 Could not blend results.";
+    let htmlReply = marked.parse(finalReply);
+
+    // Auto-link any unwrapped URLs
+    htmlReply = htmlReply.replace(
+      /(?<!href=")(https?:\/\/[^\s<]+)/g,
+      (url) => `<a href="${url}" target="_blank" rel="noopener">${url}</a>`
+    );
+
+    // Sanitize the response
+    htmlReply = sanitizeHtml(htmlReply, {
+      allowedTags: sanitizeHtml.defaults.allowedTags.concat(["img"]),
+      allowedAttributes: {
+        a: ["href", "target", "rel"],
+        img: ["src", "alt"],
+      },
+    });
 
     const html = `
       <div class="chat-entry assistant">
-        <div class="bubble">
-          <strong>🔮 GPT says:</strong>
-          <div class="markdown">${format(gptText)}</div>
-          <hr/>
-          <strong>🌐 Gemini says:</strong>
-          <div class="markdown">${format(geminiText)}</div>
-          <div class="source-tag">🔗 Blended from GPT + Gemini</div>
+        <div class="bubble markdown">
+          ${htmlReply}
+          <div class="source-tag">✨ Blended from GPT + Gemini</div>
         </div>
       </div>
     `;
 
     res.send(html);
   } catch (err) {
-    console.error("❌ Error fetching AI responses:", err);
+    console.error("❌ Error blending AI responses:", err);
     res.send(`
       <div class="chat-entry assistant">
-        <div class="bubble">❌ There was an error getting a response from the assistant.</div>
+        <div class="bubble">❌ There was an error getting a response. Please try again.</div>
       </div>
     `);
   }
 });
 
-// Serve frontend
+// Serve index.html
 app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
-// Start server
 app.listen(port, () => {
   console.log(`✅ Assistant is live at http://localhost:${port}`);
 });
