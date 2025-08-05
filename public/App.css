@@ -51,6 +51,8 @@ p {
   border-radius: 20px;
   line-height: 1.4;
   white-space: pre-wrap;
+  background-color: #f1f1f1;
+  color: #333;
 }
 
 .chat-entry.user .bubble {
@@ -60,12 +62,10 @@ p {
 }
 
 .chat-entry.assistant .bubble {
-  background-color: #f1f1f1;
-  color: #333;
   border-bottom-left-radius: 0;
 }
 
-/* Prompt buttons inside chat bubble */
+/* Prompt buttons */
 .prompt-buttons {
   display: flex;
   flex-wrap: wrap;
@@ -83,4 +83,74 @@ p {
 }
 
 .prompt-button:hover {
-  background-color: #a00030
+  background-color: #a00030;
+}
+
+/* Input area */
+#form {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.input-row {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+#prompt {
+  flex: 1;
+  padding: 0.6rem;
+  font-size: 1rem;
+  font-family: inherit;
+  border: 2px solid #800020;
+  border-radius: 8px;
+}
+
+/* Buttons */
+.input-row button {
+  background-color: #800020;
+  color: white;
+  border: none;
+  padding: 0.6rem 1rem;
+  font-size: 1rem;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.input-row button:hover {
+  background-color: #a61b2c;
+}
+
+/* Typing animation (Messenger style) */
+.typing .dot {
+  height: 10px;
+  width: 10px;
+  margin: 0 3px;
+  background-color: #ccc;
+  border-radius: 50%;
+  display: inline-block;
+  animation: blink 1.4s infinite ease-in-out both;
+}
+
+.typing .dot:nth-child(1) {
+  animation-delay: 0s;
+}
+.typing .dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.typing .dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes blink {
+  0%, 80%, 100% {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
