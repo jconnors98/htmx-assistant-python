@@ -19,30 +19,7 @@ p {
   text-align: center;
 }
 
-/* Prompt Buttons */
-.prompt-buttons {
-  display: flex;
-  justify-content: center;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
-}
-
-.prompt-button {
-  background-color: #800020;
-  color: white;
-  border: none;
-  border-radius: 20px;
-  padding: 10px 15px;
-  cursor: pointer;
-  font-size: 0.95rem;
-}
-
-.prompt-button:hover {
-  background-color: #a00030;
-}
-
-/* Chat Box */
+/* Chat container */
 .chat-box {
   max-width: 900px;
   margin: 0 auto 2rem;
@@ -54,7 +31,7 @@ p {
   overflow-y: auto;
 }
 
-/* Chat Entries */
+/* Chat entries */
 .chat-entry {
   display: flex;
   margin-bottom: 1rem;
@@ -88,7 +65,29 @@ p {
   border-bottom-left-radius: 0;
 }
 
-/* Input Area */
+/* Prompt buttons inside chat bubble */
+.prompt-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.prompt-button {
+  background-color: #800020;
+  color: white;
+  border: none;
+  border-radius: 20px;
+  padding: 10px 15px;
+  cursor: pointer;
+  font-size: 0.95rem;
+}
+
+.prompt-button:hover {
+  background-color: #a00030;
+}
+
+/* Form area */
 #form {
   display: flex;
   flex-direction: column;
@@ -100,15 +99,25 @@ p {
 
 #prompt {
   width: 100%;
-  padding: 0.75rem;
+  padding: 0.5rem;
   font-size: 1rem;
+  font-family: inherit;
   border: 2px solid #800020;
   border-radius: 8px;
   resize: vertical;
-  min-height: 100px;
+  min-height: 60px;
 }
 
-button[type="submit"] {
+/* Button row */
+.button-row {
+  width: 100%;
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.button-row button {
   background-color: #800020;
   color: white;
   border: none;
@@ -118,19 +127,11 @@ button[type="submit"] {
   cursor: pointer;
 }
 
-button[type="submit"]:hover {
+.button-row button:hover {
   background-color: #a61b2c;
 }
 
-/* Clear button */
-.chat-actions {
-  max-width: 900px;
-  margin: 1rem auto;
-  display: flex;
-  justify-content: flex-start;
-}
-
-/* Typing (Messenger style) */
+/* Typing animation (Messenger-style) */
 .typing .dot {
   height: 10px;
   width: 10px;

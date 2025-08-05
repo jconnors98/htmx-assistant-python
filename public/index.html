@@ -19,32 +19,38 @@
       Start here to explore the tools and support you need to build your future in construction.
     </p>
 
-    <!-- Prompt Buttons -->
-    <div class="prompt-buttons">
-      <button
-        class="prompt-button"
-        hx-post="/ask"
-        hx-vals='{"message":"What programs are available?"}'
-        hx-target="#chat-box"
-        hx-swap="beforeend">What programs are available?</button>
-
-      <button
-        class="prompt-button"
-        hx-post="/ask"
-        hx-vals='{"message":"How do I apply?"}'
-        hx-target="#chat-box"
-        hx-swap="beforeend">How do I apply?</button>
-
-      <button
-        class="prompt-button"
-        hx-post="/ask"
-        hx-vals='{"message":"Where is the job board?"}'
-        hx-target="#chat-box"
-        hx-swap="beforeend">Where is the job board?</button>
-    </div>
-
     <!-- Chat Container -->
     <div id="chat-box" class="chat-box">
+      <!-- Assistant prompt buttons as initial message -->
+      <div class="chat-entry assistant">
+        <div class="bubble">
+          <p>How can I help you today?</p>
+          <div class="prompt-buttons">
+            <button
+              class="prompt-button"
+              hx-post="/ask"
+              hx-vals='{"message":"What programs are available?"}'
+              hx-target="#chat-box"
+              hx-swap="beforeend">What programs are available?</button>
+
+            <button
+              class="prompt-button"
+              hx-post="/ask"
+              hx-vals='{"message":"How do I apply?"}'
+              hx-target="#chat-box"
+              hx-swap="beforeend">How do I apply?</button>
+
+            <button
+              class="prompt-button"
+              hx-post="/ask"
+              hx-vals='{"message":"Where is the job board?"}'
+              hx-target="#chat-box"
+              hx-swap="beforeend">Where is the job board?</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Messages will appear below -->
       <div id="chat-end"></div>
     </div>
 
@@ -61,18 +67,18 @@
         placeholder="Ask the Assistant about jobs, training programs, or how to apply..."
         required
       ></textarea>
-      <button type="submit">Send</button>
-    </form>
 
-    <!-- Clear Chat -->
-    <div class="chat-actions">
-      <button type="button" class="prompt-button" onclick="document.getElementById('chat-box').innerHTML = ''">
-        Clear Chat
-      </button>
-    </div>
+      <!-- Right-aligned buttons -->
+      <div class="button-row">
+        <button type="submit">Send</button>
+        <button type="button" onclick="document.getElementById('chat-box').innerHTML = ''">
+          Clear Chat
+        </button>
+      </div>
+    </form>
   </div>
 
-  <!-- Messenger-Style Typing Bubble -->
+  <!-- Typing Animation -->
   <script>
     document.body.addEventListener("htmx:beforeRequest", function () {
       const typing = document.createElement("div");
