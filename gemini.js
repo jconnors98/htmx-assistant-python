@@ -8,13 +8,13 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 // ✅ Your trusted partner websites
 const trustedDomains = [
   "https://www.bccassn.com",
-  "https://www.skilledtradesbc.ca",
   "https://www.talentcentral.ca",
   "https://vrca.ca/",
   "https://vicabc.ca/",
   "https://nrca.ca/",
   "https://sicabc.ca",
-  "https://www.itabc.ca",
+  "https://stepbc.ca/",
+  "https://www.skilledtradesbc.ca",
   "https://talentcentral.ca",
   "https://tradestrainingbc.ca",
   "https://www.red-seal.ca/",
