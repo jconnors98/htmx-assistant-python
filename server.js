@@ -7,21 +7,19 @@ import dotenv from "dotenv";
 import { OpenAI } from "openai";
 import { marked } from "marked";
 import sanitizeHtml from "sanitize-html";
+import { askGemini } from "./gemini.js"; // make sure this file exists
 
 dotenv.config();
 
-// Setup __dirname for ES modules
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Validate API key
-if (!process.env.OPENAI_API_KEY) {
-  console.error("❌ OPENAI_API_KEY is missing");
+// Validate keys
+if (!process.env.OPENAI_API_KEY || !process.env.GEMINI_API_KEY) {
+  console.error("❌ Missing API keys. Check your .env file.");
   process.exit(1);
 }
 
-// Init OpenAI client
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// Setup __dirname workaround
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Init Express
 const app = express();
@@ -32,7 +30,6 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, "public")));
 
-// Security headers
 app.use((req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
@@ -40,56 +37,83 @@ app.use((req, res, next) => {
   next();
 });
 
-// 🔍 POST /ask – powered by Responses API + Web Search
+// Init OpenAI
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+// POST /ask — handle chat messages
 app.post("/ask", async (req, res) => {
   const message = req.body.message?.trim();
+
   if (!message) {
     return res.send(`
       <div class="chat-entry assistant">
-        <div class="bubble"⚠️ Message is required.</div>
+        <div class="bubble">⚠️ Message is required.</div>
       </div>
     `);
   }
 
   try {
-    const response = await openai.responses.create({
-      model: "gpt-4o", // or "gpt-4-turbo"
-      instructions: `You are a friendly and resourceful assistant helping users with jobs, training, and apprenticeships in British Columbia. Use web search when needed, and respond conversationally.`,
-      tools: [{ type: "tool", tool_name: "web_search" }],
-      messages: [{ role: "user", content: message }]
-    });
+    // Run GPT and Gemini simultaneously
+    const [gptResult, geminiResult] = await Promise.all([
+      openai.chat.completions.create({
+        model: "gpt-4",
+        messages: [
+          {
+            role: "system",
+            content: `You're a helpful, warm assistant supporting users on the TalentCentral platform. Help with construction jobs, training, and workforce programs in BC. Speak naturally.`,
+          },
+          {
+            role: "user",
+            content: message,
+          },
+        ],
+      }),
+      askGemini(message),
+    ]);
 
-    const result = response.result?.content?.[0]?.text || "🤖 No response.";
-    const htmlReply = sanitizeHtml(marked.parse(result), {
-      allowedTags: sanitizeHtml.defaults.allowedTags.concat(["img"]),
-      allowedAttributes: {
-        a: ["href", "target", "rel"],
-        img: ["src", "alt"]
-      }
-    });
+    const gptText = gptResult.choices?.[0]?.message?.content || "🤖 GPT had no response.";
+    const geminiText = geminiResult || "🤖 Gemini had no response.";
 
-    res.send(`
+    // Markdown → HTML → sanitize
+    const format = (text) =>
+      sanitizeHtml(marked.parse(text), {
+        allowedTags: sanitizeHtml.defaults.allowedTags.concat(["img"]),
+        allowedAttributes: {
+          a: ["href", "target", "rel"],
+          img: ["src", "alt"],
+        },
+      });
+
+    const html = `
       <div class="chat-entry assistant">
-        <div class="bubble markdown">${htmlReply}</div>
-        <div class="source-tag">🌐 Powered by GPT + Web Search</div>
+        <div class="bubble">
+          <strong>🔮 GPT says:</strong>
+          <div class="markdown">${format(gptText)}</div>
+          <hr/>
+          <strong>🌐 Gemini says:</strong>
+          <div class="markdown">${format(geminiText)}</div>
+          <div class="source-tag">🔗 Blended from GPT + Gemini</div>
+        </div>
       </div>
-    `);
+    `;
+
+    res.send(html);
   } catch (err) {
-    console.error("❌ Web Search API Error:", err);
+    console.error("❌ Error fetching AI responses:", err);
     res.send(`
       <div class="chat-entry assistant">
-        <div class="bubble">❌ Error getting assistant response. Try again later.</div>
+        <div class="bubble">❌ There was an error getting a response from the assistant.</div>
       </div>
     `);
   }
 });
 
-// Serve UI
+// Serve frontend
 app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
 // Start server
 app.listen(port, () => {
-  console.log(`✅ Assistant live at http://localhost:${port}`);
+  console.log(`✅ Assistant is live at http://localhost:${port}`);
 });
