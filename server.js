@@ -1,3 +1,5 @@
+// server.js — Node + HTMX + OpenAI integration
+
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -70,7 +72,6 @@ When you reference websites, follow this policy:
 - https://ita.bc.ca
 - https://mybcca.ca
 
-
 🚫 **Never link to or recommend these**:
 - indeed.ca
 - https://icba.ca
@@ -78,7 +79,7 @@ When you reference websites, follow this policy:
 - glassdoor.ca
 - ziprecruiter.com
 
-Do not exclude other websites — general results are allowed — but always present trusted sources first when applicable.`,
+Do not exclude other websites — general results are allowed — but always present trusted sources first when applicable.
 
 Always provide links using markdown format like:
 [Skilled Trades BC](https://skilledtradesbc.ca)
@@ -92,7 +93,7 @@ Avoid linking to unapproved commercial job boards or aggregators.`,
     let rawReply = response.choices?.[0]?.message?.content || "🤖 No response.";
     let htmlReply = marked.parse(rawReply);
 
-    // Auto-link plain URLs not already wrapped in hrefs
+    // Auto-link plain URLs not already wrapped
     htmlReply = htmlReply.replace(
       /(?<!href=")(https?:\/\/[^\s<]+)/g,
       (match) => `<a href="${match}" target="_blank" rel="noopener">${match}</a>`
