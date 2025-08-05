@@ -16,15 +16,13 @@
       Whether you're just starting out, changing careers, or looking to grow in the
       construction industry, we connect you with job opportunities, training programs,
       and resources from the British Columbia Construction Association (BCCA) and its partners.
-      Start here to explore the tools and support you need to build your future in construction.
     </p>
 
-    <!-- Chat Container -->
+    <!-- Chat Box -->
     <div id="chat-box" class="chat-box">
-      <!-- Assistant prompt buttons as initial message -->
+      <!-- Prompt Buttons as assistant bubble at top -->
       <div class="chat-entry assistant">
         <div class="bubble">
-          <p>How can I help you today?</p>
           <div class="prompt-buttons">
             <button
               class="prompt-button"
@@ -50,7 +48,6 @@
         </div>
       </div>
 
-      <!-- Messages will appear below -->
       <div id="chat-end"></div>
     </div>
 
@@ -59,17 +56,19 @@
       hx-post="/ask"
       hx-target="#chat-box"
       hx-swap="beforeend"
-      onsubmit="setTimeout(() => this.reset(), 100); return true;"
+      onsubmit="setTimeout(() => {
+        this.reset();
+        document.getElementById('prompt').focus();
+      }, 100); return true;"
     >
-      <textarea
-        id="prompt"
-        name="message"
-        placeholder="Ask the Assistant about jobs, training programs, or how to apply..."
-        required
-      ></textarea>
-
-      <!-- Right-aligned buttons -->
-      <div class="button-row">
+      <div class="input-row">
+        <input
+          type="text"
+          id="prompt"
+          name="message"
+          placeholder="Ask the Assistant about jobs, training programs, or how to apply..."
+          required
+        />
         <button type="submit">Send</button>
         <button type="button" onclick="document.getElementById('chat-box').innerHTML = ''">
           Clear Chat
@@ -78,7 +77,7 @@
     </form>
   </div>
 
-  <!-- Typing Animation -->
+  <!-- Typing animation + Enter key -->
   <script>
     document.body.addEventListener("htmx:beforeRequest", function () {
       const typing = document.createElement("div");
@@ -95,6 +94,19 @@
       const typing = document.getElementById("thinking-bubble");
       if (typing) typing.remove();
       document.getElementById("chat-end")?.scrollIntoView({ behavior: "smooth" });
+    });
+
+    // Enter to send
+    document.addEventListener('DOMContentLoaded', function () {
+      const promptInput = document.getElementById('prompt');
+      promptInput.focus();
+
+      promptInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          document.querySelector('#form button[type="submit"]').click();
+        }
+      });
     });
   </script>
 </body>
