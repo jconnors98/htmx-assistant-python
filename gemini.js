@@ -13,12 +13,12 @@ const trustedDomains = [
   "https://vrca.ca/",
   "https://vicabc.ca/",
   "https://nrca.ca/",
-  "https://sicabc.ca,
+  "https://sicabc.ca",
   "https://www.itabc.ca",
   "https://talentcentral.ca",
-  "https://tradestrainingbc.ca,
-  "https://www.red-seal.ca/,
-  "https://www.technicalsafetybc.ca/,
+  "https://tradestrainingbc.ca",
+  "https://www.red-seal.ca/",
+  "https://www.technicalsafetybc.ca/",
 ];
 
 export async function askGemini(userQuery) {
