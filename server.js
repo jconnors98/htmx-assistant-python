@@ -54,23 +54,47 @@ app.post("/ask", async (req, res) => {
           content: `You are a helpful assistant for the TalentCentral platform.
 You help users find construction jobs, training programs, and resources in British Columbia.
 
-When referencing organizations or programs, include clickable markdown links if possible.`,
+When you reference websites, follow this policy:
+
+🏆 **Tier 1 – Always prioritize**:
+- https://www.stepbc.ca
+- https://www.bccassn.com
+- https://www.apprenticejobmatch.ca
+
+🎯 **Tier 2 – Use if relevant**:
+- https://skilledtradesbc.ca
+- https://workbc.ca
+- https://ita.bc.ca
+- https://mybcca.ca
+
+🆗 **Tier 3 – Only if necessary**:
+- Other reputable Canadian government sites or nonprofit organizations.
+
+🚫 **Never link to or recommend these**:
+- indeed.ca
+- monster.ca
+- glassdoor.ca
+- ziprecruiter.com
+
+Always provide links using markdown format like:
+[Skilled Trades BC](https://skilledtradesbc.ca)
+
+Avoid linking to unapproved commercial job boards or aggregators.`,
         },
         { role: "user", content: message },
       ],
     });
 
     let rawReply = response.choices?.[0]?.message?.content || "🤖 No response.";
-
     let htmlReply = marked.parse(rawReply);
 
-    // Make markdown links open in new tab
+    // Force all links to open in new tab
     htmlReply = htmlReply.replace(
       /<a\s+href="([^"]+)"(?![^>]*target)/g,
       `<a href="$1" target="_blank" rel="noopener"`
     );
 
-    // Auto-link raw URLs
+    // Auto-link plain URLs
     htmlReply = htmlReply.replace(
       /((https?:\/\/|www\.)[^\s<]+)/g,
       (match) => {
@@ -79,6 +103,7 @@ When referencing organizations or programs, include clickable markdown links if 
       }
     );
 
+    // Final sanitization
     htmlReply = sanitizeHtml(htmlReply, {
       allowedTags: sanitizeHtml.defaults.allowedTags.concat(["img"]),
       allowedAttributes: {
