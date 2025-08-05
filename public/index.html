@@ -21,7 +21,7 @@
     </p>
 
     <!-- 💬 Chat window -->
-    <div class="chat-box" id="chat-box">
+    <div id="chat-box">
       <div class="prompt-bubble">
         <button
           hx-post="/ask"
@@ -47,18 +47,18 @@
     </div>
 
     <!-- ✏️ Input area -->
-    <form class="input-area"
+    <form id="form"
       hx-post="/ask"
       hx-target="#chat-box"
       hx-swap="beforeend"
-      onsubmit="this.reset(); return true;"
+      onsubmit="setTimeout(() => this.reset(), 100); return true;"
     >
-      <input
-        type="text"
+      <textarea
+        id="prompt"
         name="message"
         placeholder="Ask the Assistant about jobs, training programs, or how to apply..."
         required
-      />
+      ></textarea>
       <button type="submit">Send</button>
     </form>
 
@@ -74,9 +74,4 @@
   <script>
     document.body.addEventListener("htmx:afterSwap", function (e) {
       if (e.detail.target.id === "chat-box") {
-        document.getElementById("chat-end")?.scrollIntoView({ behavior: "smooth" });
-      }
-    });
-  </script>
-</body>
-</html>
+        document.g

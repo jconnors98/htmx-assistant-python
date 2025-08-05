@@ -20,7 +20,7 @@ p {
 }
 
 /* Chat container */
-#chat {
+#chat-box {
   max-width: 900px;
   margin: 2rem auto;
   padding: 1.5rem;
@@ -38,7 +38,7 @@ p {
 }
 
 .chat-entry.user {
-  justify-content: flex-end;
+  justify-content: flex-start;
 }
 
 .chat-entry.assistant {

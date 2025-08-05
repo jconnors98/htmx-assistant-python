@@ -7,79 +7,96 @@ import cors from "cors";
 import dotenv from "dotenv";
 import { OpenAI } from "openai";
 import { marked } from "marked";
+import sanitizeHtml from "sanitize-html";
 
 // Load environment variables
 dotenv.config();
 
-// Initialize Express app
-const app = express();
-app.use(cors());
-app.use(express.static('public')); // ✅ THIS IS CRUCIAL
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
+// Check for OpenAI API Key
+if (!process.env.OPENAI_API_KEY) {
+  console.error("❌ OPENAI_API_KEY is missing in .env");
+  process.exit(1);
+}
 
-const port = process.env.PORT || 3000;
-
-// Workaround for __dirname in ES modules
+// Setup __dirname for ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Middleware
+// Initialize Express app
+const app = express();
+const port = process.env.PORT || 3000;
+
+// Global Middleware
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-// Serve static frontend (HTML + CSS)
 app.use(express.static(path.join(__dirname, "public")));
 
-// Initialize OpenAI with API key from .env
+// Add basic security headers
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  next();
+});
+
+// Initialize OpenAI
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// POST /ask — receives message from HTMX and responds with assistant reply
+// HTMX endpoint for chat interaction
 app.post("/ask", async (req, res) => {
   const message = req.body.message?.trim();
 
   if (!message) {
-    return res.send("<div class='message assistant'>⚠️ Message is required.</div>");
+    return res.send(`
+      <div class="chat-entry assistant">
+        <div class="bubble">⚠️ Message is required.</div>
+      </div>
+    `);
   }
 
   try {
-    // Call OpenAI (GPT-4 or 3.5)
     const response = await openai.chat.completions.create({
-      model: "gpt-4",
+      model: "gpt-4", // or "gpt-3.5-turbo"
       messages: [
         {
           role: "system",
           content: `You are a helpful assistant for the TalentCentral platform.
-You help users find construction jobs, training programs, and resources in British Columbia.`
+You help users find construction jobs, training programs, and resources in British Columbia.`,
         },
         {
           role: "user",
-          content: message
-        }
-      ]
+          content: message,
+        },
+      ],
     });
 
     const rawReply = response.choices?.[0]?.message?.content || "🤖 No response.";
-    const assistantReply = marked.parse(rawReply); // Convert markdown to HTML
+    const htmlReply = sanitizeHtml(marked.parse(rawReply)); // Markdown → safe HTML
 
     const html = `
-      <div class="message assistant">
-        <strong>You:</strong> ${message}<br/>
-        <strong>Assistant:</strong>
-        <div class="markdown">${assistantReply}</div>
-        <div class="source-tag">Powered by OpenAI</div>
+      <div class="chat-entry assistant">
+        <div class="bubble">
+          <strong>You:</strong> ${message}<br/>
+          <strong>Assistant:</strong>
+          <div class="markdown">${htmlReply}</div>
+          <div class="source-tag">Powered by OpenAI</div>
+        </div>
       </div>
     `;
 
     res.send(html);
   } catch (err) {
     console.error("❌ Error calling OpenAI:", err);
-    res.send("<div class='message assistant'>❌ Error getting response from assistant.</div>");
+    res.send(`
+      <div class="chat-entry assistant">
+        <div class="bubble">❌ Error getting response from assistant.</div>
+      </div>
+    `);
   }
 });
 
-// Fallback route for unknown GETs — return HTMX UI
+// Fallback route to serve index.html for any unknown GET
 app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
