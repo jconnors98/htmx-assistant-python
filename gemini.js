@@ -19,6 +19,8 @@ const trustedDomains = [
   "https://tradestrainingbc.ca",
   "https://www.red-seal.ca/",
   "https://www.technicalsafetybc.ca/",
+"https://thetailgatetoolkit.ca/",
+"https://builderscode.ca",
 ];
 
 export async function askGemini(userQuery) {
