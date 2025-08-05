@@ -1,5 +1,3 @@
-// server.js — Node + HTMX + OpenAI integration
-
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -14,7 +12,7 @@ dotenv.config();
 
 // Check for OpenAI API Key
 if (!process.env.OPENAI_API_KEY) {
-  console.error("❌ OPENAI_API_KEY is missing in .env");
+  console.error("❌ OPENAI_API_KEY is missing in environment");
   process.exit(1);
 }
 
@@ -26,13 +24,13 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Global Middleware
+// Middleware
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, "public")));
 
-// Add basic security headers
+// Security headers
 app.use((req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
@@ -40,10 +38,10 @@ app.use((req, res, next) => {
   next();
 });
 
-// Initialize OpenAI
+// OpenAI client
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// HTMX endpoint for chat interaction
+// Chat endpoint
 app.post("/ask", async (req, res) => {
   const message = req.body.message?.trim();
 
@@ -57,12 +55,19 @@ app.post("/ask", async (req, res) => {
 
   try {
     const response = await openai.chat.completions.create({
-      model: "gpt-4", // or "gpt-3.5-turbo"
+      model: "gpt-4",
       messages: [
         {
           role: "system",
           content: `You are a helpful assistant for the TalentCentral platform.
-You help users find construction jobs, training programs, and resources in British Columbia.`,
+You help users find construction jobs, training programs, and resources in British Columbia.
+
+When you mention a program, website, or organization, include a clickable markdown link if possible.
+
+Examples:
+- [STEP](https://www.stepbc.ca)
+- [BCCA](https://www.bccassn.com)
+- [Apprentice Job Match](https://www.apprenticejobmatch.ca)`,
         },
         {
           role: "user",
@@ -71,14 +76,38 @@ You help users find construction jobs, training programs, and resources in Briti
       ],
     });
 
-    const rawReply = response.choices?.[0]?.message?.content || "🤖 No response.";
-    const htmlReply = sanitizeHtml(marked.parse(rawReply)); // Markdown → safe HTML
+    let rawReply = response.choices?.[0]?.message?.content || "🤖 No response.";
+
+    // Parse markdown to HTML
+    let htmlReply = marked.parse(rawReply);
+
+    // Convert markdown links to open in new tab
+    htmlReply = htmlReply.replace(
+      /<a href="([^"]+)">/g,
+      `<a href="$1" target="_blank" rel="noopener">`
+    );
+
+    // Auto-link plain URLs (e.g., www.site.com or https://site.com)
+    htmlReply = htmlReply.replace(
+      /((https?:\/\/|www\.)[^\s<]+)/g,
+      (match) => {
+        const url = match.startsWith("http") ? match : `https://${match}`;
+        return `<a href="${url}" target="_blank" rel="noopener">${match}</a>`;
+      }
+    );
+
+    // Sanitize final HTML
+    htmlReply = sanitizeHtml(htmlReply, {
+      allowedTags: sanitizeHtml.defaults.allowedTags.concat(["img"]),
+      allowedAttributes: {
+        a: ["href", "target", "rel"],
+        img: ["src", "alt"]
+      }
+    });
 
     const html = `
       <div class="chat-entry assistant">
         <div class="bubble">
-          <strong>You:</strong> ${message}<br/>
-          <strong>Assistant:</strong>
           <div class="markdown">${htmlReply}</div>
           <div class="source-tag">Powered by OpenAI</div>
         </div>
@@ -96,7 +125,7 @@ You help users find construction jobs, training programs, and resources in Briti
   }
 });
 
-// Fallback route to serve index.html for any unknown GET
+// Fallback for other routes
 app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
