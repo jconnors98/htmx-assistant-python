@@ -1,5 +1,4 @@
-// server.js — Node + HTMX + OpenAI integration
-
+// server.js
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -8,17 +7,21 @@ import dotenv from "dotenv";
 import { OpenAI } from "openai";
 import { marked } from "marked";
 import sanitizeHtml from "sanitize-html";
+import { askGemini } from "./gemini.js"; // make sure this file exists
 
 dotenv.config();
 
-if (!process.env.OPENAI_API_KEY) {
-  console.error("❌ OPENAI_API_KEY is missing");
+// Validate keys
+if (!process.env.OPENAI_API_KEY || !process.env.GEMINI_API_KEY) {
+  console.error("❌ Missing API keys. Check your .env file.");
   process.exit(1);
 }
 
+// Setup __dirname workaround
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Init Express
 const app = express();
 const port = process.env.PORT || 3000;
 
@@ -34,8 +37,10 @@ app.use((req, res, next) => {
   next();
 });
 
+// Init OpenAI
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+// POST /ask — handle chat messages
 app.post("/ask", async (req, res) => {
   const message = req.body.message?.trim();
 
@@ -48,90 +53,67 @@ app.post("/ask", async (req, res) => {
   }
 
   try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4",
-      messages: [
-        {
-          role: "system",
-          content: `You are a helpful assistant for the TalentCentral platform.
-You help users find construction jobs, training programs, and resources in British Columbia.
+    // Run GPT and Gemini simultaneously
+    const [gptResult, geminiResult] = await Promise.all([
+      openai.chat.completions.create({
+        model: "gpt-4",
+        messages: [
+          {
+            role: "system",
+            content: `You're a helpful, warm assistant supporting users on the TalentCentral platform. Help with construction jobs, training, and workforce programs in BC. Speak naturally.`,
+          },
+          {
+            role: "user",
+            content: message,
+          },
+        ],
+      }),
+      askGemini(message),
+    ]);
 
-When you reference websites, follow this policy:
+    const gptText = gptResult.choices?.[0]?.message?.content || "🤖 GPT had no response.";
+    const geminiText = geminiResult || "🤖 Gemini had no response.";
 
-🏆 **Tier 1 – Always prioritize**:
-- https://www.stepbc.ca
-- https://www.bccassn.com
-- https://www.talentcentral.ca
-- https://www.buildingbuilders.ca
-- https://www.builderscode.ca
-- https://bccassn.com/skilled-workforce/bcca-integrating-newcomers/
-
-🎯 **Tier 2 – Use if relevant**:
-- https://skilledtradesbc.ca
-- https://workbc.ca
-- https://ita.bc.ca
-- https://mybcca.ca
-
-🚫 **Never link to or recommend these**:
-- indeed.ca
-- https://icba.ca
-- monster.ca
-- glassdoor.ca
-- ziprecruiter.com
-
-Do not exclude other websites — general results are allowed — but always present trusted sources first when applicable.
-
-Always provide links using markdown format like:
-[Skilled Trades BC](https://skilledtradesbc.ca)
-
-Avoid linking to unapproved commercial job boards or aggregators.`,
+    // Markdown → HTML → sanitize
+    const format = (text) =>
+      sanitizeHtml(marked.parse(text), {
+        allowedTags: sanitizeHtml.defaults.allowedTags.concat(["img"]),
+        allowedAttributes: {
+          a: ["href", "target", "rel"],
+          img: ["src", "alt"],
         },
-        { role: "user", content: message },
-      ],
-    });
-
-    let rawReply = response.choices?.[0]?.message?.content || "🤖 No response.";
-    let htmlReply = marked.parse(rawReply);
-
-    // Auto-link plain URLs not already wrapped
-    htmlReply = htmlReply.replace(
-      /(?<!href=")(https?:\/\/[^\s<]+)/g,
-      (match) => `<a href="${match}" target="_blank" rel="noopener">${match}</a>`
-    );
-
-    // Final sanitization
-    htmlReply = sanitizeHtml(htmlReply, {
-      allowedTags: sanitizeHtml.defaults.allowedTags.concat(["img"]),
-      allowedAttributes: {
-        a: ["href", "target", "rel"],
-        img: ["src", "alt"]
-      }
-    });
+      });
 
     const html = `
       <div class="chat-entry assistant">
         <div class="bubble">
-          <div class="markdown">${htmlReply}</div>
-          <div class="source-tag">Powered by OpenAI</div>
+          <strong>🔮 GPT says:</strong>
+          <div class="markdown">${format(gptText)}</div>
+          <hr/>
+          <strong>🌐 Gemini says:</strong>
+          <div class="markdown">${format(geminiText)}</div>
+          <div class="source-tag">🔗 Blended from GPT + Gemini</div>
         </div>
       </div>
     `;
 
     res.send(html);
   } catch (err) {
-    console.error("❌ Error calling OpenAI:", err);
+    console.error("❌ Error fetching AI responses:", err);
     res.send(`
       <div class="chat-entry assistant">
-        <div class="bubble">❌ Error getting response from assistant.</div>
+        <div class="bubble">❌ There was an error getting a response from the assistant.</div>
       </div>
     `);
   }
 });
 
+// Serve frontend
 app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
+// Start server
 app.listen(port, () => {
-  console.log(`✅ Assistant is running at http://localhost:${port}`);
+  console.log(`✅ Assistant is live at http://localhost:${port}`);
 });
