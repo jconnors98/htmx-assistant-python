@@ -27,7 +27,13 @@
         </div>
       </div>
 
-      <form id="chat-form" hx-post="/ask" hx-target="#chat-box" hx-swap="beforeend">
+      <form
+        id="chat-form"
+        hx-post="/ask"
+        hx-target="#chat-box"
+        hx-swap="beforeend"
+        onsubmit="clearInputAfterSend()"
+      >
         <div class="input-group">
           <textarea
             id="message"
@@ -49,7 +55,7 @@
     const chatInput = document.getElementById("message");
     const chatBox = document.getElementById("chat-box");
 
-    // Enter to send
+    // Submit on Enter (no Shift)
     chatInput.addEventListener("keydown", function (e) {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
@@ -71,7 +77,7 @@
       chatBox.appendChild(thinking);
     });
 
-    // Remove typing indicator, scroll to bottom
+    // Remove typing indicator + scroll to bottom
     document.addEventListener("htmx:afterOnLoad", () => {
       const thinkingBubble = document.querySelector(".chat-entry.thinking");
       if (thinkingBubble) thinkingBubble.remove();
@@ -79,11 +85,16 @@
       chatInput.focus();
     });
 
+    // Submit a prompt button
     function submitPrompt(text) {
       chatInput.value = text;
       document.getElementById("send-btn").click();
+      setTimeout(() => {
+        chatInput.value = "";
+      }, 20);
     }
 
+    // Clear the chat window
     function clearChat() {
       document.getElementById("chat-box").innerHTML = `
         <div class="prompt-buttons">
@@ -95,8 +106,16 @@
       chatInput.focus();
     }
 
+    // Scroll to top of chat box
     function scrollToTop() {
       chatBox.scrollTop = 0;
+    }
+
+    // Clear input after send
+    function clearInputAfterSend() {
+      setTimeout(() => {
+        chatInput.value = "";
+      }, 20);
     }
   </script>
 </body>
