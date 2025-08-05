@@ -46,7 +46,7 @@ app.post("/ask", async (req, res) => {
   if (!message) {
     return res.send(`
       <div class="chat-entry assistant">
-        <div class="bubble">⚠️ Message is required.</div>
+        <div class="bubble"⚠️ Message is required.</div>
       </div>
     `);
   }
