@@ -60,7 +60,7 @@ app.post("/ask", async (req, res) => {
         messages: [
           {
             role: "system",
-            content: `You're a helpful, warm assistant supporting users on the TalentCentral platform. Help with construction jobs, training, and workforce programs in BC. Speak naturally.`,
+          content: `You're a helpful, warm assistant supporting users on the TalentCentral platform. Help with construction jobs, training, and workforce programs in BC. Speak naturally. If you mention any websites or sources, include them as clickable hyperlinks in Markdown format like [Site](https://example.com).`,
           },
           {
             role: "user",
