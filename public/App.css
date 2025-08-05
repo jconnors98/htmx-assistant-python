@@ -1,28 +1,51 @@
-
-/* Base font and layout */
+/* Base styles */
 body {
   font-family: Arial, sans-serif;
   background-color: #f9f9f9;
-  margin: 0;
   padding: 2rem;
+  margin: 0;
   color: #333;
 }
 
 h1 {
   font-size: 2rem;
   color: #800020;
-  margin-bottom: 0.5rem;
+  text-align: center;
 }
 
 p {
-  margin-bottom: 1rem;
   max-width: 900px;
+  margin: 0 auto 1.5rem;
+  text-align: center;
 }
 
-/* Chat container */
-#chat-box {
+/* Prompt Buttons */
+.prompt-buttons {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.prompt-button {
+  background-color: #800020;
+  color: white;
+  border: none;
+  border-radius: 20px;
+  padding: 10px 15px;
+  cursor: pointer;
+  font-size: 0.95rem;
+}
+
+.prompt-button:hover {
+  background-color: #a00030;
+}
+
+/* Chat Box */
+.chat-box {
   max-width: 900px;
-  margin: 2rem auto;
+  margin: 0 auto 2rem;
   padding: 1.5rem;
   background-color: #ffffff;
   border-radius: 10px;
@@ -31,21 +54,21 @@ p {
   overflow-y: auto;
 }
 
-/* Chat bubbles */
+/* Chat Entries */
 .chat-entry {
   display: flex;
   margin-bottom: 1rem;
 }
 
 .chat-entry.user {
-  justify-content: flex-start;
+  justify-content: flex-end;
 }
 
 .chat-entry.assistant {
   justify-content: flex-start;
 }
 
-.chat-entry .bubble {
+.bubble {
   max-width: 75%;
   padding: 0.75rem 1rem;
   border-radius: 20px;
@@ -65,38 +88,16 @@ p {
   border-bottom-left-radius: 0;
 }
 
-/* Prompt and input area */
+/* Input Area */
 #form {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 0.75rem;
   max-width: 900px;
-  margin: 2rem auto 0;
+  margin: 0 auto;
 }
 
-.prompt-buttons {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
-.prompt-buttons button {
-  background-color: #800020;
-  color: white;
-  border: none;
-  padding: 0.5rem 1rem;
-  border-radius: 20px;
-  cursor: pointer;
-  font-size: 0.95rem;
-  transition: background-color 0.2s;
-}
-
-.prompt-buttons button:hover {
-  background-color: #a61b2c;
-}
-
-/* Input field and send/clear buttons */
 #prompt {
   width: 100%;
   padding: 0.75rem;
@@ -104,69 +105,59 @@ p {
   border: 2px solid #800020;
   border-radius: 8px;
   resize: vertical;
-  min-height: 60px;
+  min-height: 100px;
 }
 
-button[type="submit"],
-button[type="button"] {
+button[type="submit"] {
   background-color: #800020;
   color: white;
   border: none;
-  padding: 0.6rem 1rem;
+  padding: 0.6rem 1.2rem;
   font-size: 1rem;
-  border-radius: 6px;
+  border-radius: 8px;
   cursor: pointer;
-  margin-top: 0.5rem;
 }
 
-button:hover {
+button[type="submit"]:hover {
   background-color: #a61b2c;
 }
 
-/* Typing animation (optional) */
-.typing {
-  font-style: italic;
-  color: #555;
-  animation: pulse 1s infinite;
+/* Clear button */
+.chat-actions {
+  max-width: 900px;
+  margin: 1rem auto;
+  display: flex;
+  justify-content: flex-start;
 }
 
-@keyframes pulse {
-  0% { opacity: 0.3; }
-  50% { opacity: 1; }
-  100% { opacity: 0.3; }
+/* Typing (Messenger style) */
+.typing .dot {
+  height: 10px;
+  width: 10px;
+  margin: 0 3px;
+  background-color: #ccc;
+  border-radius: 50%;
+  display: inline-block;
+  animation: blink 1.4s infinite ease-in-out both;
 }
 
-
-/* --- UI Enhancements per latest request --- */
-
-textarea {
-  width: 400px;
-  height: 300px;
-  border-radius: 12px;
-  padding: 10px;
-  border: 2px solid #800020;
-  resize: none;
-  font-size: 1rem;
+.typing .dot:nth-child(1) {
+  animation-delay: 0s;
+}
+.typing .dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.typing .dot:nth-child(3) {
+  animation-delay: 0.4s;
 }
 
-.prompt-button {
-  background-color: #800020;
-  color: white;
-  border: none;
-  border-radius: 20px;
-  padding: 10px 15px;
-  margin: 5px;
-  cursor: pointer;
-}
-.prompt-button:hover {
-  background-color: #a00030;
-}
-
-h1 {
-  text-align: center;
-}
-
-.chat p strong {
-  display: block;
-  margin-top: 15px;
+@keyframes blink {
+  0%, 80%, 100% {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1);
+  }
 }

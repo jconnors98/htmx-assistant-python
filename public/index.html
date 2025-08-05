@@ -14,39 +14,41 @@
     <p class="intro">
       Your one-stop destination for construction jobs and career support in BC.
       Whether you're just starting out, changing careers, or looking to grow in the
-      construction industry, we connect you with job opportunities, training
-      programs, and resources from the British Columbia Construction Association
-      (BCCA) and its partners. Start here to explore the tools and support you need
-      to build your future in construction.
+      construction industry, we connect you with job opportunities, training programs,
+      and resources from the British Columbia Construction Association (BCCA) and its partners.
+      Start here to explore the tools and support you need to build your future in construction.
     </p>
 
-    <!-- 💬 Chat window -->
-    <div id="chat-box">
-      <div class="prompt-bubble">
-        <button
-          hx-post="/ask"
-          hx-vals='{"message":"What programs are available?"}'
-          hx-target="#chat-box"
-          hx-swap="beforeend">What programs are available?</button>
+    <!-- Prompt Buttons -->
+    <div class="prompt-buttons">
+      <button
+        class="prompt-button"
+        hx-post="/ask"
+        hx-vals='{"message":"What programs are available?"}'
+        hx-target="#chat-box"
+        hx-swap="beforeend">What programs are available?</button>
 
-        <button
-          hx-post="/ask"
-          hx-vals='{"message":"How do I apply?"}'
-          hx-target="#chat-box"
-          hx-swap="beforeend">How do I apply?</button>
+      <button
+        class="prompt-button"
+        hx-post="/ask"
+        hx-vals='{"message":"How do I apply?"}'
+        hx-target="#chat-box"
+        hx-swap="beforeend">How do I apply?</button>
 
-        <button
-          hx-post="/ask"
-          hx-vals='{"message":"Where is the job board?"}'
-          hx-target="#chat-box"
-          hx-swap="beforeend">Where is the job board?</button>
-      </div>
+      <button
+        class="prompt-button"
+        hx-post="/ask"
+        hx-vals='{"message":"Where is the job board?"}'
+        hx-target="#chat-box"
+        hx-swap="beforeend">Where is the job board?</button>
+    </div>
 
-      <!-- Messages injected here -->
+    <!-- Chat Container -->
+    <div id="chat-box" class="chat-box">
       <div id="chat-end"></div>
     </div>
 
-    <!-- ✏️ Input area -->
+    <!-- Input Area -->
     <form id="form"
       hx-post="/ask"
       hx-target="#chat-box"
@@ -62,16 +64,32 @@
       <button type="submit">Send</button>
     </form>
 
-    <!-- 🧹 Chat controls -->
+    <!-- Clear Chat -->
     <div class="chat-actions">
-      <button class="clear-btn" onclick="document.getElementById('chat-box').innerHTML = ''">
+      <button type="button" class="prompt-button" onclick="document.getElementById('chat-box').innerHTML = ''">
         Clear Chat
       </button>
     </div>
   </div>
 
-  <!-- 📜 Scroll to bottom on new message -->
+  <!-- Messenger-Style Typing Bubble -->
   <script>
-    document.body.addEventListener("htmx:afterSwap", function (e) {
-      if (e.detail.target.id === "chat-box") {
-        document.g
+    document.body.addEventListener("htmx:beforeRequest", function () {
+      const typing = document.createElement("div");
+      typing.className = "chat-entry assistant typing";
+      typing.id = "thinking-bubble";
+      typing.innerHTML = `
+        <div class="bubble typing">
+          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        </div>`;
+      document.getElementById("chat-box").appendChild(typing);
+    });
+
+    document.body.addEventListener("htmx:afterSwap", function () {
+      const typing = document.getElementById("thinking-bubble");
+      if (typing) typing.remove();
+      document.getElementById("chat-end")?.scrollIntoView({ behavior: "smooth" });
+    });
+  </script>
+</body>
+</html>
