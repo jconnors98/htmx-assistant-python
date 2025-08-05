@@ -20,7 +20,14 @@ const trustedDomains = [
   "https://www.red-seal.ca/",
   "https://www.technicalsafetybc.ca/",
   "https://thetailgatetoolkit.ca/",
-  "https://builderscode.ca"
+  "https://builderscode.ca",
+  "https://buildingbuilders.ca/"
+  "https://https://bccassn.com/skilled-workforce/bcca-integrating-newcomers/"
+  "https://bccassn.com/get-involved/employee-benefits/",
+  "https://bccassn.com/past-chair-legacy-fund/",
+  "https://bccassn.com/lng-canada-workforce-development-program/",
+  "https://bccassn.com/connect/",
+  "https://bccassn.com/get-involved/safety/"
 ];
 
 export async function askGemini(userQuery) {
