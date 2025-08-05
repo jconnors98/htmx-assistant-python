@@ -2,138 +2,101 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>TalentCentral Assistant</title>
-  <script src="https://unpkg.com/htmx.org@1.9.2"></script>
-  <link rel="stylesheet" href="/App.css" />
+  <link rel="stylesheet" href="App.css" />
+  <script src="https://unpkg.com/htmx.org@1.9.5"></script>
 </head>
 <body>
-  <div class="app-container">
+  <div class="container">
     <h1>Builders Life TalentCentral Assistant</h1>
-
     <p class="intro">
       Your one-stop destination for construction jobs and career support in BC.
-      Whether you're just starting out, changing careers, or looking to grow in the
-      construction industry, we connect you with job opportunities, training programs,
-      and resources from the British Columbia Construction Association (BCCA) and its partners.
+      Whether you're just starting out, changing careers, or looking to grow in the construction industry,
+      we connect you with job opportunities, training programs, and resources from the
+      British Columbia Construction Association (BCCA) and its partners.
     </p>
 
-    <!-- Chat Box -->
-    <div id="chat-box" class="chat-box" onscroll="handleScroll()">
-      <!-- Prompt buttons as assistant message -->
-      <div class="chat-entry assistant" id="prompt-buttons-entry">
-        <div class="bubble">
-          <div class="prompt-buttons">
-            <button class="prompt-button" onclick="handlePromptClick(this)" data-message="What programs are available?">What programs are available?</button>
-            <button class="prompt-button" onclick="handlePromptClick(this)" data-message="How do I apply?">How do I apply?</button>
-            <button class="prompt-button" onclick="handlePromptClick(this)" data-message="Where is the job board?">Where is the job board?</button>
-          </div>
+    <div id="chat-window">
+      <div id="chat-box" class="chat-box">
+        <!-- Prompt buttons inside chat box, no background -->
+        <div class="prompt-buttons">
+          <button onclick="submitPrompt('What programs are available?')">What programs are available?</button>
+          <button onclick="submitPrompt('How do I apply?')">How do I apply?</button>
+          <button onclick="submitPrompt('Where is the job board?')">Where is the job board?</button>
         </div>
       </div>
-      <div id="chat-end"></div>
+
+      <form id="chat-form" hx-post="/ask" hx-target="#chat-box" hx-swap="beforeend">
+        <div class="input-group">
+          <textarea
+            id="message"
+            name="message"
+            placeholder="Ask the Assistant about jobs, training programs, or how to apply..."
+            rows="1"
+            required
+          ></textarea>
+          <button id="send-btn" type="submit">Send</button>
+          <button type="button" onclick="clearChat()" class="secondary">Clear Chat</button>
+        </div>
+      </form>
+
+      <button id="scroll-top" onclick="scrollToTop()">⬆ Top</button>
     </div>
-
-    <!-- Input -->
-    <form id="form"
-      hx-post="/ask"
-      hx-target="#chat-box"
-      hx-swap="beforeend"
-      onsubmit="setTimeout(() => {
-        this.reset();
-        document.getElementById('prompt').focus();
-      }, 100); return true;"
-    >
-      <div class="input-row">
-        <input
-          type="text"
-          id="prompt"
-          name="message"
-          placeholder="Ask the Assistant about jobs, training programs, or how to apply..."
-          required
-        />
-        <button type="submit">Send</button>
-        <button type="button" onclick="document.getElementById('chat-box').innerHTML = ''">
-          Clear Chat
-        </button>
-      </div>
-    </form>
-
-    <!-- Scroll Buttons -->
-    <button class="scroll-btn top" onclick="document.getElementById('chat-box').scrollTo({ top: 0, behavior: 'smooth' })">↑ Top</button>
-    <button class="scroll-btn bottom" id="scroll-bottom-btn" onclick="scrollToBottom()">↓ Bottom</button>
   </div>
 
-  <!-- Scripts -->
   <script>
-    function handlePromptClick(button) {
-      const message = button.getAttribute('data-message');
+    const chatInput = document.getElementById("message");
+    const chatBox = document.getElementById("chat-box");
 
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', '/ask', true);
-      xhr.setRequestHeader('Content-Type', 'application/json');
-      xhr.setRequestHeader('HX-Request', 'true');
-
-      xhr.onreadystatechange = function () {
-        if (xhr.readyState === XMLHttpRequest.DONE && xhr.status === 200) {
-          document.getElementById('chat-box').insertAdjacentHTML('beforeend', xhr.responseText);
-          document.getElementById("chat-end")?.scrollIntoView({ behavior: "smooth" });
-        }
-      };
-
-      xhr.send(JSON.stringify({ message }));
-
-      const promptBlock = document.getElementById('prompt-buttons-entry');
-      if (promptBlock) promptBlock.remove();
-
-      const typing = document.createElement("div");
-      typing.className = "chat-entry assistant typing";
-      typing.id = "thinking-bubble";
-      typing.innerHTML = `<div class="bubble typing">
-        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-      </div>`;
-      document.getElementById("chat-box").appendChild(typing);
-    }
-
-    document.body.addEventListener("htmx:beforeRequest", function () {
-      const typing = document.createElement("div");
-      typing.className = "chat-entry assistant typing";
-      typing.id = "thinking-bubble";
-      typing.innerHTML = `<div class="bubble typing">
-        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-      </div>`;
-      document.getElementById("chat-box").appendChild(typing);
-    });
-
-    document.body.addEventListener("htmx:afterSwap", function () {
-      const typing = document.getElementById("thinking-bubble");
-      if (typing) typing.remove();
-      scrollToBottom();
-    });
-
-    document.addEventListener('DOMContentLoaded', function () {
-      const input = document.getElementById('prompt');
-      input.focus();
-      input.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter' && !e.shiftKey) {
-          e.preventDefault();
-          document.querySelector('#form button[type="submit"]').click();
-        }
-      });
-    });
-
-    function scrollToBottom() {
-      const chat = document.getElementById('chat-box');
-      chat.scrollTo({ top: chat.scrollHeight, behavior: 'smooth' });
-    }
-
-    function handleScroll() {
-      const chat = document.getElementById('chat-box');
-      const scrollBtn = document.getElementById('scroll-bottom-btn');
-      if (chat.scrollTop + chat.clientHeight < chat.scrollHeight - 100) {
-        scrollBtn.style.display = 'block';
-      } else {
-        scrollBtn.style.display = 'none';
+    // Enter to send
+    chatInput.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        document.getElementById("send-btn").click();
       }
+    });
+
+    // Autofocus on load
+    window.onload = () => chatInput.focus();
+
+    // Add typing indicator
+    document.addEventListener("htmx:beforeRequest", () => {
+      const thinking = document.createElement("div");
+      thinking.className = "chat-entry assistant thinking";
+      thinking.innerHTML = `
+        <div class="bubble">
+          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        </div>`;
+      chatBox.appendChild(thinking);
+    });
+
+    // Remove typing indicator, scroll to bottom
+    document.addEventListener("htmx:afterOnLoad", () => {
+      const thinkingBubble = document.querySelector(".chat-entry.thinking");
+      if (thinkingBubble) thinkingBubble.remove();
+      chatBox.scrollTop = chatBox.scrollHeight;
+      chatInput.focus();
+    });
+
+    function submitPrompt(text) {
+      chatInput.value = text;
+      document.getElementById("send-btn").click();
+    }
+
+    function clearChat() {
+      document.getElementById("chat-box").innerHTML = `
+        <div class="prompt-buttons">
+          <button onclick="submitPrompt('What programs are available?')">What programs are available?</button>
+          <button onclick="submitPrompt('How do I apply?')">How do I apply?</button>
+          <button onclick="submitPrompt('Where is the job board?')">Where is the job board?</button>
+        </div>`;
+      chatInput.value = "";
+      chatInput.focus();
+    }
+
+    function scrollToTop() {
+      chatBox.scrollTop = 0;
     }
   </script>
 </body>
