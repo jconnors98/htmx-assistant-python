@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>TalentCentral Assistant</title>
-  <link rel="stylesheet" href="app.css" />
+  <link rel="stylesheet" href="App.css" />
   <script src="https://unpkg.com/htmx.org@1.9.5"></script>
 </head>
 <body>
@@ -12,38 +12,20 @@
     <h1>Builders Life TalentCentral Assistant</h1>
     <p class="intro">
       Your one-stop destination for construction jobs and career support in BC.<br>
-      Get help with job searching, training, apprenticeships, and resume reviews.
+      Get help with job searching, training, apprenticeships, and more.
     </p>
 
     <div id="chat-window">
       <div id="chat-box" class="chat-box">
         <!-- Prompt buttons -->
         <div class="prompt-buttons">
-          <button onclick="submitPrompt('How do I become a Red Seal Apprentice?', false)">🔧 How do I become a Red Seal Apprentice?</button>
-          <button onclick="submitPrompt('Can I find a mentor in electrical work?', false)">👷 Can I find a mentor in electrical work?</button>
-          <button onclick="submitPrompt('Is there funding to help me with training?', false)">💰 Is there funding to help me with training?</button>
-          <button onclick="submitPrompt('Can you review this resume for me?', true)">📄 Can you review this resume for me?</button>
+          <button onclick="submitPrompt('How do I become a Red Seal Apprentice?')">🔧 How do I become a Red Seal Apprentice?</button>
+          <button onclick="submitPrompt('Can I find a mentor in electrical work?')">👷 Can I find a mentor in electrical work?</button>
+          <button onclick="submitPrompt('Is there funding to help me with training?')">💰 Is there funding to help me with training?</button>
         </div>
       </div>
 
-      <!-- Resume upload form -->
-      <form
-        id="upload-form"
-        style="display: none;"
-        hx-post="/upload"
-        hx-encoding="multipart/form-data"
-        hx-target="#chat-box"
-        hx-swap="beforeend"
-      >
-        <div class="upload-box">
-          <label for="resume">Upload your resume:</label>
-          <input type="file" id="resume" name="resume" accept=".pdf,.docx,.txt" required />
-          <button type="submit">Upload</button>
-          <small>🔐 Your resume is processed securely and not stored.</small>
-        </div>
-      </form>
-
-      <!-- Chat input form -->
+      <!-- Text-based chat -->
       <form
         id="chat-form"
         hx-post="/ask"
@@ -55,7 +37,7 @@
           <textarea
             id="message"
             name="message"
-            placeholder="Ask the Assistant about jobs, training, or resume help..."
+            placeholder="Ask the Assistant about jobs, training, etc..."
             rows="1"
             required
           ></textarea>
@@ -71,7 +53,6 @@
   <script>
     const chatInput = document.getElementById("message");
     const chatBox = document.getElementById("chat-box");
-    const uploadForm = document.getElementById("upload-form");
 
     // Submit on Enter (no Shift)
     chatInput.addEventListener("keydown", function (e) {
@@ -84,7 +65,7 @@
     // Autofocus on load
     window.onload = () => chatInput.focus();
 
-    // Typing indicator
+    // Add typing indicator
     document.addEventListener("htmx:beforeRequest", () => {
       const thinking = document.createElement("div");
       thinking.className = "chat-entry assistant thinking";
@@ -95,7 +76,7 @@
       chatBox.appendChild(thinking);
     });
 
-    // Cleanup after response loads
+    // Remove typing indicator + scroll
     document.addEventListener("htmx:afterOnLoad", () => {
       const thinkingBubble = document.querySelector(".chat-entry.thinking");
       if (thinkingBubble) thinkingBubble.remove();
@@ -103,50 +84,23 @@
       chatInput.focus();
     });
 
-    // Submit prewritten prompt
-    function submitPrompt(text, isResume = false) {
+    // Submit a prompt
+    function submitPrompt(text) {
       chatInput.value = text;
       document.getElementById("send-btn").click();
-
       setTimeout(() => {
         chatInput.value = "";
-
-        if (isResume) {
-          uploadForm.style.display = "block";
-
-          if (!document.getElementById("resume-instructions")) {
-            const instructions = document.createElement("div");
-            instructions.className = "chat-entry assistant fade";
-            instructions.id = "resume-instructions";
-            instructions.innerHTML = `
-              <div class="bubble">
-                <strong>📑 How to get help with your resume:</strong><br><br>
-                <p><u>Option 1: Upload a file</u><br>
-                • Click <strong>"Choose File"</strong> and select your resume (.pdf, .docx, or .txt)<br>
-                • Then click <strong>"Upload"</strong></p>
-                <p><u>Option 2: Copy-paste your resume</u><br>
-                • Paste your resume text into the chat box and click <strong>Send</strong></p>
-                <p>✅ Include: contact info, skills, experience, education, certifications (like Red Seal)</p>
-              </div>`;
-            chatBox.appendChild(instructions);
-            chatBox.scrollTop = chatBox.scrollHeight;
-          }
-        } else {
-          uploadForm.style.display = "none";
-        }
       }, 20);
     }
 
-    // Clear chat history
+    // Clear chat and reset
     function clearChat() {
       document.getElementById("chat-box").innerHTML = `
         <div class="prompt-buttons">
-          <button onclick="submitPrompt('How do I become a Red Seal Apprentice?', false)">🔧 How do I become a Red Seal Apprentice?</button>
-          <button onclick="submitPrompt('Can I find a mentor in electrical work?', false)">👷 Can I find a mentor in electrical work?</button>
-          <button onclick="submitPrompt('Is there funding to help me with training?', false)">💰 Is there funding to help me with training?</button>
-          <button onclick="submitPrompt('Can you review this resume for me?', true)">📄 Can you review this resume for me?</button>
+          <button onclick="submitPrompt('How do I become a Red Seal Apprentice?')">🔧 How do I become a Red Seal Apprentice?</button>
+          <button onclick="submitPrompt('Can I find a mentor in electrical work?')">👷 Can I find a mentor in electrical work?</button>
+          <button onclick="submitPrompt('Is there funding to help me with training?')">💰 Is there funding to help me with training?</button>
         </div>`;
-      uploadForm.style.display = "none";
       chatInput.value = "";
       chatInput.focus();
     }

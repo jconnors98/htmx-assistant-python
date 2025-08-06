@@ -132,57 +132,6 @@ h1 {
   background-color: #a0003f;
 }
 
-/* Upload Box */
-.upload-box {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin: 1rem 0;
-  padding: 1rem;
-  border-radius: 8px;
-  font-size: 0.9rem;
-  background: transparent !important;
-}
-
-.upload-box label {
-  flex-basis: 100%;
-  font-weight: bold;
-  margin-bottom: 0.25rem;
-}
-
-.upload-box input[type="file"] {
-  flex-grow: 1;
-  border: 1px solid #ccc;
-  padding: 0.4rem;
-  border-radius: 6px;
-  font-size: 0.85rem;
-  background: white;
-  cursor: pointer;
-  transition: border-color 0.2s ease;
-}
-
-.upload-box input[type="file"]:hover {
-  border-color: #82002d;
-  background: white;
-  color: #333;
-}
-
-.upload-box button {
-  background-color: #555;
-  color: white;
-  border: none;
-  border-radius: 6px;
-  padding: 0.5rem 1rem;
-  font-size: 0.85rem;
-  cursor: pointer;
-  transition: background-color 0.2s ease;
-}
-
-.upload-box button:hover {
-  background-color: #a0003f;
-}
-
 /* Form */
 .input-group {
   display: flex;
@@ -259,26 +208,10 @@ button.secondary:hover {
   margin-top: 0.5rem;
 }
 
-/* Info Notices (uploaded file, instructions) */
-.info {
-  font-size: 0.85rem;
-  color: #555;
-  margin: 0.5rem 0;
-  padding: 0.5rem;
-  background: #f3f3f3;
-  border-left: 4px solid #82002d;
-  border-radius: 4px;
-}
-
 /* Responsive Design */
 @media (max-width: 600px) {
   .prompt-buttons {
     flex-direction: column;
-  }
-
-  .upload-box {
-    flex-direction: column;
-    align-items: flex-start;
   }
 
   .input-group {
@@ -289,8 +222,7 @@ button.secondary:hover {
     min-height: 32px;
   }
 
-  button,
-  .upload-box button {
+  button {
     width: 100%;
   }
 
