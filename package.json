@@ -14,8 +14,11 @@
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^4.21.2",
+    "mammoth": "^1.10.0",
     "marked": "^12.0.2",
+    "multer": "^2.0.2",
     "openai": "^4.27.0",
+    "pdf-parse": "^1.1.1",
     "sanitize-html": "^2.17.0"
   },
   "devDependencies": {

@@ -11,24 +11,37 @@
   <div class="container">
     <h1>Builders Life TalentCentral Assistant</h1>
     <p class="intro">
-      Your one-stop destination for construction jobs and career support in BC.
-      Whether you're just starting out, changing careers, or looking to grow in the construction industry,
-      we connect you with job opportunities, training programs, and resources from the
-      British Columbia Construction Association (BCCA) and its partners.
+      Your one-stop destination for construction jobs and career support in BC.<br>
+      Get help with job searching, training, apprenticeships, and resume reviews.
     </p>
 
     <div id="chat-window">
       <div id="chat-box" class="chat-box">
-        <!-- Prompt buttons inside chat box, no background -->
+        <!-- Prompt buttons -->
         <div class="prompt-buttons">
-          <button onclick="submitPrompt('How do I become a Red Seal Apprentice?')">How do I become a Red Seal Apprentice?</button>
-          <button onclick="submitPrompt('Can I find a mentor in electrical work?')">Can I find a mentor in electrical work?</button>
-          <button onclick="submitPrompt('Is there funding to help me with training?')">Is there funding to help me with training?</button>
-          <button onclick="submitPrompt('I\'m a newcomer to Canada, are there programs to help me?')">I'm a newcomer to Canada, are there programs to help me?</button>
-	  <button onclick="submitPrompt('Can you review this resume for me?')">📄 Resume Review</button>
+          <button onclick="submitPrompt('How do I become a Red Seal Apprentice?')">🔧 Red Seal Info</button>
+          <button onclick="submitPrompt('Can I find a mentor in electrical work?')">👷 Mentorship</button>
+          <button onclick="submitPrompt('Is there funding to help me with training?')">💰 Training Support</button>
+          <button onclick="submitPrompt('Can you review this resume for me?')">📄 Resume Review</button>
         </div>
       </div>
 
+      <!-- Resume upload -->
+      <form
+        id="upload-form"
+        hx-post="/upload"
+        hx-encoding="multipart/form-data"
+        hx-target="#chat-box"
+        hx-swap="beforeend"
+      >
+        <div class="upload-box">
+          <label for="resume">Upload your resume:</label>
+          <input type="file" id="resume" name="resume" accept=".pdf,.docx,.txt" required />
+          <button type="submit">Upload</button>
+        </div>
+      </form>
+
+      <!-- Text-based chat -->
       <form
         id="chat-form"
         hx-post="/ask"
@@ -40,7 +53,7 @@
           <textarea
             id="message"
             name="message"
-            placeholder="Ask the Assistant about jobs, training programs, or how to apply..."
+            placeholder="Ask the Assistant about jobs, training, or resume help..."
             rows="1"
             required
           ></textarea>
@@ -87,7 +100,7 @@
       chatInput.focus();
     });
 
-    // Submit a prompt button
+    // Prompt buttons
     function submitPrompt(text) {
       chatInput.value = text;
       document.getElementById("send-btn").click();
@@ -96,27 +109,23 @@
       }, 20);
     }
 
-    // Clear the chat window
+    // Clear chat
     function clearChat() {
       document.getElementById("chat-box").innerHTML = `
         <div class="prompt-buttons">
-          <button onclick="submitPrompt('How do I become a Red Seal Apprentice?')">How do I become a Red Seal Apprentice?</button>
-          <button onclick="submitPrompt('Can I find a mentor in electrical work?')">Can I find a mentor in electrical work?</button>
-          <button onclick="submitPrompt('Is there funding to help me with training?')">Is there funding to help me with training?</button>
-          <button onclick="submitPrompt('I\'m a newcomer to Canada, are there programs to help me?')">I'm a newcomer to Canada, are there programs to help me?</button>
-	  <button onclick="submitPrompt('Can you review this resume for me?')">📄 Resume Review</button>
-
+          <button onclick="submitPrompt('How do I become a Red Seal Apprentice?')">🔧 Red Seal Info</button>
+          <button onclick="submitPrompt('Can I find a mentor in electrical work?')">👷 Mentorship</button>
+          <button onclick="submitPrompt('Is there funding to help me with training?')">💰 Training Support</button>
+          <button onclick="submitPrompt('Can you review this resume for me?')">📄 Resume Review</button>
         </div>`;
       chatInput.value = "";
       chatInput.focus();
     }
 
-    // Scroll to top of chat box
     function scrollToTop() {
       chatBox.scrollTop = 0;
     }
 
-    // Clear input after send
     function clearInputAfterSend() {
       setTimeout(() => {
         chatInput.value = "";

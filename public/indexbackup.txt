@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>TalentCentral Assistant</title>
+  <link rel="stylesheet" href="App.css" />
+  <script src="https://unpkg.com/htmx.org@1.9.5"></script>
+</head>
+<body>
+  <div class="container">
+    <h1>Builders Life TalentCentral Assistant</h1>
+    <p class="intro">
+      Your one-stop destination for construction jobs and career support in BC.
+      Whether you're just starting out, changing careers, or looking to grow in the construction industry,
+      we connect you with job opportunities, training programs, and resources from the
+      British Columbia Construction Association (BCCA) and its partners.
+    </p>
+
+    <div id="chat-window">
+      <div id="chat-box" class="chat-box">
+        <!-- Prompt buttons inside chat box, no background -->
+        <div class="prompt-buttons">
+          <button onclick="submitPrompt('How do I become a Red Seal Apprentice?')">How do I become a Red Seal Apprentice?</button>
+          <button onclick="submitPrompt('Can I find a mentor in electrical work?')">Can I find a mentor in electrical work?</button>
+          <button onclick="submitPrompt('Is there funding to help me with training?')">Is there funding to help me with training?</button>
+          <button onclick="submitPrompt('I\'m a newcomer to Canada, are there programs to help me?')">I'm a newcomer to Canada, are there programs to help me?</button>
+	  <button onclick="submitPrompt('Can you review this resume for me?')">📄 Resume Review</button>
+        </div>
+      </div>
+
+      <form
+        id="chat-form"
+        hx-post="/ask"
+        hx-target="#chat-box"
+        hx-swap="beforeend"
+        onsubmit="clearInputAfterSend()"
+      >
+        <div class="input-group">
+          <textarea
+            id="message"
+            name="message"
+            placeholder="Ask the Assistant about jobs, training programs, or how to apply..."
+            rows="1"
+            required
+          ></textarea>
+          <button id="send-btn" type="submit">Send</button>
+          <button type="button" onclick="clearChat()" class="secondary">Clear Chat</button>
+        </div>
+      </form>
+
+      <button id="scroll-top" onclick="scrollToTop()">⬆ Top</button>
+    </div>
+  </div>
+
+  <script>
+    const chatInput = document.getElementById("message");
+    const chatBox = document.getElementById("chat-box");
+
+    // Submit on Enter (no Shift)
+    chatInput.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        document.getElementById("send-btn").click();
+      }
+    });
+
+    // Autofocus on load
+    window.onload = () => chatInput.focus();
+
+    // Add typing indicator
+    document.addEventListener("htmx:beforeRequest", () => {
+      const thinking = document.createElement("div");
+      thinking.className = "chat-entry assistant thinking";
+      thinking.innerHTML = `
+        <div class="bubble">
+          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        </div>`;
+      chatBox.appendChild(thinking);
+    });
+
+    // Remove typing indicator + scroll to bottom
+    document.addEventListener("htmx:afterOnLoad", () => {
+      const thinkingBubble = document.querySelector(".chat-entry.thinking");
+      if (thinkingBubble) thinkingBubble.remove();
+      chatBox.scrollTop = chatBox.scrollHeight;
+      chatInput.focus();
+    });
+
+    // Submit a prompt button
+    function submitPrompt(text) {
+      chatInput.value = text;
+      document.getElementById("send-btn").click();
+      setTimeout(() => {
+        chatInput.value = "";
+      }, 20);
+    }
+
+    // Clear the chat window
+    function clearChat() {
+      document.getElementById("chat-box").innerHTML = `
+        <div class="prompt-buttons">
+          <button onclick="submitPrompt('How do I become a Red Seal Apprentice?')">How do I become a Red Seal Apprentice?</button>
+          <button onclick="submitPrompt('Can I find a mentor in electrical work?')">Can I find a mentor in electrical work?</button>
+          <button onclick="submitPrompt('Is there funding to help me with training?')">Is there funding to help me with training?</button>
+          <button onclick="submitPrompt('I\'m a newcomer to Canada, are there programs to help me?')">I'm a newcomer to Canada, are there programs to help me?</button>
+	  <button onclick="submitPrompt('Can you review this resume for me?')">📄 Resume Review</button>
+
+        </div>`;
+      chatInput.value = "";
+      chatInput.focus();
+    }
+
+    // Scroll to top of chat box
+    function scrollToTop() {
+      chatBox.scrollTop = 0;
+    }
+
+    // Clear input after send
+    function clearInputAfterSend() {
+      setTimeout(() => {
+        chatInput.value = "";
+      }, 20);
+    }
+  </script>
+</body>
+</html>

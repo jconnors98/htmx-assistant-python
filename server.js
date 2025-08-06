@@ -1,4 +1,3 @@
-// server.js
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -7,6 +6,10 @@ import dotenv from "dotenv";
 import { OpenAI } from "openai";
 import { marked } from "marked";
 import sanitizeHtml from "sanitize-html";
+import multer from "multer";
+import fs from "fs";
+import pdfParse from "pdf-parse";
+import mammoth from "mammoth";
 import { askGemini } from "./gemini.js";
 
 dotenv.config();
@@ -36,6 +39,9 @@ app.use((req, res, next) => {
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+const upload = multer({ dest: "uploads/" });
+
+// Ask route (chat input)
 app.post("/ask", async (req, res) => {
   const message = req.body.message?.trim();
   if (!message) {
@@ -46,24 +52,14 @@ app.post("/ask", async (req, res) => {
     let gptText = "";
     let geminiText = "";
 
-    // Detect resume/task prompts
-    const isTask = message.match(/resume|cover letter|interview|application|write|cv|draft|job history|experience|skills|education/i);
-
-    if (isTask) {
+    // Route based on task or search intent
+    if (message.match(/resume|cover letter|interview|application|write|cv|draft/i)) {
       const gptResult = await openai.chat.completions.create({
         model: "gpt-4",
         messages: [
           {
             role: "system",
-            content: `
-You're a helpful, warm assistant supporting users on the TalentCentral platform.
-You help with construction jobs, resumes, cover letters, and career services in British Columbia.
-
-If the user pastes in a resume or cover letter, review it with constructive feedback like a career coach.
-Provide suggestions to improve formatting, clarity, and professionalism.
-
-Use markdown for formatting — bold section titles, use bullet points where helpful, and include helpful resources if needed.
-            `.trim(),
+            content: `You're a helpful assistant supporting construction job seekers. Help generate resumes, cover letters, interview prep, etc. in clear and supportive language.`,
           },
           { role: "user", content: message },
         ],
@@ -82,8 +78,8 @@ Use markdown for formatting — bold section titles, use bullet points where hel
     const html = `
       <div class="chat-entry assistant">
         <div class="bubble">
-          ${geminiText ? `<strong>🌐 Gemini (Search Bot):</strong><div class="markdown">${format(geminiText)}</div><hr/>` : ""}
           ${gptText ? `<strong>🔧 GPT (Task Helper):</strong><div class="markdown">${format(gptText)}</div>` : ""}
+          ${geminiText ? `<strong>🌐 Gemini (Search Bot):</strong><div class="markdown">${format(geminiText)}</div>` : ""}
         </div>
       </div>
     `;
@@ -95,6 +91,72 @@ Use markdown for formatting — bold section titles, use bullet points where hel
   }
 });
 
+// Upload resume file route
+app.post("/upload", upload.single("resume"), async (req, res) => {
+  const file = req.file;
+  if (!file) {
+    return res.send(`<div class="chat-entry assistant"><div class="bubble">⚠️ No file uploaded.</div></div>`);
+  }
+
+  try {
+    let resumeText = "";
+
+    if (file.mimetype === "application/pdf") {
+      const data = await fs.promises.readFile(file.path);
+      const parsed = await pdfParse(data);
+      resumeText = parsed.text;
+    } else if (
+      file.mimetype === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    ) {
+      const data = await fs.promises.readFile(file.path);
+      const parsed = await mammoth.extractRawText({ buffer: data });
+      resumeText = parsed.value;
+    } else if (file.mimetype === "text/plain") {
+      resumeText = await fs.promises.readFile(file.path, "utf-8");
+    } else {
+      return res.send(`<div class="chat-entry assistant"><div class="bubble">⚠️ Unsupported file type.</div></div>`);
+    }
+
+    fs.unlink(file.path, () => {}); // cleanup
+
+    const gptResult = await openai.chat.completions.create({
+      model: "gpt-4",
+      messages: [
+        {
+          role: "system",
+          content: `You're a resume reviewer for construction workers and apprentices. Give constructive feedback. Highlight improvements, missing sections, and clarity.`,
+        },
+        {
+          role: "user",
+          content: `Here is my resume:\n\n${resumeText}`,
+        },
+      ],
+    });
+
+    const gptText = gptResult.choices?.[0]?.message?.content || "🤖 GPT had no response.";
+    const format = (text) =>
+      sanitizeHtml(marked.parse(text), {
+        allowedTags: sanitizeHtml.defaults.allowedTags.concat(["img"]),
+        allowedAttributes: { a: ["href", "target", "rel"], img: ["src", "alt"] },
+      });
+
+    const html = `
+      <div class="chat-entry assistant">
+        <div class="bubble">
+          <strong>📄 Resume Feedback (via Upload):</strong>
+          <div class="markdown">${format(gptText)}</div>
+        </div>
+      </div>
+    `;
+
+    res.send(html);
+  } catch (err) {
+    console.error("❌ Resume review error:", err);
+    res.send(`<div class="chat-entry assistant"><div class="bubble">❌ Error reading file.</div></div>`);
+  }
+});
+
+// Serve frontend
 app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });

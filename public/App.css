@@ -112,6 +112,37 @@ h1 {
   background-color: #a0003f;
 }
 
+/* Upload Box */
+.upload-box {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+.upload-box input[type="file"] {
+  border: 1px solid #ccc;
+  padding: 0.4rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  background: white;
+}
+
+.upload-box button {
+  background-color: #82002d;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 0.5rem 1rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.upload-box button:hover {
+  background-color: #a0003f;
+}
+
 /* Form */
 .input-group {
   display: flex;
@@ -194,6 +225,11 @@ button.secondary:hover {
     flex-direction: column;
   }
 
+  .upload-box {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
   .input-group {
     flex-direction: column;
   }
@@ -202,7 +238,8 @@ button.secondary:hover {
     min-height: 32px;
   }
 
-  button {
+  button,
+  .upload-box button {
     width: 100%;
   }
 

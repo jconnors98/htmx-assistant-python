@@ -1,0 +1,213 @@
+/* Base Layout */
+body {
+  margin: 0;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background-color: #f9f9f9;
+  color: #222;
+}
+
+.container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+}
+
+/* Headline */
+h1 {
+  color: #82002d;
+  font-size: 1.8rem;
+  text-align: center;
+  margin-bottom: 0.5rem;
+}
+
+.intro {
+  text-align: center;
+  font-size: 0.95rem;
+  margin-bottom: 1.5rem;
+  line-height: 1.4;
+}
+
+/* Chat Window */
+#chat-window {
+  border-radius: 10px;
+  padding: 0;
+  background: transparent;
+}
+
+.chat-box {
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 10px;
+  padding: 1rem;
+  max-height: 500px;
+  overflow-y: auto;
+  margin-bottom: 1rem;
+}
+
+/* Chat Bubbles */
+.chat-entry {
+  margin-bottom: 1rem;
+  line-height: 1.4;
+}
+
+.chat-entry .bubble {
+  background: #f3f3f3;
+  border-radius: 12px;
+  padding: 0.75rem 1rem;
+  display: inline-block;
+  max-width: 100%;
+  font-size: 0.95rem;
+}
+
+.chat-entry.assistant .bubble {
+  background: #f2f2f2;
+}
+
+.chat-entry.thinking .bubble {
+  background: #e0e0e0;
+}
+
+.bubble .dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 4px;
+  background-color: #888;
+  border-radius: 50%;
+  animation: blink 1s infinite;
+}
+
+.bubble .dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.bubble .dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+/* Prompt Buttons */
+.prompt-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.prompt-buttons button {
+  background-color: #82002d;
+  color: white;
+  border: none;
+  border-radius: 20px;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: background-color 0.2s ease;
+}
+
+.prompt-buttons button:hover {
+  background-color: #a0003f;
+}
+
+/* Form */
+.input-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+textarea {
+  flex-grow: 1;
+  resize: none;
+  padding: 0.6rem;
+  font-size: 0.9rem;
+  border: 1px solid #82002d;
+  border-radius: 6px;
+  font-family: inherit;
+  min-height: 32px;
+}
+
+button {
+  background-color: #82002d;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 0.6rem 1.2rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+button:hover {
+  background-color: #a0003f;
+}
+
+button.secondary {
+  background: none;
+  border: 1px solid #82002d;
+  color: #82002d;
+}
+
+button.secondary:hover {
+  background: #f2e6eb;
+}
+
+/* Scroll Top Button */
+#scroll-top {
+  display: inline-block;
+  margin-top: 1rem;
+  background: #e0e0e0;
+  color: #333;
+  border: none;
+  padding: 0.4rem 1rem;
+  font-size: 0.8rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+#scroll-top:hover {
+  background: #d0d0d0;
+}
+
+/* Markdown Styling */
+.markdown {
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.markdown a {
+  color: #006699;
+  text-decoration: underline;
+}
+
+.source-tag {
+  font-size: 0.7rem;
+  color: #888;
+  margin-top: 0.5rem;
+}
+
+/* Responsive Design */
+@media (max-width: 600px) {
+  .prompt-buttons {
+    flex-direction: column;
+  }
+
+  .input-group {
+    flex-direction: column;
+  }
+
+  textarea {
+    min-height: 32px;
+  }
+
+  button {
+    width: 100%;
+  }
+
+  #scroll-top {
+    width: 100%;
+    margin-top: 1rem;
+  }
+}
