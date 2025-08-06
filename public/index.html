@@ -26,7 +26,7 @@
         </div>
       </div>
 
-      <!-- Resume upload -->
+      <!-- 📄 Resume upload form -->
       <form
         id="upload-form"
         hx-post="/upload"
@@ -35,13 +35,13 @@
         hx-swap="beforeend"
       >
         <div class="upload-box">
-          <label for="resume">Upload your resume:</label>
-          <input type="file" id="resume" name="resume" accept=".pdf,.docx,.txt" required />
-          <button type="submit">Upload</button>
+          <label for="resume"><strong>📤 Upload your resume (PDF only):</strong></label><br>
+          <input type="file" id="resume" name="resume" accept=".pdf" required />
+          <button type="submit">Upload Resume</button>
         </div>
       </form>
 
-      <!-- Text-based chat -->
+      <!-- 💬 Chat form -->
       <form
         id="chat-form"
         hx-post="/ask"
@@ -70,7 +70,7 @@
     const chatInput = document.getElementById("message");
     const chatBox = document.getElementById("chat-box");
 
-    // Submit on Enter (no Shift)
+    // Submit on Enter
     chatInput.addEventListener("keydown", function (e) {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
@@ -78,10 +78,9 @@
       }
     });
 
-    // Autofocus on load
     window.onload = () => chatInput.focus();
 
-    // Add typing indicator
+    // Typing indicator
     document.addEventListener("htmx:beforeRequest", () => {
       const thinking = document.createElement("div");
       thinking.className = "chat-entry assistant thinking";
@@ -92,7 +91,6 @@
       chatBox.appendChild(thinking);
     });
 
-    // Remove typing indicator + scroll to bottom
     document.addEventListener("htmx:afterOnLoad", () => {
       const thinkingBubble = document.querySelector(".chat-entry.thinking");
       if (thinkingBubble) thinkingBubble.remove();
@@ -100,7 +98,6 @@
       chatInput.focus();
     });
 
-    // Prompt buttons
     function submitPrompt(text) {
       chatInput.value = text;
       document.getElementById("send-btn").click();
@@ -109,7 +106,6 @@
       }, 20);
     }
 
-    // Clear chat
     function clearChat() {
       document.getElementById("chat-box").innerHTML = `
         <div class="prompt-buttons">

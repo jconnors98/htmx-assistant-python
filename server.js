@@ -1,3 +1,4 @@
+// server.js
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -8,20 +9,20 @@ import { marked } from "marked";
 import sanitizeHtml from "sanitize-html";
 import multer from "multer";
 import fs from "fs";
-import pdfParse from "pdf-parse";
-import mammoth from "mammoth";
 import { askGemini } from "./gemini.js";
+import { parseResume } from "./parsePDF.js"; // PDF parser
 
 dotenv.config();
 
+// Validate API keys
 if (!process.env.OPENAI_API_KEY || !process.env.GEMINI_API_KEY) {
   console.error("❌ Missing API keys. Check your .env file.");
   process.exit(1);
 }
 
+// Setup Express
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
 const app = express();
 const port = process.env.PORT || 3000;
 
@@ -30,6 +31,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, "public")));
 
+// Secure headers
 app.use((req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
@@ -39,9 +41,14 @@ app.use((req, res, next) => {
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-const upload = multer({ dest: "uploads/" });
+// Markdown formatting helper
+const format = (text) =>
+  sanitizeHtml(marked.parse(text), {
+    allowedTags: sanitizeHtml.defaults.allowedTags.concat(["img"]),
+    allowedAttributes: { a: ["href", "target", "rel"], img: ["src", "alt"] },
+  });
 
-// Ask route (chat input)
+// 🌐 Text-based assistant
 app.post("/ask", async (req, res) => {
   const message = req.body.message?.trim();
   if (!message) {
@@ -52,14 +59,14 @@ app.post("/ask", async (req, res) => {
     let gptText = "";
     let geminiText = "";
 
-    // Route based on task or search intent
-    if (message.match(/resume|cover letter|interview|application|write|cv|draft/i)) {
+    // Route logic
+    if (message.match(/resume|cover letter|interview|cv|application|write/i)) {
       const gptResult = await openai.chat.completions.create({
         model: "gpt-4",
         messages: [
           {
             role: "system",
-            content: `You're a helpful assistant supporting construction job seekers. Help generate resumes, cover letters, interview prep, etc. in clear and supportive language.`,
+            content: `You're a helpful assistant supporting construction job seekers in BC. Help write resumes, cover letters, prep interviews, etc.`,
           },
           { role: "user", content: message },
         ],
@@ -68,12 +75,6 @@ app.post("/ask", async (req, res) => {
     } else {
       geminiText = await askGemini(message);
     }
-
-    const format = (text) =>
-      sanitizeHtml(marked.parse(text), {
-        allowedTags: sanitizeHtml.defaults.allowedTags.concat(["img"]),
-        allowedAttributes: { a: ["href", "target", "rel"], img: ["src", "alt"] },
-      });
 
     const html = `
       <div class="chat-entry assistant">
@@ -87,63 +88,42 @@ app.post("/ask", async (req, res) => {
     res.send(html);
   } catch (err) {
     console.error("❌ Error fetching AI responses:", err);
-    res.send(`<div class="chat-entry assistant"><div class="bubble">❌ There was an error getting a response from the assistant.</div></div>`);
+    res.send(`<div class="chat-entry assistant"><div class="bubble">❌ There was an error getting a response.</div></div>`);
   }
 });
 
-// Upload resume file route
+// 📝 Resume Upload Route
+const upload = multer({ dest: "uploads/" });
+
 app.post("/upload", upload.single("resume"), async (req, res) => {
-  const file = req.file;
-  if (!file) {
-    return res.send(`<div class="chat-entry assistant"><div class="bubble">⚠️ No file uploaded.</div></div>`);
+  if (!req.file) {
+    return res.send(`<div class="chat-entry assistant"><div class="bubble">⚠️ Please upload a PDF file.</div></div>`);
   }
 
   try {
-    let resumeText = "";
-
-    if (file.mimetype === "application/pdf") {
-      const data = await fs.promises.readFile(file.path);
-      const parsed = await pdfParse(data);
-      resumeText = parsed.text;
-    } else if (
-      file.mimetype === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    ) {
-      const data = await fs.promises.readFile(file.path);
-      const parsed = await mammoth.extractRawText({ buffer: data });
-      resumeText = parsed.value;
-    } else if (file.mimetype === "text/plain") {
-      resumeText = await fs.promises.readFile(file.path, "utf-8");
-    } else {
-      return res.send(`<div class="chat-entry assistant"><div class="bubble">⚠️ Unsupported file type.</div></div>`);
-    }
-
-    fs.unlink(file.path, () => {}); // cleanup
+    const resumeText = await parseResume(req.file.path);
+    fs.unlinkSync(req.file.path); // Clean up uploaded file
 
     const gptResult = await openai.chat.completions.create({
       model: "gpt-4",
       messages: [
         {
           role: "system",
-          content: `You're a resume reviewer for construction workers and apprentices. Give constructive feedback. Highlight improvements, missing sections, and clarity.`,
+          content: `You're a resume coach for construction jobs in BC. Give clear, supportive feedback and suggestions.`,
         },
         {
           role: "user",
-          content: `Here is my resume:\n\n${resumeText}`,
+          content: `Please review the following resume:\n\n${resumeText}`,
         },
       ],
     });
 
     const gptText = gptResult.choices?.[0]?.message?.content || "🤖 GPT had no response.";
-    const format = (text) =>
-      sanitizeHtml(marked.parse(text), {
-        allowedTags: sanitizeHtml.defaults.allowedTags.concat(["img"]),
-        allowedAttributes: { a: ["href", "target", "rel"], img: ["src", "alt"] },
-      });
 
     const html = `
       <div class="chat-entry assistant">
         <div class="bubble">
-          <strong>📄 Resume Feedback (via Upload):</strong>
+          <strong>📄 Resume Review:</strong>
           <div class="markdown">${format(gptText)}</div>
         </div>
       </div>
@@ -151,16 +131,17 @@ app.post("/upload", upload.single("resume"), async (req, res) => {
 
     res.send(html);
   } catch (err) {
-    console.error("❌ Resume review error:", err);
-    res.send(`<div class="chat-entry assistant"><div class="bubble">❌ Error reading file.</div></div>`);
+    console.error("❌ Resume review failed:", err);
+    res.send(`<div class="chat-entry assistant"><div class="bubble">❌ Error reviewing resume.</div></div>`);
   }
 });
 
-// Serve frontend
+// Fallback to frontend
 app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
+// Start server
 app.listen(port, () => {
   console.log(`✅ Assistant is live at http://localhost:${port}`);
 });

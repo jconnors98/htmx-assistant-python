@@ -116,17 +116,35 @@ h1 {
 .upload-box {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
   flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 1rem 0;
+  padding: 1rem;
+  background: #fdf4f7;
+  border: 1px dashed #82002d;
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+
+.upload-box label {
+  flex-basis: 100%;
+  font-weight: bold;
+  margin-bottom: 0.25rem;
 }
 
 .upload-box input[type="file"] {
+  flex-grow: 1;
   border: 1px solid #ccc;
   padding: 0.4rem;
   border-radius: 6px;
   font-size: 0.85rem;
   background: white;
+  cursor: pointer;
+  transition: border-color 0.2s ease;
+}
+
+.upload-box input[type="file"]:hover {
+  border-color: #82002d;
 }
 
 .upload-box button {
@@ -137,6 +155,7 @@ h1 {
   padding: 0.5rem 1rem;
   font-size: 0.85rem;
   cursor: pointer;
+  transition: background-color 0.2s ease;
 }
 
 .upload-box button:hover {
