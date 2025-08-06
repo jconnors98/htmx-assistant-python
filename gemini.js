@@ -12,21 +12,26 @@ export async function askGemini(userQuery) {
 
   const sourcesText = results.length
     ? results.map((r, i) =>
-        `${i + 1}. **${r.title}**\n${r.snippet}\n[Read more](${r.link})\n`
-      ).join("\n")
-    : "*No matching content found in trusted sites.*";
+        `${i + 1}. [${r.title}](${r.link}) – ${r.snippet}`
+      ).join("\n\n")
+    : "_No matching content found in trusted sites._";
 
   const prompt = `
-You are a helpful assistant answering user questions using information from trusted sources first.
+You are a warm, helpful assistant supporting users on the TalentCentral platform which has job postings for construction jobs and partners the trusted sites to offer programs for workforce and workplace development, benefits, training.
 
-The user asked:
+### Instructions:
+- Answer the user's question based **first** on the provided trusted search results below.
+- Use a clear and friendly tone.
+- When referring to any resource, use a **Markdown link** like [Title](https://example.com).
+- If no relevant info is found, offer a helpful general answer.
+
+### User question:
 "${userQuery}"
 
-Here are the most relevant results from trusted partner websites:
-
+### Trusted search results:
 ${sourcesText}
 
-Based on this, write a helpful answer. Be warm, concise, and use markdown. If no results are relevant, say so and offer general guidance.
+Now write your answer using the most relevant info above.
 `;
 
   const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
