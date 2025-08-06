@@ -110,7 +110,7 @@ app.post("/ask", async (req, res) => {
       <div class="chat-entry assistant">
         <div class="bubble markdown">
           ${htmlReply}
-          <div class="source-tag">✨ Blended from GPT + Gemini</div>
+          <div class="source-tag">Powered by BCCA</div>
         </div>
       </div>
     `;
