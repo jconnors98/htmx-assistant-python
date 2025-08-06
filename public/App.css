@@ -121,9 +121,10 @@ h1 {
   margin: 1rem 0;
   padding: 1rem;
   background: #fdf4f7;
-  border: 1px dashed #82002d;
+  border: none !important;
   border-radius: 8px;
   font-size: 0.9rem;
+  background: transparent !important;
 }
 
 .upload-box label {
