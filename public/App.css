@@ -42,12 +42,14 @@ h1 {
   max-height: 500px;
   overflow-y: auto;
   margin-bottom: 1rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
 }
 
 /* Chat Bubbles */
 .chat-entry {
   margin-bottom: 1rem;
   line-height: 1.4;
+  animation: fadeIn 0.25s ease-in;
 }
 
 .chat-entry .bubble {
@@ -63,10 +65,21 @@ h1 {
   background: #f2f2f2;
 }
 
+.chat-entry.user .bubble {
+  background: #e8f0fe;
+  text-align: right;
+}
+
 .chat-entry.thinking .bubble {
   background: #e0e0e0;
 }
 
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Typing Dots */
 .bubble .dot {
   display: inline-block;
   width: 6px;
@@ -74,19 +87,26 @@ h1 {
   margin-right: 4px;
   background-color: #888;
   border-radius: 50%;
-  animation: blink 1s infinite;
+  animation: bounce 1.2s infinite ease-in-out;
 }
 
 .bubble .dot:nth-child(2) {
   animation-delay: 0.2s;
 }
+
 .bubble .dot:nth-child(3) {
   animation-delay: 0.4s;
 }
 
-@keyframes blink {
-  0%, 100% { opacity: 0.3; }
-  50% { opacity: 1; }
+@keyframes bounce {
+  0%, 80%, 100% {
+    transform: scale(0.8);
+    opacity: 0.5;
+  }
+  40% {
+    transform: scale(1.2);
+    opacity: 1;
+  }
 }
 
 /* Prompt Buttons */
@@ -120,8 +140,6 @@ h1 {
   gap: 0.5rem;
   margin: 1rem 0;
   padding: 1rem;
-  background: #fdf4f7;
-  border: none !important;
   border-radius: 8px;
   font-size: 0.9rem;
   background: transparent !important;
@@ -146,7 +164,7 @@ h1 {
 
 .upload-box input[type="file"]:hover {
   border-color: #82002d;
-  background: white
+  background: white;
   color: #333;
 }
 
@@ -204,7 +222,7 @@ button.secondary {
 }
 
 button.secondary:hover {
-  background: #f2e6eb;
+  background: #fce4ec;
 }
 
 /* Scroll Top Button */
@@ -239,6 +257,17 @@ button.secondary:hover {
   font-size: 0.7rem;
   color: #888;
   margin-top: 0.5rem;
+}
+
+/* Info Notices (uploaded file, instructions) */
+.info {
+  font-size: 0.85rem;
+  color: #555;
+  margin: 0.5rem 0;
+  padding: 0.5rem;
+  background: #f3f3f3;
+  border-left: 4px solid #82002d;
+  border-radius: 4px;
 }
 
 /* Responsive Design */

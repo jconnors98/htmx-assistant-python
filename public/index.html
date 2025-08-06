@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>TalentCentral Assistant</title>
-  <link rel="stylesheet" href="App.css" />
+  <link rel="stylesheet" href="app.css" />
   <script src="https://unpkg.com/htmx.org@1.9.5"></script>
 </head>
 <body>
@@ -26,7 +26,7 @@
         </div>
       </div>
 
-      <!-- Resume upload form (hidden by default) -->
+      <!-- Resume upload form -->
       <form
         id="upload-form"
         style="display: none;"
@@ -39,10 +39,11 @@
           <label for="resume">Upload your resume:</label>
           <input type="file" id="resume" name="resume" accept=".pdf,.docx,.txt" required />
           <button type="submit">Upload</button>
+          <small>🔐 Your resume is processed securely and not stored.</small>
         </div>
       </form>
 
-      <!-- Text-based chat -->
+      <!-- Chat input form -->
       <form
         id="chat-form"
         hx-post="/ask"
@@ -83,7 +84,7 @@
     // Autofocus on load
     window.onload = () => chatInput.focus();
 
-    // Add typing indicator
+    // Typing indicator
     document.addEventListener("htmx:beforeRequest", () => {
       const thinking = document.createElement("div");
       thinking.className = "chat-entry assistant thinking";
@@ -94,7 +95,7 @@
       chatBox.appendChild(thinking);
     });
 
-    // Remove typing indicator + scroll
+    // Cleanup after response loads
     document.addEventListener("htmx:afterOnLoad", () => {
       const thinkingBubble = document.querySelector(".chat-entry.thinking");
       if (thinkingBubble) thinkingBubble.remove();
@@ -102,7 +103,7 @@
       chatInput.focus();
     });
 
-    // Submit a prompt (resume intent optional)
+    // Submit prewritten prompt
     function submitPrompt(text, isResume = false) {
       chatInput.value = text;
       document.getElementById("send-btn").click();
@@ -113,10 +114,9 @@
         if (isResume) {
           uploadForm.style.display = "block";
 
-          // Inject instructions block only once
           if (!document.getElementById("resume-instructions")) {
             const instructions = document.createElement("div");
-            instructions.className = "chat-entry assistant";
+            instructions.className = "chat-entry assistant fade";
             instructions.id = "resume-instructions";
             instructions.innerHTML = `
               <div class="bubble">
@@ -127,8 +127,7 @@
                 <p><u>Option 2: Copy-paste your resume</u><br>
                 • Paste your resume text into the chat box and click <strong>Send</strong></p>
                 <p>✅ Include: contact info, skills, experience, education, certifications (like Red Seal)</p>
-              </div>
-            `;
+              </div>`;
             chatBox.appendChild(instructions);
             chatBox.scrollTop = chatBox.scrollHeight;
           }
@@ -138,7 +137,7 @@
       }, 20);
     }
 
-    // Clear chat and reset
+    // Clear chat history
     function clearChat() {
       document.getElementById("chat-box").innerHTML = `
         <div class="prompt-buttons">

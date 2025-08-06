@@ -9,14 +9,12 @@ import { marked } from "marked";
 import sanitizeHtml from "sanitize-html";
 import multer from "multer";
 import fs from "fs";
-import { askGemini } from "./gemini.js";
 import { parseResume } from "./parsePDF.js"; // PDF parser
 
 dotenv.config();
 
-// Validate API keys
-if (!process.env.OPENAI_API_KEY || !process.env.GEMINI_API_KEY) {
-  console.error("❌ Missing API keys. Check your .env file.");
+if (!process.env.OPENAI_API_KEY) {
+  console.error("❌ Missing OpenAI API key.");
   process.exit(1);
 }
 
@@ -41,14 +39,15 @@ app.use((req, res, next) => {
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// Markdown formatting helper
+// Markdown sanitizer
 const format = (text) =>
   sanitizeHtml(marked.parse(text), {
     allowedTags: sanitizeHtml.defaults.allowedTags.concat(["img"]),
     allowedAttributes: { a: ["href", "target", "rel"], img: ["src", "alt"] },
   });
 
-// 🧠 Chat route with routing logic
+
+// 🧠 Chat route (Unified GPT with responses API)
 app.post("/ask", async (req, res) => {
   const message = req.body.message?.trim();
   if (!message) {
@@ -56,70 +55,75 @@ app.post("/ask", async (req, res) => {
   }
 
   try {
-    let gptText = "";
-    let geminiText = "";
-
     const taskKeywords = /\b(resume|cover letter|cv|application|write|rewrite|reword|organize|format|polish|edit|revise|improve|draft|summarize)\b/i;
 
-    if (taskKeywords.test(message)) {
-      const gptResult = await openai.chat.completions.create({
-        model: "gpt-4",
-        messages: [
-          {
-            role: "system",
-            content: `You're a helpful assistant supporting construction job seekers in BC. Help write resumes, cover letters, prep interviews, rewrite drafts, organize resume content, and give feedback.`,
-          },
-          { role: "user", content: message },
-        ],
-      });
-      gptText = gptResult.choices?.[0]?.message?.content || "🤖 GPT had no response.";
-    } else {
-      geminiText = await askGemini(message);
-    }
+    const useSearch = !taskKeywords.test(message);
+
+    const response = await openai.responses.create({
+      model: "gpt-4o",
+      messages: [
+        {
+          role: "system",
+          content: useSearch
+            ? "You are a smart assistant who can look things up online and summarize or explain them clearly."
+            : "You're a helpful assistant for construction job seekers in BC. Help with writing resumes, cover letters, organizing drafts, summarizing experience, and improving formatting.",
+        },
+        { role: "user", content: message }
+      ],
+      tools: useSearch ? [{ type: "web_search" }] : []
+    });
+
+    const reply = response.choices?.[0]?.message?.content || "🤖 No response available.";
 
     const html = `
       <div class="chat-entry assistant">
         <div class="bubble">
-          ${gptText ? `<strong>🔧 GPT (Task Helper):</strong><div class="markdown">${format(gptText)}</div>` : ""}
-          ${geminiText ? `<strong>🌐 Gemini (Search Bot):</strong><div class="markdown">${format(geminiText)}</div>` : ""}
+          <div class="markdown">${format(reply)}</div>
         </div>
       </div>
     `;
-
     res.send(html);
+
   } catch (err) {
-    console.error("❌ Error fetching AI responses:", err);
+    console.error("❌ /ask error:", err);
     res.send(`<div class="chat-entry assistant"><div class="bubble">❌ There was an error getting a response.</div></div>`);
   }
 });
 
-// 📝 Resume Upload Route
+
+// 📄 Resume Upload
 const upload = multer({ dest: "uploads/" });
 
 app.post("/upload", upload.single("resume"), async (req, res) => {
   if (!req.file) {
-    return res.send(`<div class="chat-entry assistant"><div class="bubble">⚠️ Please upload a PDF file.</div></div>`);
+    return res.send(`<div class="chat-entry assistant"><div class="bubble">⚠️ Please upload a PDF resume file.</div></div>`);
+  }
+
+  const allowedTypes = ["application/pdf"];
+  if (!allowedTypes.includes(req.file.mimetype)) {
+    fs.unlinkSync(req.file.path);
+    return res.send(`<div class="chat-entry assistant"><div class="bubble">⚠️ Only PDF files are supported.</div></div>`);
   }
 
   try {
     const resumeText = await parseResume(req.file.path);
-    fs.unlinkSync(req.file.path); // Clean up uploaded file
+    fs.unlinkSync(req.file.path); // Clean up temp file
 
-    const gptResult = await openai.chat.completions.create({
-      model: "gpt-4",
+    const gptResult = await openai.responses.create({
+      model: "gpt-4o",
       messages: [
         {
           role: "system",
-          content: `You're a resume coach for construction jobs in BC. Give clear, supportive feedback and suggestions.`,
+          content: "You're a resume coach for construction jobs in BC. Review the resume, improve clarity and formatting, and provide feedback in Markdown.",
         },
         {
           role: "user",
-          content: `Please review the following resume:\n\n${resumeText}`,
-        },
-      ],
+          content: `Please review and improve this resume:\n\n${resumeText}`
+        }
+      ]
     });
 
-    const gptText = gptResult.choices?.[0]?.message?.content || "🤖 GPT had no response.";
+    const gptText = gptResult.choices?.[0]?.message?.content || "🤖 No response from assistant.";
 
     const html = `
       <div class="chat-entry assistant">
@@ -132,12 +136,13 @@ app.post("/upload", upload.single("resume"), async (req, res) => {
 
     res.send(html);
   } catch (err) {
-    console.error("❌ Resume review failed:", err);
-    res.send(`<div class="chat-entry assistant"><div class="bubble">❌ Error reviewing resume.</div></div>`);
+    console.error("❌ Resume upload error:", err);
+    res.send(`<div class="chat-entry assistant"><div class="bubble">❌ Error reviewing the resume.</div></div>`);
   }
 });
 
-// Fallback to frontend
+
+// Frontend Fallback
 app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
