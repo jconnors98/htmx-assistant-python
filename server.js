@@ -7,17 +7,17 @@ import dotenv from "dotenv";
 import { OpenAI } from "openai";
 import { marked } from "marked";
 import sanitizeHtml from "sanitize-html";
-import { askGemini } from "./gemini.js"; // make sure this file exists
+import { askGemini } from "./gemini.js"; // Gemini now includes CSE results
 
 dotenv.config();
 
 // Validate keys
-if (!process.env.OPENAI_API_KEY || !process.env.GEMINI_API_KEY) {
-  console.error("❌ Missing API keys. Check your .env file.");
+if (!process.env.OPENAI_API_KEY || !process.env.GEMINI_API_KEY || !process.env.GOOGLE_API_KEY || !process.env.CSE_ID) {
+  console.error("❌ Missing API keys. Check your .env file for OPENAI_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY, and CSE_ID.");
   process.exit(1);
 }
 
-// Setup __dirname workaround
+// Setup __dirname
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -53,14 +53,13 @@ app.post("/ask", async (req, res) => {
   }
 
   try {
-    // Run GPT and Gemini simultaneously
     const [gptResult, geminiResult] = await Promise.all([
       openai.chat.completions.create({
         model: "gpt-4",
         messages: [
           {
             role: "system",
-          content: `You're a helpful, warm assistant supporting users on the TalentCentral platform. Help with construction jobs, training, and workforce programs in BC. Speak naturally. If you mention any websites or sources, include them as clickable hyperlinks in Markdown format like [Site](https://example.com).`,
+            content: `You're a helpful, warm assistant supporting users on the TalentCentral platform. Help with construction jobs, training, and workforce programs in BC. Speak naturally. If you mention any websites or sources, include them as clickable hyperlinks in Markdown format like [Site](https://example.com).`,
           },
           {
             role: "user",
@@ -68,13 +67,12 @@ app.post("/ask", async (req, res) => {
           },
         ],
       }),
-      askGemini(message),
+      askGemini(message), // Now includes CSE results
     ]);
 
     const gptText = gptResult.choices?.[0]?.message?.content || "🤖 GPT had no response.";
     const geminiText = geminiResult || "🤖 Gemini had no response.";
 
-    // Markdown → HTML → sanitize
     const format = (text) =>
       sanitizeHtml(marked.parse(text), {
         allowedTags: sanitizeHtml.defaults.allowedTags.concat(["img"]),
@@ -92,7 +90,7 @@ app.post("/ask", async (req, res) => {
           <hr/>
           <strong>🌐 Gemini says:</strong>
           <div class="markdown">${format(geminiText)}</div>
-          <div class="source-tag">🔗 Blended from GPT + Gemini</div>
+          <div class="source-tag">🔗 Blended from GPT + Gemini + Trusted CSE</div>
         </div>
       </div>
     `;
