@@ -145,10 +145,12 @@ h1 {
 
 .upload-box input[type="file"]:hover {
   border-color: #82002d;
+  background: white
+  color: #333;
 }
 
 .upload-box button {
-  background-color: #82002d;
+  background-color: #555;
   color: white;
   border: none;
   border-radius: 6px;
