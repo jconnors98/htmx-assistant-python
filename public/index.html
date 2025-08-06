@@ -17,12 +17,12 @@
 
     <div id="chat-window">
       <div id="chat-box" class="chat-box">
-        <!-- Updated Prompt buttons -->
+        <!-- Updated Prompt Buttons -->
         <div class="prompt-buttons">
-          <button onclick="submitPrompt('What programs are available to help me get into construction?')">🏗️ What programs are available?</button>
-          <button onclick="submitPrompt('How do I apply for a job in construction?')">📝 How do I apply?</button>
-          <button onclick="submitPrompt('Where can I find the construction job board?')">🔎 Where is the job board?</button>
-          <button onclick="submitPrompt('Can you review this resume for me?', true)">📄 Resume Review</button>
+          <button onclick="submitPrompt('How do I become a Red Seal Apprentice?', false)">🔧 How do I become a Red Seal Apprentice?</button>
+          <button onclick="submitPrompt('Can I find a mentor in electrical work?', false)">👷 Can I find a mentor in electrical work?</button>
+          <button onclick="submitPrompt('Is there funding to help me with training?', false)">💰 Is there funding to help me with training?</button>
+          <button onclick="submitPrompt('Can you review this resume for me?', true)">📄 Can you review this resume for me?</button>
         </div>
       </div>
 
@@ -98,7 +98,6 @@
       chatInput.focus();
     });
 
-    // Prompt submission
     function submitPrompt(text, isResume = false) {
       chatInput.value = text;
       document.getElementById("send-btn").click();
@@ -129,14 +128,13 @@
       }, 20);
     }
 
-    // Clear chat
     function clearChat() {
       document.getElementById("chat-box").innerHTML = `
         <div class="prompt-buttons">
-          <button onclick="submitPrompt('What programs are available to help me get into construction?')">🏗️ What programs are available?</button>
-          <button onclick="submitPrompt('How do I apply for a job in construction?')">📝 How do I apply?</button>
-          <button onclick="submitPrompt('Where can I find the construction job board?')">🔎 Where is the job board?</button>
-          <button onclick="submitPrompt('Can you review this resume for me?', true)">📄 Resume Review</button>
+          <button onclick="submitPrompt('How do I become a Red Seal Apprentice?', false)">🔧 How do I become a Red Seal Apprentice?</button>
+          <button onclick="submitPrompt('Can I find a mentor in electrical work?', false)">👷 Can I find a mentor in electrical work?</button>
+          <button onclick="submitPrompt('Is there funding to help me with training?', false)">💰 Is there funding to help me with training?</button>
+          <button onclick="submitPrompt('Can you review this resume for me?', true)">📄 Can you review this resume for me?</button>
         </div>`;
       chatInput.value = "";
       chatInput.focus();
