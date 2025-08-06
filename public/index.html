@@ -17,7 +17,7 @@
 
     <div id="chat-window">
       <div id="chat-box" class="chat-box">
-        <!-- Updated Prompt Buttons -->
+        <!-- Prompt buttons -->
         <div class="prompt-buttons">
           <button onclick="submitPrompt('How do I become a Red Seal Apprentice?', false)">🔧 How do I become a Red Seal Apprentice?</button>
           <button onclick="submitPrompt('Can I find a mentor in electrical work?', false)">👷 Can I find a mentor in electrical work?</button>
@@ -26,7 +26,7 @@
         </div>
       </div>
 
-      <!-- Upload form (hidden by default) -->
+      <!-- Resume upload form (hidden by default) -->
       <form
         id="upload-form"
         style="display: none;"
@@ -42,7 +42,7 @@
         </div>
       </form>
 
-      <!-- Chat form -->
+      <!-- Text-based chat -->
       <form
         id="chat-form"
         hx-post="/ask"
@@ -72,6 +72,9 @@
     const chatBox = document.getElementById("chat-box");
     const uploadForm = document.getElementById("upload-form");
 
+    let resumeIntent = false; // Tracks resume-specific prompts
+
+    // Submit on Enter (no Shift)
     chatInput.addEventListener("keydown", function (e) {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
@@ -81,6 +84,7 @@
 
     window.onload = () => chatInput.focus();
 
+    // Typing indicator
     document.addEventListener("htmx:beforeRequest", () => {
       const thinking = document.createElement("div");
       thinking.className = "chat-entry assistant thinking";
@@ -91,43 +95,43 @@
       chatBox.appendChild(thinking);
     });
 
+    // After response loads
     document.addEventListener("htmx:afterOnLoad", () => {
       const thinkingBubble = document.querySelector(".chat-entry.thinking");
       if (thinkingBubble) thinkingBubble.remove();
       chatBox.scrollTop = chatBox.scrollHeight;
       chatInput.focus();
+
+      if (resumeIntent) {
+        uploadForm.style.display = "block";
+        const helpBubble = document.createElement("div");
+        helpBubble.className = "chat-entry assistant";
+        helpBubble.innerHTML = `
+          <div class="bubble markdown">
+            <strong>📝 How to get help with your resume:</strong><br><br>
+            <u>Option 1: Upload a file</u><br>
+            • Click <strong>"Choose File"</strong> and select your resume (.pdf, .docx, or .txt)<br>
+            • Then click <strong>"Upload"</strong><br><br>
+            <u>Option 2: Copy-paste your resume</u><br>
+            • Paste your resume text into the chat box and click <strong>Send</strong><br><br>
+            ✅ Include: contact info, skills, experience, education, certifications (like Red Seal)
+          </div>`;
+        chatBox.appendChild(helpBubble);
+        chatBox.scrollTop = chatBox.scrollHeight;
+      }
     });
 
+    // Prompt button trigger
     function submitPrompt(text, isResume = false) {
+      resumeIntent = isResume;
       chatInput.value = text;
       document.getElementById("send-btn").click();
-
       setTimeout(() => {
         chatInput.value = "";
-
-        if (isResume) {
-          uploadForm.style.display = "block";
-
-          const helpBubble = document.createElement("div");
-          helpBubble.className = "chat-entry assistant";
-          helpBubble.innerHTML = `
-            <div class="bubble markdown">
-              <strong>📝 How to get help with your resume:</strong><br><br>
-              <u>Option 1: Upload a file</u><br>
-              • Click <strong>"Choose File"</strong> and select your resume (.pdf, .docx, or .txt)<br>
-              • Then click <strong>"Upload"</strong><br><br>
-              <u>Option 2: Copy-paste your resume</u><br>
-              • Paste your resume text into the chat box and click <strong>Send</strong><br><br>
-              ✅ Include: contact info, skills, experience, education, certifications (like Red Seal)
-            </div>`;
-          chatBox.appendChild(helpBubble);
-          chatBox.scrollTop = chatBox.scrollHeight;
-        } else {
-          uploadForm.style.display = "none";
-        }
       }, 20);
     }
 
+    // Reset chat and buttons
     function clearChat() {
       document.getElementById("chat-box").innerHTML = `
         <div class="prompt-buttons">
@@ -139,6 +143,7 @@
       chatInput.value = "";
       chatInput.focus();
       uploadForm.style.display = "none";
+      resumeIntent = false;
     }
 
     function scrollToTop() {
