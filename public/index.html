@@ -17,7 +17,7 @@
 
     <div id="chat-window">
       <div id="chat-box" class="chat-box">
-        <!-- Prompt buttons -->
+        <!-- Updated Prompt buttons -->
         <div class="prompt-buttons">
           <button onclick="submitPrompt('What programs are available to help me get into construction?')">🏗️ What programs are available?</button>
           <button onclick="submitPrompt('How do I apply for a job in construction?')">📝 How do I apply?</button>
@@ -26,7 +26,7 @@
         </div>
       </div>
 
-      <!-- Resume upload (initially hidden) -->
+      <!-- Upload form (hidden by default) -->
       <form
         id="upload-form"
         style="display: none;"
@@ -42,7 +42,7 @@
         </div>
       </form>
 
-      <!-- Main chat form -->
+      <!-- Chat form -->
       <form
         id="chat-form"
         hx-post="/ask"
@@ -72,7 +72,6 @@
     const chatBox = document.getElementById("chat-box");
     const uploadForm = document.getElementById("upload-form");
 
-    // Submit on Enter (no Shift)
     chatInput.addEventListener("keydown", function (e) {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
@@ -99,7 +98,7 @@
       chatInput.focus();
     });
 
-    // Submit prompt + show instructions if resume
+    // Prompt submission
     function submitPrompt(text, isResume = false) {
       chatInput.value = text;
       document.getElementById("send-btn").click();
@@ -130,6 +129,7 @@
       }, 20);
     }
 
+    // Clear chat
     function clearChat() {
       document.getElementById("chat-box").innerHTML = `
         <div class="prompt-buttons">
