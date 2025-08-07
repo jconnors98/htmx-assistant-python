@@ -94,7 +94,7 @@ def ask():
 
         html_reply = bleach.clean(
             html_reply,
-            tags=bleach.sanitizer.ALLOWED_TAGS + ["img"],
+            tags=list(bleach.sanitizer.ALLOWED_TAGS) + ["img", "p"],
             attributes={"a": ["href", "target", "rel"], "img": ["src", "alt"]},
         )
 
