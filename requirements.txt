@@ -1,0 +1,6 @@
+flask
+openai>=1.0.0
+google-generativeai
+python-dotenv
+markdown
+bleach
