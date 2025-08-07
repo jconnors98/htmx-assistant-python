@@ -1,1 +1,1 @@
-"# TalentCentral Assistant - HTMX + Node + OpenAI" 
+"# TalentCentral Assistant - HTMX + Python + OpenAI" 
