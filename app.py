@@ -8,7 +8,7 @@ from openai import OpenAI
 
 from gemini import ask_gemini
 
-load_dotenv()
+load_dotenv(".env")
 
 if not os.getenv("OPENAI_API_KEY") or not os.getenv("GEMINI_API_KEY"):
     raise RuntimeError("Missing API keys. Check your .env file.")
