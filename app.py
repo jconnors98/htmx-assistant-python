@@ -3,7 +3,7 @@ import re
 from flask import Flask, request, send_from_directory
 from markdown import markdown
 import bleach
-from decouple import config
+from decouple import config, Csv
 from openai import OpenAI
 
 from gemini import ask_gemini
@@ -12,6 +12,9 @@ if not config("OPENAI_API_KEY") or not config("GEMINI_API_KEY"):
     raise RuntimeError("Missing API keys. Check your .env file.")
 
 client = OpenAI(api_key=config("OPENAI_API_KEY"))
+
+PRIORITY_SITES = config('PRIORITY_SITES', cast=Csv())
+print("Using priority sites:", PRIORITY_SITES)
 
 app = Flask(__name__, static_folder="public", static_url_path="")
 
@@ -35,21 +38,23 @@ def ask():
         )
 
     try:
+        gpt_system_prompt = (
+            "You're a helpful, warm assistant supporting users on the TalentCentral platform. "
+            "Help with construction jobs, training, and workforce programs in BC. Speak naturally. "
+            "When searching or providing links, prioritize information from these websites: "
+            f"{', '.join(PRIORITY_SITES)}"
+        )
         gpt_result = client.chat.completions.create(
             model="gpt-4",
             messages=[
                 {
                     "role": "system",
-                    "content": (
-                        "You're a helpful, warm assistant supporting users on the "
-                        "TalentCentral platform. Help with construction jobs, "
-                        "training, and workforce programs in BC. Speak naturally."
-                    ),
+                    "content": gpt_system_prompt,
                 },
                 {"role": "user", "content": message},
             ],
         )
-        gemini_content = ask_gemini(message)
+        gemini_content = ask_gemini(message, PRIORITY_SITES)
 
         gpt_text = (
             gpt_result.choices[0].message.content if gpt_result.choices else "🤖 GPT had no response."
