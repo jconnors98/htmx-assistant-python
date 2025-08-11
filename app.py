@@ -3,17 +3,15 @@ import re
 from flask import Flask, request, send_from_directory
 from markdown import markdown
 import bleach
-from dotenv import load_dotenv
+from decouple import config
 from openai import OpenAI
 
 from gemini import ask_gemini
 
-load_dotenv(".env")
-
-if not os.getenv("OPENAI_API_KEY") or not os.getenv("GEMINI_API_KEY"):
+if not config("OPENAI_API_KEY") or not config("GEMINI_API_KEY"):
     raise RuntimeError("Missing API keys. Check your .env file.")
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client = OpenAI(api_key=config("OPENAI_API_KEY"))
 
 app = Flask(__name__, static_folder="public", static_url_path="")
 
