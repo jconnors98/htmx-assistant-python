@@ -44,9 +44,10 @@ def ask():
             "When searching or providing links, prioritize information from these websites: "
             f"{', '.join(PRIORITY_SITES)}"
         )
-        gpt_result = client.chat.completions.create(
-            model="gpt-4",
-            messages=[
+        gpt_result = client.responses.create(
+            model="gpt-5",
+            tools=[{ "type": "web_search_preview" }],
+            input=[
                 {
                     "role": "system",
                     "content": gpt_system_prompt,
@@ -55,15 +56,12 @@ def ask():
             ],
         )
         gemini_content = ask_gemini(message, PRIORITY_SITES)
-
-        gpt_text = (
-            gpt_result.choices[0].message.content if gpt_result.choices else "🤖 GPT had no response."
-        )
+        gpt_text = gpt_result.output_text
         gemini_text = gemini_content or "🤖 Gemini had no response."
 
-        blended = client.chat.completions.create(
-            model="gpt-4",
-            messages=[
+        blended = client.responses.create(
+            model="gpt-5",
+            input=[
                 {
                     "role": "system",
                     "content": (
@@ -83,9 +81,7 @@ def ask():
             ],
         )
 
-        final_reply = (
-            blended.choices[0].message.content if blended.choices else "🤖 Could not blend results."
-        )
+        final_reply = blended.output_text
         html_reply = markdown(final_reply)
 
         # Auto-link plain URLs
