@@ -45,7 +45,7 @@ def ask():
             f"{', '.join(PRIORITY_SITES)}"
         )
         gpt_result = client.responses.create(
-            model="gpt-5",
+            model="gpt-4.1",
             tools=[{ "type": "web_search_preview" }],
             input=[
                 {
@@ -93,7 +93,7 @@ def ask():
 
         html_reply = bleach.clean(
             html_reply,
-            tags=list(bleach.sanitizer.ALLOWED_TAGS) + ["img", "p"],
+            tags=list(bleach.sanitizer.ALLOWED_TAGS) + ["img", "p", "h3"],
             attributes={"a": ["href", "target", "rel"], "img": ["src", "alt"]},
         )
 
