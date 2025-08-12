@@ -6,7 +6,7 @@ import bleach
 from decouple import config, Csv
 from openai import OpenAI
 
-from gemini import ask_gemini
+# from gemini import ask_gemini
 
 if not config("OPENAI_API_KEY") or not config("GEMINI_API_KEY"):
     raise RuntimeError("Missing API keys. Check your .env file.")
@@ -55,34 +55,34 @@ def ask():
                 {"role": "user", "content": message},
             ],
         )
-        gemini_content = ask_gemini(message, PRIORITY_SITES)
+        # gemini_content = ask_gemini(message, PRIORITY_SITES)
         gpt_text = gpt_result.output_text
-        gemini_text = gemini_content or "🤖 Gemini had no response."
+        # gemini_text = gemini_content or "🤖 Gemini had no response."
 
-        blended = client.responses.create(
-            model="gpt-5",
-            input=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You're a writing assistant. Combine the two answers into a "
-                        "clear, helpful, friendly response for users asking about "
-                        "construction careers or training in BC. Do not repeat "
-                        "points. Include links in markdown if available."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": (
-                        f"Blend these two answers:\n\n🔮 GPT says:\n{gpt_text}\n\n"
-                        f"🌐 Gemini says:\n{gemini_text}"
-                    ),
-                },
-            ],
-        )
+        # blended = client.responses.create(
+        #     model="gpt-5",
+        #     input=[
+        #         {
+        #             "role": "system",
+        #             "content": (
+        #                 "You're a writing assistant. Combine the two answers into a "
+        #                 "clear, helpful, friendly response for users asking about "
+        #                 "construction careers or training in BC. Do not repeat "
+        #                 "points. Include links in markdown if available."
+        #             ),
+        #         },
+        #         {
+        #             "role": "user",
+        #             "content": (
+        #                 f"Blend these two answers:\n\n🔮 GPT says:\n{gpt_text}\n\n"
+        #                 f"🌐 Gemini says:\n{gemini_text}"
+        #             ),
+        #         },
+        #     ],
+        # )
 
-        final_reply = blended.output_text
-        html_reply = markdown(final_reply)
+        # final_reply = blended.output_text
+        html_reply = markdown(gpt_text)
 
         # Auto-link plain URLs
         def _linkify(match):
