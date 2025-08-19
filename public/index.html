@@ -47,7 +47,6 @@
       </form>
 
       <button id="scroll-top" onclick="scrollToTop()">⬆ Top</button>
-    </div>
   </div>
 
   <script>
@@ -81,6 +80,7 @@
       ]
     };
     let currentMode = "";
+    const chatForm = document.getElementById("chat-form");
 
     // Enable chat input and send button when a mode is selected
 
@@ -106,11 +106,11 @@
     function selectMode(mode) {
       currentMode = mode;
       document.getElementById("mode").value = mode;
-      const prompts = modePrompts[mode] || [];
+      const prompts = modePrompts[mode];
       let html = '<div class="prompt-buttons">';
       prompts.forEach(p => {
-        const escaped = JSON.stringify(p);
-        html += `<button onclick="submitPrompt(${escaped})">${p}</button>`;
+        // const escaped = JSON.stringify(p);
+        html += `<button onclick="submitPrompt('${p}')">${p}</button>`;
       });
       html += '</div>';
       document.getElementById("chat-box").innerHTML = html;
@@ -128,7 +128,7 @@
       prompt.innerHTML = `
         <div class="bubble">${text}</div>`;
       document.getElementById("chat-box").appendChild(prompt);
-      sendBtn.click();
+      chatForm.requestSubmit();
       setTimeout(() => {
         document.getElementById("message").value = "";
       }, 20);
@@ -154,7 +154,7 @@
         document.getElementById("message").value = "";
         document.getElementById("message").placeholder = "Select a mode to begin...";
         document.getElementById("message").disabled = true;
-        sendBtn.disabled = true;
+        document.getElementById("send-btn").disabled = true;
         document.getElementById("mode").value = "";
         currentMode = "";
       }
