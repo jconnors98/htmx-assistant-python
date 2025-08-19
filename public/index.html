@@ -84,6 +84,11 @@
     // Submit a prompt
     function submitPrompt(text) {
       chatInput.value = text;
+      const prompt = document.createElement("div");
+      prompt.className = "chat-entry user";
+      prompt.innerHTML = `
+        <div class="bubble">${text}</div>`;
+      chatBox.appendChild(prompt);
       document.getElementById("send-btn").click();
       setTimeout(() => {
         chatInput.value = "";
