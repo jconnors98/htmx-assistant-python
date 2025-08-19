@@ -53,6 +53,7 @@ def ask():
             "When answering, always try to search and use information from the following sites first, in this order of priority:"
             f"{', '.join(PRIORITY_SITES)}"
             "If you cannot fully answer from these, then use other reputable sources."
+            "Do not use icba.ca as a source."
             "In your final answer, list sources from my preferred sites separately before listing any other sources."
         )
         gpt_result = client.responses.create(
