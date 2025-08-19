@@ -39,10 +39,12 @@ def ask():
 
     try:
         gpt_system_prompt = (
-            "You're a helpful, warm assistant supporting users on the TalentCentral platform. "
+            "You're a helpful, warm assistant supporting users on the BCCA platform. "
             "Help with construction jobs, training, and workforce programs in BC. Speak naturally. "
-            "When searching or providing links, prioritize information from these websites: "
+            "When answering, always try to search and use information from the following sites first, in this order of priority:"
             f"{', '.join(PRIORITY_SITES)}"
+            "If you cannot fully answer from these, then use other reputable sources."
+            "In your final answer, list sources from my preferred sites separately before listing any other sources."
         )
         gpt_result = client.responses.create(
             model="gpt-4.1",
