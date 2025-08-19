@@ -51,10 +51,6 @@
   </div>
 
   <script>
-    const chatInput = document.getElementById("message");
-    const chatBox = document.getElementById("chat-box");
-    const modeInput = document.getElementById("mode");
-    const sendBtn = document.getElementById("send-btn");
 
     const modePrompts = {
       "Advocacy": [
@@ -86,14 +82,6 @@
     };
     let currentMode = "";
 
-    // Submit on Enter (no Shift)
-    chatInput.addEventListener("keydown", function (e) {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        sendBtn.click();
-      }
-    });
-
     // Enable chat input and send button when a mode is selected
 
     // Add typing indicator
@@ -104,20 +92,20 @@
         <div class="bubble">
           <span class="dot"></span><span class="dot"></span><span class="dot"></span>
         </div>`;
-      chatBox.appendChild(thinking);
+      document.getElementById("chat-box").appendChild(thinking);
     });
 
     // Remove typing indicator + scroll
     document.addEventListener("htmx:afterOnLoad", () => {
       const thinkingBubble = document.querySelector(".chat-entry.thinking");
       if (thinkingBubble) thinkingBubble.remove();
-      chatBox.scrollTop = chatBox.scrollHeight;
-      if (!chatInput.disabled) chatInput.focus();
+      document.getElementById("chat-box").scrollTop = document.getElementById("chat-box").scrollHeight;
+      if (!document.getElementById("message").disabled) document.getElementById("message").focus();
     });
 
     function selectMode(mode) {
       currentMode = mode;
-      modeInput.value = mode;
+      document.getElementById("mode").value = mode;
       const prompts = modePrompts[mode] || [];
       let html = '<div class="prompt-buttons">';
       prompts.forEach(p => {
@@ -125,51 +113,59 @@
         html += `<button onclick="submitPrompt(${escaped})">${p}</button>`;
       });
       html += '</div>';
-      chatBox.innerHTML = html;
-      chatInput.disabled = false;
-      sendBtn.disabled = false;
-      chatInput.placeholder = `Ask about ${mode.toLowerCase()}...`;
-      chatInput.focus();
+      document.getElementById("chat-box").innerHTML = html;
+      document.getElementById("message").disabled = false;
+      document.getElementById("send-btn").disabled = false;
+      document.getElementById("message").placeholder = `Ask about ${mode.toLowerCase()}...`;
+      document.getElementById("message").focus();
     }
 
     // Submit a prompt
     function submitPrompt(text) {
-      chatInput.value = text;
+      document.getElementById("message").value = text;
       const prompt = document.createElement("div");
       prompt.className = "chat-entry user";
       prompt.innerHTML = `
         <div class="bubble">${text}</div>`;
-      chatBox.appendChild(prompt);
+      document.getElementById("chat-box").appendChild(prompt);
       sendBtn.click();
       setTimeout(() => {
-        chatInput.value = "";
+        document.getElementById("message").value = "";
       }, 20);
     }
 
+    // Submit on Enter (no Shift)
+    document.getElementById("message").addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        submitPrompt(document.getElementById("message").value.trim());
+      }
+    });
+
     // Clear chat and reset
     function clearChat() {
-        chatBox.innerHTML = `
+        document.getElementById("chat-box").innerHTML = `
           <div class="mode-buttons">
             <button onclick="selectMode('Advocacy')">Advocacy</button>
             <button onclick="selectMode('Procurement')">Procurement</button>
             <button onclick="selectMode('Workforce Solutions')">Workforce Solutions</button>
             <button onclick="selectMode('Membership')">Membership</button>
           </div>`;
-        chatInput.value = "";
-        chatInput.placeholder = "Select a mode to begin...";
-        chatInput.disabled = true;
+        document.getElementById("message").value = "";
+        document.getElementById("message").placeholder = "Select a mode to begin...";
+        document.getElementById("message").disabled = true;
         sendBtn.disabled = true;
-        modeInput.value = "";
+        document.getElementById("mode").value = "";
         currentMode = "";
       }
 
     function scrollToTop() {
-      chatBox.scrollTop = 0;
+      document.getElementById("chat-box").scrollTop = 0;
     }
 
     function clearInputAfterSend() {
       setTimeout(() => {
-        chatInput.value = "";
+        document.getElementById("message").value = "";
       }, 20);
     }
   </script>
