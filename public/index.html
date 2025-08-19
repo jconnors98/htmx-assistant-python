@@ -10,18 +10,19 @@
 <body>
   <div class="container">
     <h1>BCCA Assistant</h1>
-    <p class="intro">Your one-stop destination for construction jobs and career support in BC. Whether you're just starting out, changing careers, or looking to grow in the construction industry, we connect you with job opportunities, training programs, and resources from the British Columbia Construction Association (BCCA) and its partners. Start here to explore the tools and support you need to build your future in construction.</p>
+    <p class="intro">Welcome to your central hub for building success in BC’s construction industry. As the voice of the British Columbia Construction Association (BCCA) and our trusted partners, we provide the connections, resources, and support you need to thrive. From advocacy and procurement to workforce solutions and membership services, we’re here to help you access opportunities, grow your career, and strengthen the construction community across the province.</p>
 
     <div id="chat-window">
       <div id="chat-box" class="chat-box">
-          <div class="mode-buttons">
-            <button onclick="selectMode('Advocacy')">Advocacy</button>
-            <button onclick="selectMode('Procurement')">Procurement</button>
-            <button onclick="selectMode('Workforce Solutions')">Workforce Solutions</button>
-            <button onclick="selectMode('Membership')">Membership</button>
-          </div>
+          <div id="mode-buttons" class="mode-buttons">
+          <button onclick="selectMode('Advocacy')">Advocacy</button>
+          <button onclick="selectMode('Procurement')">Procurement</button>
+          <button onclick="selectMode('Workforce Solutions')">Workforce Solutions</button>
+          <button onclick="selectMode('Membership')">Membership</button>
         </div>
+        <div id="prompt-buttons" class="prompt-buttons"></div>
       </div>
+    </div>
 
       <!-- Text-based chat -->
       <form
@@ -62,7 +63,7 @@
       "Procurement": [
         "What procurement best practices does BCCA advocate for?",
         "Where can I find BCCA's public sector procurement resources?",
-        "How can I use BidCentral or BCCA's standard documents?",
+        "How can I use BidCentral for finding projects?",
         "What is BCCA doing to influence procurement practices in BC?"
       ],
       "Workforce Solutions": [
@@ -107,17 +108,22 @@
       currentMode = mode;
       document.getElementById("mode").value = mode;
       const prompts = modePrompts[mode];
-      let html = '<div class="prompt-buttons">';
+      let html = "";
       prompts.forEach(p => {
         // const escaped = JSON.stringify(p);
-        html += `<button onclick="submitPrompt('${p}')">${p}</button>`;
+        html += `<button onclick=\"submitPrompt('${p}')\">${p}</button>`;
       });
-      html += '</div>';
-      document.getElementById("chat-box").innerHTML = html;
+      document.getElementById("prompt-buttons").innerHTML = html;
+
+      document.querySelectorAll("#mode-buttons button").forEach(btn => {
+        btn.classList.toggle("active", btn.textContent === mode);
+      });
       document.getElementById("message").disabled = false;
       document.getElementById("send-btn").disabled = false;
       document.getElementById("message").placeholder = `Ask about ${mode.toLowerCase()}...`;
       document.getElementById("message").focus();
+      document.getElementById("chat-box").scrollTop = 0;
+
     }
 
     // Submit a prompt
@@ -144,20 +150,16 @@
 
     // Clear chat and reset
     function clearChat() {
-        document.getElementById("chat-box").innerHTML = `
-          <div class="mode-buttons">
-            <button onclick="selectMode('Advocacy')">Advocacy</button>
-            <button onclick="selectMode('Procurement')">Procurement</button>
-            <button onclick="selectMode('Workforce Solutions')">Workforce Solutions</button>
-            <button onclick="selectMode('Membership')">Membership</button>
-          </div>`;
-        document.getElementById("message").value = "";
-        document.getElementById("message").placeholder = "Select a mode to begin...";
-        document.getElementById("message").disabled = true;
-        document.getElementById("send-btn").disabled = true;
-        document.getElementById("mode").value = "";
-        currentMode = "";
-      }
+      document.getElementById("prompt-buttons").innerHTML = "";
+      document.querySelectorAll("#chat-box .chat-entry").forEach(el => el.remove());
+      document.querySelectorAll("#mode-buttons button").forEach(btn => btn.classList.remove("active"));
+      document.getElementById("message").value = "";
+      document.getElementById("message").placeholder = "Select a mode to begin...";
+      document.getElementById("message").disabled = true;
+      document.getElementById("send-btn").disabled = true;
+      document.getElementById("mode").value = "";
+      currentMode = "";
+    }
 
     function scrollToTop() {
       document.getElementById("chat-box").scrollTop = 0;

@@ -138,6 +138,11 @@ h1 {
   gap: 0.5rem;
   margin-bottom: 1rem;
   justify-content: center;
+  position: sticky;
+  top: 0;
+  background: white;
+  padding-bottom: 0.5rem;
+  z-index: 1;
 }
 
 .mode-buttons button {
@@ -154,6 +159,11 @@ h1 {
 .mode-buttons button:hover {
   background-color: #a0003f;
 }
+
+.mode-buttons button.active {
+  background-color: #a0003f;
+}
+
 
 /* Form */
 .input-group {
