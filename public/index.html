@@ -56,14 +56,14 @@
       "Advocacy": [
         "What is BCCA doing to advance Prompt Payment legislation?",
         "How does BCCA support Skilled Workforce Development?",
-        "What are BCCA's key industry policy priorities right now?",
-        "How can I find BCCA's latest advocacy updates or briefings?",
+        "What are BCCA&#039;s key industry policy priorities right now?",
+        "How can I find BCCA&#039;s latest advocacy updates or briefings?",
         "What is Construction Month and how can I get involved?"
       ],
       "Procurement": [
         "What procurement best practices does BCCA advocate for?",
-        "Where can I find BCCA's public sector procurement resources?",
-        "How can I use BidCentral for finding projects?",
+        "Where can I find BCCA&#039;s public sector procurement resources?",
+        "How can I use BidCentral to find projects in BC?",
         "What is BCCA doing to influence procurement practices in BC?"
       ],
       "Workforce Solutions": [
@@ -77,7 +77,7 @@
         "Why should my company become a BCCA member?",
         "How do I join BCCA or a Regional Construction Association?",
         "What benefits do members receive?",
-        "Where can I find BCCA's strategic plan or governance info?"
+        "Where can I find BCCA&#039;s strategic plan or governance info?"
       ]
     };
     let currentMode = "";
@@ -110,8 +110,8 @@
       const prompts = modePrompts[mode];
       let html = "";
       prompts.forEach(p => {
-        // const escaped = JSON.stringify(p);
-        html += `<button onclick=\"submitPrompt('${p}')\">${p}</button>`;
+        const escapedPrompt = p.replace("&#039;", "");
+        html += `<button onclick=\"submitPrompt('${escapedPrompt}')\">${p}</button>`;
       });
       document.getElementById("prompt-buttons").innerHTML = html;
 
