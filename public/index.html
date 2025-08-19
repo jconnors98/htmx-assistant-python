@@ -9,16 +9,17 @@
 </head>
 <body>
   <div class="container">
-    <h1>Builders Life TalentCentral Assistant</h1>
+    <h1>BCCA Assistant</h1>
     <p class="intro">Your one-stop destination for construction jobs and career support in BC. Whether you're just starting out, changing careers, or looking to grow in the construction industry, we connect you with job opportunities, training programs, and resources from the British Columbia Construction Association (BCCA) and its partners. Start here to explore the tools and support you need to build your future in construction.</p>
 
     <div id="chat-window">
       <div id="chat-box" class="chat-box">
-        <!-- Prompt buttons -->
-        <div class="prompt-buttons">
-          <button onclick="submitPrompt('How do I become a Red Seal Apprentice?')">🔧 How do I become a Red Seal Apprentice?</button>
-          <button onclick="submitPrompt('Can I find a mentor in electrical work?')">👷 Can I find a mentor in electrical work?</button>
-          <button onclick="submitPrompt('Is there funding to help me with training?')">💰 Is there funding to help me with training?</button>
+          <div class="mode-buttons">
+            <button onclick="selectMode('Advocacy')">Advocacy</button>
+            <button onclick="selectMode('Procurement')">Procurement</button>
+            <button onclick="selectMode('Workforce Solutions')">Workforce Solutions</button>
+            <button onclick="selectMode('Membership')">Membership</button>
+          </div>
         </div>
       </div>
 
@@ -31,15 +32,17 @@
         onsubmit="clearInputAfterSend()"
       >
         <div class="input-group">
-          <textarea
-            id="message"
-            name="message"
-            placeholder="Ask the Assistant about jobs, training, etc..."
-            rows="1"
-            required
-          ></textarea>
-          <button id="send-btn" type="submit">Send</button>
-          <button type="button" onclick="clearChat()" class="secondary">Clear Chat</button>
+            <textarea
+              id="message"
+              name="message"
+              placeholder="Select a mode to begin..."
+              rows="1"
+              required
+              disabled
+            ></textarea>
+            <input type="hidden" id="mode" name="mode" />
+            <button id="send-btn" type="submit" disabled>Send</button>
+            <button type="button" onclick="clearChat()" class="secondary">Clear Chat</button>
         </div>
       </form>
 
@@ -50,17 +53,48 @@
   <script>
     const chatInput = document.getElementById("message");
     const chatBox = document.getElementById("chat-box");
+    const modeInput = document.getElementById("mode");
+    const sendBtn = document.getElementById("send-btn");
+
+    const modePrompts = {
+      "Advocacy": [
+        "What is BCCA doing to advance Prompt Payment legislation?",
+        "How does BCCA support Skilled Workforce Development?",
+        "What are BCCA's key industry policy priorities right now?",
+        "How can I find BCCA's latest advocacy updates or briefings?",
+        "What is Construction Month and how can I get involved?"
+      ],
+      "Procurement": [
+        "What procurement best practices does BCCA advocate for?",
+        "Where can I find BCCA's public sector procurement resources?",
+        "How can I use BidCentral or BCCA's standard documents?",
+        "What is BCCA doing to influence procurement practices in BC?"
+      ],
+      "Workforce Solutions": [
+        "How can TalentCentral help me find construction jobs and training?",
+        "Tell me about the Building Builders mentorship program.",
+        "What programs does BCCA offer for integrating newcomers or equity-seeking groups?",
+        "What programs and services does BCCA offer as support?",
+        "What is the BCCA Benefits Program?"
+      ],
+      "Membership": [
+        "Why should my company become a BCCA member?",
+        "How do I join BCCA or a Regional Construction Association?",
+        "What benefits do members receive?",
+        "Where can I find BCCA's strategic plan or governance info?"
+      ]
+    };
+    let currentMode = "";
 
     // Submit on Enter (no Shift)
     chatInput.addEventListener("keydown", function (e) {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
-        document.getElementById("send-btn").click();
+        sendBtn.click();
       }
     });
 
-    // Autofocus on load
-    window.onload = () => chatInput.focus();
+    // Enable chat input and send button when a mode is selected
 
     // Add typing indicator
     document.addEventListener("htmx:beforeRequest", () => {
@@ -78,8 +112,25 @@
       const thinkingBubble = document.querySelector(".chat-entry.thinking");
       if (thinkingBubble) thinkingBubble.remove();
       chatBox.scrollTop = chatBox.scrollHeight;
-      chatInput.focus();
+      if (!chatInput.disabled) chatInput.focus();
     });
+
+    function selectMode(mode) {
+      currentMode = mode;
+      modeInput.value = mode;
+      const prompts = modePrompts[mode] || [];
+      let html = '<div class="prompt-buttons">';
+      prompts.forEach(p => {
+        const escaped = JSON.stringify(p);
+        html += `<button onclick="submitPrompt(${escaped})">${p}</button>`;
+      });
+      html += '</div>';
+      chatBox.innerHTML = html;
+      chatInput.disabled = false;
+      sendBtn.disabled = false;
+      chatInput.placeholder = `Ask about ${mode.toLowerCase()}...`;
+      chatInput.focus();
+    }
 
     // Submit a prompt
     function submitPrompt(text) {
@@ -89,7 +140,7 @@
       prompt.innerHTML = `
         <div class="bubble">${text}</div>`;
       chatBox.appendChild(prompt);
-      document.getElementById("send-btn").click();
+      sendBtn.click();
       setTimeout(() => {
         chatInput.value = "";
       }, 20);
@@ -97,15 +148,20 @@
 
     // Clear chat and reset
     function clearChat() {
-      document.getElementById("chat-box").innerHTML = `
-        <div class="prompt-buttons">
-          <button onclick="submitPrompt('How do I become a Red Seal Apprentice?')">🔧 How do I become a Red Seal Apprentice?</button>
-          <button onclick="submitPrompt('Can I find a mentor in electrical work?')">👷 Can I find a mentor in electrical work?</button>
-          <button onclick="submitPrompt('Is there funding to help me with training?')">💰 Is there funding to help me with training?</button>
-        </div>`;
-      chatInput.value = "";
-      chatInput.focus();
-    }
+        chatBox.innerHTML = `
+          <div class="mode-buttons">
+            <button onclick="selectMode('Advocacy')">Advocacy</button>
+            <button onclick="selectMode('Procurement')">Procurement</button>
+            <button onclick="selectMode('Workforce Solutions')">Workforce Solutions</button>
+            <button onclick="selectMode('Membership')">Membership</button>
+          </div>`;
+        chatInput.value = "";
+        chatInput.placeholder = "Select a mode to begin...";
+        chatInput.disabled = true;
+        sendBtn.disabled = true;
+        modeInput.value = "";
+        currentMode = "";
+      }
 
     function scrollToTop() {
       chatBox.scrollTop = 0;

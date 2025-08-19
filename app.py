@@ -30,6 +30,7 @@ def add_security_headers(response):
 @app.post("/ask")
 def ask():
     message = (request.form.get("message") or "").strip()
+    mode = (request.form.get("mode") or "").strip()
     if not message:
         return (
             '<div class="chat-entry assistant">'
@@ -38,9 +39,17 @@ def ask():
         )
 
     try:
+        mode_descriptions = {
+            "Advocacy": "Focus on BCCA's advocacy efforts, policies, and industry priorities.",
+            "Procurement": "Focus on procurement best practices and resources for BC construction.",
+            "Workforce Solutions": "Focus on workforce solutions, jobs, training, and related programs.",
+            "Membership": "Focus on BCCA membership benefits, joining, and governance information.",
+        }
+        mode_context = mode_descriptions.get(mode, "")
+        interest = mode if mode else "general BCCA information"
         gpt_system_prompt = (
-            "You're a helpful, warm assistant supporting users on the BCCA platform. "
-            "Help with construction jobs, training, and workforce programs in BC. Speak naturally. "
+            "You're a helpful, warm assistant supporting users with information about the BC Construction Association. "
+            f"The user is interested in {interest}. {mode_context} "
             "When answering, always try to search and use information from the following sites first, in this order of priority:"
             f"{', '.join(PRIORITY_SITES)}"
             "If you cannot fully answer from these, then use other reputable sources."

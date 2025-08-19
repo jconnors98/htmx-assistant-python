@@ -132,6 +132,29 @@ h1 {
   background-color: #a0003f;
 }
 
+.mode-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  justify-content: center;
+}
+
+.mode-buttons button {
+  background-color: #82002d;
+  color: white;
+  border: none;
+  border-radius: 20px;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: background-color 0.2s ease;
+}
+
+.mode-buttons button:hover {
+  background-color: #a0003f;
+}
+
 /* Form */
 .input-group {
   display: flex;
