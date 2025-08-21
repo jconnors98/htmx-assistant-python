@@ -14,12 +14,6 @@
 
     <div id="chat-window">
       <div id="chat-box" class="chat-box">
-          <div id="mode-buttons" class="mode-buttons">
-          <button onclick="selectMode('Advocacy')">Advocacy</button>
-          <button onclick="selectMode('Procurement')">Procurement</button>
-          <button onclick="selectMode('Workforce Solutions')">Workforce Solutions</button>
-          <button onclick="selectMode('Membership')">Membership</button>
-        </div>
         <div id="prompt-buttons" class="prompt-buttons"></div>
       </div>
     </div>
@@ -36,7 +30,7 @@
             <textarea
               id="message"
               name="message"
-              placeholder="Select a mode to begin..."
+              placeholder="Loading..."
               rows="1"
               required
               disabled
@@ -51,41 +45,10 @@
   </div>
 
   <script>
-
-    const modePrompts = {
-      "Advocacy": [
-        "What is BCCA doing to advance Prompt Payment legislation?",
-        "How does BCCA support Skilled Workforce Development?",
-        "What are BCCA&#039;s key industry policy priorities right now?",
-        "How can I find BCCA&#039;s latest advocacy updates or briefings?",
-        "What is Construction Month and how can I get involved?"
-      ],
-      "Procurement": [
-        "What procurement best practices does BCCA advocate for?",
-        "Where can I find BCCA&#039;s public sector procurement resources?",
-        "How can I use BidCentral to find projects in BC?",
-        "What is BCCA doing to influence procurement practices in BC?"
-      ],
-      "Workforce Solutions": [
-        "How can TalentCentral help me find construction jobs and training?",
-        "Tell me about the Building Builders mentorship program.",
-        "What programs does BCCA offer for integrating newcomers or equity-seeking groups?",
-        "What programs and services does BCCA offer as support?",
-        "What is the BCCA Benefits Program?"
-      ],
-      "Membership": [
-        "Why should my company become a BCCA member?",
-        "How do I join BCCA or a Regional Construction Association?",
-        "What benefits do members receive?",
-        "Where can I find BCCA&#039;s strategic plan or governance info?"
-      ]
-    };
-    let currentMode = "";
+    const urlParams = new URLSearchParams(window.location.search);
+    const mode = urlParams.get("mode");
     const chatForm = document.getElementById("chat-form");
 
-    // Enable chat input and send button when a mode is selected
-
-    // Add typing indicator
     document.addEventListener("htmx:beforeRequest", () => {
       const thinking = document.createElement("div");
       thinking.className = "chat-entry assistant thinking";
@@ -96,7 +59,6 @@
       document.getElementById("chat-box").appendChild(thinking);
     });
 
-    // Remove typing indicator + scroll
     document.addEventListener("htmx:afterOnLoad", () => {
       const thinkingBubble = document.querySelector(".chat-entry.thinking");
       if (thinkingBubble) thinkingBubble.remove();
@@ -104,35 +66,40 @@
       if (!document.getElementById("message").disabled) document.getElementById("message").focus();
     });
 
-    function selectMode(mode) {
-      currentMode = mode;
+    async function init() {
+      if (!mode) {
+        document.getElementById("message").placeholder = "Mode is required in the URL.";
+        return;
+      }
       document.getElementById("mode").value = mode;
-      const prompts = modePrompts[mode];
-      let html = "";
-      prompts.forEach(p => {
-        const escapedPrompt = p.replace("&#039;", "");
-        html += `<button onclick=\"submitPrompt('${escapedPrompt}')\">${p}</button>`;
-      });
-      document.getElementById("prompt-buttons").innerHTML = html;
-
-      document.querySelectorAll("#mode-buttons button").forEach(btn => {
-        btn.classList.toggle("active", btn.textContent === mode);
-      });
+      try {
+        const res = await fetch(`/flask/modes/${encodeURIComponent(mode)}`);
+        if (res.ok) {
+          const data = await res.json();
+          const prompts = data.prompts || [];
+          let html = "";
+          prompts.forEach(p => {
+            html += `<button onclick="submitPrompt(this.textContent)">${p}</button>`;
+          });
+          document.getElementById("prompt-buttons").innerHTML = html;
+        }
+      } catch (err) {
+        console.error("Failed to load prompts", err);
+      }
       document.getElementById("message").disabled = false;
       document.getElementById("send-btn").disabled = false;
       document.getElementById("message").placeholder = `Ask about ${mode.toLowerCase()}...`;
       document.getElementById("message").focus();
-      document.getElementById("chat-box").scrollTop = 0;
-
     }
+
+    document.addEventListener("DOMContentLoaded", init);
 
     // Submit a prompt
     function submitPrompt(text) {
       document.getElementById("message").value = text;
       const prompt = document.createElement("div");
       prompt.className = "chat-entry user";
-      prompt.innerHTML = `
-        <div class="bubble">${text}</div>`;
+      prompt.innerHTML = `<div class="bubble">${text}</div>`;
       document.getElementById("chat-box").appendChild(prompt);
       chatForm.requestSubmit();
       setTimeout(() => {
@@ -150,15 +117,9 @@
 
     // Clear chat and reset
     function clearChat() {
-      document.getElementById("prompt-buttons").innerHTML = "";
       document.querySelectorAll("#chat-box .chat-entry").forEach(el => el.remove());
-      document.querySelectorAll("#mode-buttons button").forEach(btn => btn.classList.remove("active"));
       document.getElementById("message").value = "";
-      document.getElementById("message").placeholder = "Select a mode to begin...";
-      document.getElementById("message").disabled = true;
-      document.getElementById("send-btn").disabled = true;
-      document.getElementById("mode").value = "";
-      currentMode = "";
+      document.getElementById("message").focus();
     }
 
     function scrollToTop() {

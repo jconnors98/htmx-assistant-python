@@ -3,31 +3,41 @@ import re
 from flask import Flask, request, send_from_directory
 from markdown import markdown
 import bleach
-from decouple import config, Csv
+from decouple import config
 from openai import OpenAI
+from pymongo import MongoClient
+from pymongo.server_api import ServerApi
 
-# from gemini import ask_gemini
 
-if not config("OPENAI_API_KEY") or not config("GEMINI_API_KEY"):
-    raise RuntimeError("Missing API keys. Check your .env file.")
+if not config("OPENAI_API_KEY"):
+    raise RuntimeError("Missing API key. Check your .env file.")
 
 client = OpenAI(api_key=config("OPENAI_API_KEY"))
 
-PRIORITY_SITES = config('PRIORITY_SITES', cast=Csv())
-print("Using priority sites:", PRIORITY_SITES)
+mongo_client = MongoClient(config("MONGO_URI"), server_api=ServerApi("1"))
+try:
+    mongo_client.admin.command("ping")
+    print("MongoDB connection successful.")
 
+except Exception as e:
+    raise RuntimeError(f"Failed to connect to MongoDB: {e}")
+
+db = mongo_client.get_database(config("MONGO_DB", default="bcca-assistant"))
+modes_collection = db.get_collection("modes")
+
+print("Connected to MongoDB at", config("MONGO_URI"))
 app = Flask(__name__, static_folder="public", static_url_path="")
 
 
 @app.after_request
 def add_security_headers(response):
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Content-Security-Policy"] = "frame-ancestors *"
     return response
 
 
-@app.post("/ask")
+@app.post("/flask/ask")
 def ask():
     message = (request.form.get("message") or "").strip()
     mode = (request.form.get("mode") or "").strip()
@@ -39,21 +49,18 @@ def ask():
         )
 
     try:
-        mode_descriptions = {
-            "Advocacy": "Focus on BCCA's advocacy efforts, policies, and industry priorities.",
-            "Procurement": "Focus on procurement best practices and resources for BC construction.",
-            "Workforce Solutions": "Focus on workforce solutions, jobs, training, and related programs.",
-            "Membership": "Focus on BCCA membership benefits, joining, and governance information.",
-        }
-        mode_context = mode_descriptions.get(mode, "")
+        mode_doc = modes_collection.find_one({"name": mode}) if mode else None
+        mode_context = mode_doc.get("description", "") if mode_doc else ""
+        mode_preferred_sites = mode_doc.get("preferred_sites", []) if mode_doc else []
+        mode_blocked_sites = mode_doc.get("blocked_sites", []) if mode_doc else []
         interest = mode if mode else "general BCCA information"
         gpt_system_prompt = (
             "You're a helpful, warm assistant supporting users with information about the BC Construction Association. "
             f"The user is interested in {interest}. {mode_context} "
-            "When answering, always try to search and use information from the following sites first, in this order of priority:"
-            f"{', '.join(PRIORITY_SITES)}"
+            "When answering, always try to search and use information from the following sites first, in this order of priority, using the asterisk as a match-all character:"
+            f"{', '.join(mode_preferred_sites)}"
             "If you cannot fully answer from these, then use other reputable sources."
-            "Do not use icba.ca as a source."
+            f"Do not use the following sites as a source: {', '.join(mode_blocked_sites)}"
             "In your final answer, list sources from my preferred sites separately before listing any other sources."
         )
         gpt_result = client.responses.create(
@@ -67,33 +74,7 @@ def ask():
                 {"role": "user", "content": message},
             ],
         )
-        # gemini_content = ask_gemini(message, PRIORITY_SITES)
         gpt_text = gpt_result.output_text
-        # gemini_text = gemini_content or "🤖 Gemini had no response."
-
-        # blended = client.responses.create(
-        #     model="gpt-5",
-        #     input=[
-        #         {
-        #             "role": "system",
-        #             "content": (
-        #                 "You're a writing assistant. Combine the two answers into a "
-        #                 "clear, helpful, friendly response for users asking about "
-        #                 "construction careers or training in BC. Do not repeat "
-        #                 "points. Include links in markdown if available."
-        #             ),
-        #         },
-        #         {
-        #             "role": "user",
-        #             "content": (
-        #                 f"Blend these two answers:\n\n🔮 GPT says:\n{gpt_text}\n\n"
-        #                 f"🌐 Gemini says:\n{gemini_text}"
-        #             ),
-        #         },
-        #     ],
-        # )
-
-        # final_reply = blended.output_text
         html_reply = markdown(gpt_text)
 
         # Auto-link plain URLs
@@ -125,6 +106,20 @@ def ask():
             '<div class="bubble">❌ There was an error getting a response. Please try again.</div>'
             "</div>"
         )
+
+
+@app.get("/flask/modes")
+def list_modes():
+    docs = list(modes_collection.find({}, {"_id": 0}))
+    return {"modes": docs}
+
+
+@app.get("/flask/modes/<mode>")
+def get_mode(mode):
+    doc = modes_collection.find_one({"name": mode}, {"_id": 0})
+    if not doc:
+        return {"prompts": []}, 404
+    return {"prompts": doc.get("prompts", []), "description": doc.get("description", "")}
 
 
 @app.route("/")
