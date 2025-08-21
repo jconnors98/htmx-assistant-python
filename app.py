@@ -53,16 +53,26 @@ def ask():
         mode_context = mode_doc.get("description", "") if mode_doc else ""
         mode_preferred_sites = mode_doc.get("preferred_sites", []) if mode_doc else []
         mode_blocked_sites = mode_doc.get("blocked_sites", []) if mode_doc else []
+        allow_other_sites = mode_doc.get("allow_other_sites", True) if mode_doc else True
         interest = mode if mode else "general BCCA information"
         gpt_system_prompt = (
             "You're a helpful, warm assistant supporting users with information about the BC Construction Association. "
             f"The user is interested in {interest}. {mode_context} "
-            "When answering, always try to search and use information from the following sites first, in this order of priority, using the asterisk as a match-all character:"
-            f"{', '.join(mode_preferred_sites)}"
-            "If you cannot fully answer from these, then use other reputable sources."
-            f"Do not use the following sites as a source: {', '.join(mode_blocked_sites)}"
-            "In your final answer, list sources from my preferred sites separately before listing any other sources."
+            "When answering, always try to search and use information from the following sites first, in this order of priority, "
+            "using the asterisk as a match-all character: "
+            f"{', '.join(mode_preferred_sites)} "
         )
+        if allow_other_sites:
+            gpt_system_prompt += (
+                "If you cannot fully answer from these, then use other reputable sources. "
+                f"Do not use the following sites as a source: {', '.join(mode_blocked_sites)} "
+                "In your final answer, list sources from my preferred sites separately before listing any other sources."
+            )
+        else:
+            gpt_system_prompt += (
+                "Only use these sites; do not use any other sources. "
+            )
+
         gpt_result = client.responses.create(
             model="gpt-4.1",
             tools=[{ "type": "web_search_preview" }],
