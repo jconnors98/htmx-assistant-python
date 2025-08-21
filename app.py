@@ -119,7 +119,11 @@ def get_mode(mode):
     doc = modes_collection.find_one({"name": mode}, {"_id": 0})
     if not doc:
         return {"prompts": []}, 404
-    return {"prompts": doc.get("prompts", []), "description": doc.get("description", "")}
+    return {
+        "prompts": doc.get("prompts", []),
+        "description": doc.get("description", ""),
+        "intro": doc.get("intro", ""),
+    }
 
 
 @app.route("/")

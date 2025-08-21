@@ -9,9 +9,8 @@
 </head>
 <body>
   <div class="container">
-    <h1>BCCA Assistant</h1>
-    <p class="intro">Welcome to your central hub for building success in BC’s construction industry. As the voice of the British Columbia Construction Association (BCCA) and our trusted partners, we provide the connections, resources, and support you need to thrive. From advocacy and procurement to workforce solutions and membership services, we’re here to help you access opportunities, grow your career, and strengthen the construction community across the province.</p>
-
+    <h1>Builders Copilot</h1>
+    <p class="intro" id="intro"></p>
     <div id="chat-window">
       <div id="chat-box" class="chat-box">
         <div id="prompt-buttons" class="prompt-buttons"></div>
@@ -48,6 +47,7 @@
     const urlParams = new URLSearchParams(window.location.search);
     const mode = urlParams.get("mode");
     const chatForm = document.getElementById("chat-form");
+    const introEl = document.getElementById("intro");
 
     document.addEventListener("htmx:beforeRequest", () => {
       const thinking = document.createElement("div");
@@ -67,25 +67,27 @@
     });
 
     async function init() {
-      if (!mode) {
-        document.getElementById("message").placeholder = "Mode is required in the URL.";
-        return;
-      }
-      document.getElementById("mode").value = mode;
-      try {
-        const res = await fetch(`/flask/modes/${encodeURIComponent(mode)}`);
-        if (res.ok) {
-          const data = await res.json();
-          const prompts = data.prompts || [];
-          let html = "";
-          prompts.forEach(p => {
-            html += `<button onclick="submitPrompt(this.textContent)">${p}</button>`;
-          });
-          document.getElementById("prompt-buttons").innerHTML = html;
+        if (!mode) {
+          document.getElementById("message").placeholder = "Mode is required in the URL.";
+          return;
         }
-      } catch (err) {
-        console.error("Failed to load prompts", err);
-      }
+        document.getElementById("mode").value = mode;
+        introEl.textContent = "";
+        try {
+          const res = await fetch(`/flask/modes/${encodeURIComponent(mode)}`);
+          if (res.ok) {
+            const data = await res.json();
+            const prompts = data.prompts || [];
+            introEl.textContent = data.intro || "";
+            let html = "";
+            prompts.forEach(p => {
+              html += `<button onclick="submitPrompt(this.textContent)">${p}</button>`;
+            });
+            document.getElementById("prompt-buttons").innerHTML = html;
+          }
+        } catch (err) {
+          console.error("Failed to load prompts", err);
+        }
       document.getElementById("message").disabled = false;
       document.getElementById("send-btn").disabled = false;
       document.getElementById("message").placeholder = `Ask about ${mode.toLowerCase()}...`;
