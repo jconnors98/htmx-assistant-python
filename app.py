@@ -37,7 +37,7 @@ def add_security_headers(response):
     return response
 
 
-@app.post("/flask/ask")
+@app.post("/ask")
 def ask():
     message = (request.form.get("message") or "").strip()
     mode = (request.form.get("mode") or "").strip()
@@ -108,13 +108,13 @@ def ask():
         )
 
 
-@app.get("/flask/modes")
+@app.get("/modes")
 def list_modes():
     docs = list(modes_collection.find({}, {"_id": 0}))
     return {"modes": docs}
 
 
-@app.get("/flask/modes/<mode>")
+@app.get("/modes/<mode>")
 def get_mode(mode):
     doc = modes_collection.find_one({"name": mode}, {"_id": 0})
     if not doc:
