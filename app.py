@@ -13,6 +13,7 @@ if not config("OPENAI_API_KEY"):
     raise RuntimeError("Missing API key. Check your .env file.")
 
 client = OpenAI(api_key=config("OPENAI_API_KEY"))
+VECTOR_STORE_ID = config("OPENAI_VECTOR_STORE_ID", default=None)
 
 mongo_client = MongoClient(config("MONGO_URI"), server_api=ServerApi("1"))
 try:
@@ -54,28 +55,52 @@ def ask():
         mode_preferred_sites = mode_doc.get("preferred_sites", []) if mode_doc else []
         mode_blocked_sites = mode_doc.get("blocked_sites", []) if mode_doc else []
         allow_other_sites = mode_doc.get("allow_other_sites", True) if mode_doc else True
+        prioritize_files = mode_doc.get("prioritize_files", False) if mode_doc else False
+        vector_store_id = VECTOR_STORE_ID
         interest = mode if mode else "general BCCA information"
+        tools = []
+
         gpt_system_prompt = (
             "You're a helpful, warm assistant supporting users with information about the BC Construction Association. "
             f"The user is interested in {interest}. {mode_context} "
-            "When answering, always try to search and use information from the following sites first, in this order of priority, "
-            "using the asterisk as a match-all character: "
-            f"{', '.join(mode_preferred_sites)} "
         )
+
+        if vector_store_id and mode:
+            tools.append({
+                "type": "file_search",
+                "vector_store_ids": [vector_store_id],
+                "filters": {
+                    "mode": mode
+                }
+            })
+
+            gpt_system_prompt += "You have access to a vector store containing relevant documents. "
+
+            if prioritize_files:
+                gpt_system_prompt += "When answering, prioritize information from the vector store first. Then search the following websites, listed in order of highest priority first, using the asterisk as a match-all character: "
+            else:
+                gpt_system_prompt += "When answering, use both the vector store and the following websites. They are listed in order of highest priority first, using the asterisk as a match-all character: "
+        else:
+            gpt_system_prompt += "When answering, use the following websites. They are listed in order of highest priority first, using the asterisk as a match-all character: "
+
+        gpt_system_prompt += f"{', '.join(mode_preferred_sites)} "
+
         if allow_other_sites:
             gpt_system_prompt += (
                 "If you cannot fully answer from these, then use other reputable sources. "
                 f"Do not use the following sites as a source: {', '.join(mode_blocked_sites)} "
-                "In your final answer, list sources from my preferred sites separately before listing any other sources."
+                "In your final answer, list internet sources from my preferred sites before listing any other internet sources."
             )
         else:
             gpt_system_prompt += (
-                "Only use these sites; do not use any other sources. "
+                "Only use these websites in your web search; do not use any other sources from the internet."
             )
+
+        tools.append({"type": "web_search_preview"})
 
         gpt_result = client.responses.create(
             model="gpt-4.1",
-            tools=[{ "type": "web_search_preview" }],
+            tools=tools,
             input=[
                 {
                     "role": "system",

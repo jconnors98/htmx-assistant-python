@@ -62,7 +62,8 @@ h1 {
 }
 
 .chat-entry.assistant .bubble {
-  background: #f2f2f2;
+  background: #ffffff;
+  border: 1px solid #0d6efd;
 }
 
 .chat-entry.user .bubble {
@@ -205,24 +206,8 @@ button.secondary {
 }
 
 button.secondary:hover {
-  background: #fce4ec;
-}
-
-/* Scroll Top Button */
-#scroll-top {
-  display: inline-block;
-  margin-top: 1rem;
-  background: #e0e0e0;
-  color: #333;
-  border: none;
-  padding: 0.4rem 1rem;
-  font-size: 0.8rem;
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-#scroll-top:hover {
-  background: #d0d0d0;
+  background: #82002d;
+  color: white;
 }
 
 /* Markdown Styling */
@@ -260,8 +245,4 @@ button.secondary:hover {
     width: 100%;
   }
 
-  #scroll-top {
-    width: 100%;
-    margin-top: 1rem;
-  }
 }
