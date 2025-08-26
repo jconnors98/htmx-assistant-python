@@ -46,6 +46,7 @@
   <script>
     const urlParams = new URLSearchParams(window.location.search);
     const mode = urlParams.get("mode");
+    const chatForm = document.getElementById("chat-form");
     const introEl = document.getElementById("intro");
 
     document.addEventListener("htmx:beforeRequest", () => {
@@ -95,26 +96,17 @@
 
     document.addEventListener("DOMContentLoaded", init);
 
-    // Append the user's message to the chat before sending it to the server
-    document.getElementById("chat-form").addEventListener("submit", function (e) {
-      const text = document.getElementById("message").value.trim();
-      if (!text) {
-        e.preventDefault();
-        return;
-      }
+    // Submit a prompt
+    function submitPrompt(text) {
+      document.getElementById("message").value = text;
       const prompt = document.createElement("div");
       prompt.className = "chat-entry user";
       prompt.innerHTML = `<div class="bubble">${text}</div>`;
       document.getElementById("chat-box").appendChild(prompt);
-      document.getElementById("chat-box").scrollTop = document.getElementById("chat-box").scrollHeight;
-      document.getElementById("message").value = "";
-      document.getElementById("message").focus();
-      });
-
-    // Submit a prompt programmatically (used by prompt buttons and Enter key)
-    function submitPrompt(text) {
-      document.getElementById("message").value = text;
-      document.getElementById("chat-form").requestSubmit();
+      chatForm.requestSubmit();
+      setTimeout(() => {
+        document.getElementById("message").value = "";
+      }, 20);
     }
 
     // Submit on Enter (no Shift)
@@ -132,10 +124,13 @@
       document.getElementById("message").focus();
     }
 
+    function scrollToTop() {
+      document.getElementById("chat-box").scrollTop = 0;
+    }
+
     function clearInputAfterSend() {
       setTimeout(() => {
         document.getElementById("message").value = "";
-        document.getElementById("message").focus();
       }, 20);
     }
   </script>
