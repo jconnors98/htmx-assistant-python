@@ -5,3 +5,6 @@ python-decouple
 markdown
 bleach
 pymongo[srv]
+boto3
+python-jose[cryptography]
+requests

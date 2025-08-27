@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <title>Admin Login</title>
+</head>
+<body>
+  <h1>Admin Login</h1>
+  <form id="login-form">
+    <label>Username: <input id="username" /></label><br/>
+    <label>Password: <input type="password" id="password" /></label><br/>
+    <button type="submit">Login</button>
+  </form>
+  <div id="error" style="color:red;"></div>
+  <script>
+    document.getElementById('login-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const username = document.getElementById('username').value;
+      const password = document.getElementById('password').value;
+      const res = await fetch('/flask/admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password })
+      });
+      if (!res.ok) {
+        document.getElementById('error').textContent = 'Login failed';
+        return;
+      }
+      const data = await res.json();
+      localStorage.setItem('idToken', data.id_token);
+      localStorage.setItem('accessToken', data.access_token || '');
+      localStorage.setItem('refreshToken', data.refresh_token || '');
+      window.location.href = '/flask/admin';
+    });
+  </script>
+</body>
+</html>
