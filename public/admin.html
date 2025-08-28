@@ -4,35 +4,37 @@
   <meta charset="UTF-8"/>
   <title>Admin Panel</title>
   <link href="https://cdn.quilljs.com/1.3.6/quill.snow.css" rel="stylesheet">
+   <link rel="stylesheet" href="App.css" />
 </head>
 <body>
-  <h1>Admin Panel</h1>
-  <h2>Manage Modes</h2>
-  <div>
-    <label>Name: <input id="mode-name" /></label>
-    <label>Description:<br><textarea id="mode-desc"></textarea></label>
-    <label>Intro:<br><textarea id="mode-intro"></textarea></label>
-    <label>Prompts (comma-separated): <input id="mode-prompts" /></label>
-    <label>Preferred Sites (comma-separated): <input id="mode-preferred" /></label>
-    <label>Blocked Sites (comma-separated): <input id="mode-blocked" /></label>
-    <label><input type="checkbox" id="mode-allow-other" checked /> Allow other sites</label>
-    <label><input type="checkbox" id="mode-prioritize-files" /> Prioritize files</label>
-    <button id="mode-save">Save Mode</button>
-  </div>
-  <ul id="mode-list"></ul>
+  <div class="container">
+    <h1>Admin Panel</h1>
+    <h2>Manage Modes</h2>
+    <div class="input-group">
+      <label>Name: <input id="mode-name" /></label>
+      <label>Description:<textarea id="mode-desc"></textarea></label>
+      <label>Intro:<textarea id="mode-intro"></textarea></label>
+      <label>Prompts (comma-separated): <input id="mode-prompts" /></label>
+      <label>Preferred Sites (comma-separated): <input id="mode-preferred" /></label>
+      <label>Blocked Sites (comma-separated): <input id="mode-blocked" /></label>
+      <label><input type="checkbox" id="mode-allow-other" checked /> Allow other sites</label>
+      <label><input type="checkbox" id="mode-prioritize-files" /> Prioritize files</label>
+      <button id="mode-save">Save Mode</button>
+    </div>
+    <ul id="mode-list"></ul>
 
   <h2>Manage Documents</h2>
-  <div>
-    <label>Mode: <input id="mode" /></label>
-    <label>Tags (comma-separated): <input id="tags" /></label>
-    <input type="file" id="file" />
-  </div>
-  <div id="editor" style="height:200px"></div>
-  <button id="save">Save</button>
-  <h3>Your Documents</h3>
-  <ul id="doc-list"></ul>
-  <script src="https://cdn.quilljs.com/1.3.6/quill.js"></script>
-  <script>
+    <div class="input-group">
+      <input id="mode" placeholder="Mode" />
+      <input id="tags" placeholder="Tags (comma-separated)" />
+      <input type="file" id="file" />
+    </div>
+    <div id="editor" style="height:200px"></div>
+    <button id="save">Save</button>
+    <h3>Your Documents</h3>
+    <ul id="doc-list"></ul>
+    <script src="https://cdn.quilljs.com/1.3.6/quill.js"></script>
+    <script>
     const quill = new Quill('#editor', { theme: 'snow' });
     let editingId = null;
     let modeEditingId = null;
@@ -170,5 +172,6 @@
     loadModes();
     loadDocs();
   </script>
+  </div>
 </body>
 </html>

@@ -3,15 +3,18 @@
 <head>
   <meta charset="UTF-8"/>
   <title>Admin Login</title>
+  <link rel="stylesheet" href="App.css" />
 </head>
 <body>
-  <h1>Admin Login</h1>
-  <form id="login-form">
-    <label>Username: <input id="username" /></label><br/>
-    <label>Password: <input type="password" id="password" /></label><br/>
-    <button type="submit">Login</button>
-  </form>
-  <div id="error" style="color:red;"></div>
+  <div class="container">
+    <h1>Admin Login</h1>
+    <form id="login-form" class="input-group">
+      <input id="username" placeholder="Username" />
+      <input type="password" id="password" placeholder="Password" />
+      <button type="submit">Login</button>
+    </form>
+    <div id="error" style="color:red;"></div>
+  </div>
   <script>
     document.getElementById('login-form').addEventListener('submit', async (e) => {
       e.preventDefault();
