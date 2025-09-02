@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <title>Mode Editor</title>
+  <link rel="stylesheet" href="../App.css" />
+</head>
+<body>
+  <div class="container">
+    <h1>Mode Editor</h1>
+    <section class="admin-section">
+      <h2>Mode Settings</h2>
+      <div class="input-group vertical">
+        <label>Name
+          <input id="mode-name" />
+        </label>
+        <label>Description
+          <textarea id="mode-desc"></textarea>
+        </label>
+        <label>Intro
+          <textarea id="mode-intro"></textarea>
+        </label>
+        <label>Prompts (comma-separated)
+          <input id="mode-prompts" />
+        </label>
+        <label>Tags
+          <div id="mode-tags" class="tag-input">
+            <input id="mode-tag-input" placeholder="Add tag and press Enter" />
+          </div>
+        </label>
+        <label>Preferred Sites (comma-separated)
+          <input id="mode-preferred" />
+        </label>
+        <label>Blocked Sites (comma-separated)
+          <input id="mode-blocked" />
+        </label>
+        <label>
+          <input type="checkbox" id="mode-allow-other" checked /> Allow other sites
+        </label>
+        <label>
+          <input type="checkbox" id="mode-prioritize-files" /> Prioritize files
+        </label>
+        <button id="mode-save">Save Mode</button>
+      </div>
+    </section>
+
+    <section class="admin-section" id="docs-section" style="display:none">
+      <h2>Documents</h2>
+      <div class="input-group vertical">
+        <input type="file" id="files" multiple />
+      </div>
+      <div id="file-rows"></div>
+      <button id="upload">Upload</button>
+      <h3>Existing Documents</h3>
+      <ul id="doc-list"></ul>
+    </section>
+  </div>
+
+  <script>
+    const idToken = localStorage.getItem('idToken') || '';
+    if (!idToken) {
+      window.location.href = '/flask/admin/login';
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    let modeId = params.get('id');
+    let modeName = '';
+    let modeTags = [];
+
+    async function loadMode() {
+      if (!modeId) {
+        renderModeTags([]);
+        return;
+      }
+      const res = await fetch('/flask/admin/modes/' + modeId, {
+        headers: { 'Authorization': 'Bearer ' + idToken }
+      });
+      if (!res.ok) return;
+      const m = await res.json();
+      modeName = m.name || '';
+      modeTags = m.tags || [];
+      document.getElementById('mode-name').value = m.name || '';
+      document.getElementById('mode-desc').value = m.description || '';
+      document.getElementById('mode-intro').value = m.intro || '';
+      document.getElementById('mode-prompts').value = (m.prompts || []).join(',');
+      document.getElementById('mode-preferred').value = (m.preferred_sites || []).join(',');
+      document.getElementById('mode-blocked').value = (m.blocked_sites || []).join(',');
+      document.getElementById('mode-allow-other').checked = m.allow_other_sites !== false;
+      document.getElementById('mode-prioritize-files').checked = !!m.prioritize_files;
+      renderModeTags(modeTags);
+      document.getElementById('docs-section').style.display = 'block';
+      loadDocs();
+    }
+
+    document.getElementById('mode-save').onclick = async () => {
+      const body = {
+        name: document.getElementById('mode-name').value,
+        description: document.getElementById('mode-desc').value,
+        intro: document.getElementById('mode-intro').value,
+        prompts: document.getElementById('mode-prompts').value.split(',').map(s => s.trim()).filter(Boolean),
+        tags: Array.from(document.querySelectorAll('#mode-tags .chip')).map(c => c.dataset.value),
+        preferred_sites: document.getElementById('mode-preferred').value.split(',').map(s => s.trim()).filter(Boolean),
+        blocked_sites: document.getElementById('mode-blocked').value.split(',').map(s => s.trim()).filter(Boolean),
+        allow_other_sites: document.getElementById('mode-allow-other').checked,
+        prioritize_files: document.getElementById('mode-prioritize-files').checked
+      };
+      const opts = {
+        method: modeId ? 'PUT' : 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + idToken,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+      };
+      const url = '/flask/admin/modes' + (modeId ? '/' + modeId : '');
+      const res = await fetch(url, opts);
+      if (res.ok) {
+        const data = await res.json();
+        if (!modeId) {
+          window.location.href = '/flask/admin/mode?id=' + data._id;
+        } else {
+          loadMode();
+        }
+      }
+    };
+
+    async function loadDocs() {
+      if (!modeName) return;
+      const res = await fetch('/flask/admin/documents?mode=' + encodeURIComponent(modeName), {
+        headers: { 'Authorization': 'Bearer ' + idToken }
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const list = document.getElementById('doc-list');
+      list.innerHTML = '';
+      data.documents.forEach(doc => {
+        const li = document.createElement('li');
+        li.textContent = (doc.tag ? doc.tag + ' - ' : '') + (doc.s3_key || '');
+        const delBtn = document.createElement('button');
+        delBtn.textContent = 'Delete';
+        delBtn.onclick = () => deleteDoc(doc._id);
+        li.appendChild(delBtn);
+        list.appendChild(li);
+      });
+    }
+
+    async function deleteDoc(id) {
+      await fetch('/flask/admin/documents/' + id, {
+        method: 'DELETE',
+        headers: { 'Authorization': 'Bearer ' + idToken }
+      });
+      loadDocs();
+    }
+
+    document.getElementById('upload').onclick = async () => {
+      const rows = document.querySelectorAll('#file-rows .file-row');
+      for (const row of rows) {
+        const file = row.file;
+        const tag = row.querySelector('select').value;
+        const alwaysInclude = row.querySelector('.always-include').checked;
+        const form = new FormData();
+        form.append('mode', modeName);
+        form.append('tag', tag);
+        form.append('content', '');
+        form.append('file', file);
+        if (alwaysInclude) form.append('always_include', 'true');
+        await fetch('/flask/admin/documents', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + idToken },
+          body: form
+        });
+      }
+      document.getElementById('files').value = '';
+      document.getElementById('file-rows').innerHTML = '';
+      loadDocs();
+    };
+
+    function buildFileRows() {
+      const container = document.getElementById('file-rows');
+      container.innerHTML = '';
+      Array.from(document.getElementById('files').files).forEach(file => {
+        const row = document.createElement('div');
+        row.className = 'file-row';
+        row.file = file;
+        const name = document.createElement('span');
+        name.textContent = file.name;
+        const select = document.createElement('select');
+        modeTags.forEach(t => {
+          const opt = document.createElement('option');
+          opt.value = t;
+          opt.textContent = t;
+          select.appendChild(opt);
+        });
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.className = 'always-include';
+        const cbLabel = document.createElement('label');
+        cbLabel.appendChild(cb);
+        cbLabel.appendChild(document.createTextNode(' Always include'));
+        row.appendChild(name);
+        row.appendChild(select);
+        row.appendChild(cbLabel);
+        container.appendChild(row);
+      });
+    }
+
+    function renderModeTags(tags) {
+      const container = document.getElementById('mode-tags');
+      container.innerHTML = '';
+      const input = document.createElement('input');
+      input.id = 'mode-tag-input';
+      input.placeholder = 'Add tag and press Enter';
+      input.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && input.value.trim()) {
+          addModeTag(input.value.trim());
+          input.value = '';
+        }
+      });
+      container.appendChild(input);
+      (tags || []).forEach(t => addModeTag(t));
+      modeTags = tags || [];
+    }
+
+    function addModeTag(tag) {
+      modeTags.push(tag);
+      const container = document.getElementById('mode-tags');
+      const chip = document.createElement('span');
+      chip.className = 'chip';
+      chip.dataset.value = tag;
+      chip.textContent = tag;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = '×';
+      btn.onclick = () => {
+        container.removeChild(chip);
+        modeTags = modeTags.filter(t => t !== tag);
+      };
+      chip.appendChild(btn);
+      const input = document.getElementById('mode-tag-input');
+      container.insertBefore(chip, input);
+    }
+
+    document.getElementById('files').addEventListener('change', buildFileRows);
+
+    loadMode();
+  </script>
+</body>
+</html>

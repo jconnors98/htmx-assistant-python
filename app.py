@@ -271,10 +271,23 @@ def get_mode(mode):
 @cognito_auth_required
 def list_modes_admin():
     docs = []
-    for d in modes_collection.find():
+    print("Listing modes for user:", request.user["sub"])
+    for d in modes_collection.find({"user_id": request.user["sub"]}):
         d["_id"] = str(d["_id"])
+        d.pop("user_id", None)
         docs.append(d)
     return {"modes": docs}
+
+
+@routes.get("/admin/modes/<mode_id>")
+@cognito_auth_required
+def get_mode_admin(mode_id):
+    doc = modes_collection.find_one({"_id": ObjectId(mode_id), "user_id": request.user["sub"]})
+    if not doc:
+        return {"error": "Not found"}, 404
+    doc["_id"] = str(doc["_id"])
+    doc.pop("user_id", None)
+    return doc
 
 
 @routes.post("/admin/modes")
@@ -284,10 +297,11 @@ def create_mode():
     name = (data.get("name") or "").strip()
     if not name:
         return {"error": "Name is required"}, 400
-    if modes_collection.find_one({"name": name}):
+    if modes_collection.find_one({"name": name, "user_id": request.user["sub"]}):
         return {"error": "Mode already exists"}, 400
     doc = {
         "name": name,
+        "user_id": request.user["sub"],
         "description": data.get("description", ""),
         "intro": data.get("intro", ""),
         "prompts": data.get("prompts", []),
@@ -299,13 +313,14 @@ def create_mode():
     }
     result = modes_collection.insert_one(doc)
     doc["_id"] = str(result.inserted_id)
+    doc.pop("user_id", None)
     return doc, 201
 
 
 @routes.put("/admin/modes/<mode_id>")
 @cognito_auth_required
 def update_mode(mode_id):
-    doc = modes_collection.find_one({"_id": ObjectId(mode_id)})
+    doc = modes_collection.find_one({"_id": ObjectId(mode_id), "user_id": request.user["sub"]})
     if not doc:
         return {"error": "Not found"}, 404
     data = request.get_json() or {}
@@ -323,6 +338,7 @@ def update_mode(mode_id):
     modes_collection.update_one({"_id": doc["_id"]}, {"$set": update})
     doc.update(update)
     doc["_id"] = str(doc["_id"])
+    doc.pop("user_id", None)
     return doc
 
 
@@ -365,11 +381,20 @@ def admin_page():
     return send_from_directory(routes.static_folder, "admin.html")
 
 
+@routes.get("/admin/mode")
+def admin_mode_page():
+    return send_from_directory(routes.static_folder, "mode_editor.html")
+
+
 @routes.get("/admin/documents")
 @cognito_auth_required
 def list_documents_admin():
+    mode = (request.args.get("mode") or "").strip()
+    query = {"user_id": request.user["sub"]}
+    if mode:
+        query["mode"] = mode
     docs = []
-    for d in documents_collection.find({"user_id": request.user["sub"]}):
+    for d in documents_collection.find(query):
         d["_id"] = str(d["_id"])
         docs.append(d)
     return {"documents": docs}
@@ -386,7 +411,7 @@ def create_document():
     s3_key = None
     openai_file_id = None
 
-    mode_doc = modes_collection.find_one({"name": mode}) if mode else None
+    mode_doc = modes_collection.find_one({"name": mode, "user_id": request.user["sub"]}) if mode else None
     allowed_tags = mode_doc.get("tags", []) if mode_doc else []
     if tag and tag not in allowed_tags:
         return {"error": "Invalid tag"}, 400
@@ -431,21 +456,6 @@ def create_document():
     result = documents_collection.insert_one(doc)
     doc["_id"] = str(result.inserted_id)
     return doc, 201
-
-
-@routes.put("/admin/documents/<doc_id>")
-@cognito_auth_required
-def update_document(doc_id):
-    doc = documents_collection.find_one({"_id": ObjectId(doc_id), "user_id": request.user["sub"]})
-    if not doc:
-        return {"error": "Not found"}, 404
-    content = request.form.get("content") or ""
-    tag = (request.form.get("tag") or "").strip()
-    update = {"content": content, "tag": tag}
-    documents_collection.update_one({"_id": doc["_id"]}, {"$set": update})
-    doc.update(update)
-    doc["_id"] = str(doc["_id"])
-    return doc
 
 
 @routes.delete("/admin/documents/<doc_id>")
