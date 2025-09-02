@@ -291,6 +291,7 @@ def create_mode():
         "description": data.get("description", ""),
         "intro": data.get("intro", ""),
         "prompts": data.get("prompts", []),
+        "tags": data.get("tags", []),
         "preferred_sites": data.get("preferred_sites", []),
         "blocked_sites": data.get("blocked_sites", []),
         "allow_other_sites": data.get("allow_other_sites", True),
@@ -313,6 +314,7 @@ def update_mode(mode_id):
         "description": data.get("description", doc.get("description", "")),
         "intro": data.get("intro", doc.get("intro", "")),
         "prompts": data.get("prompts", doc.get("prompts", [])),
+        "tags": data.get("tags", doc.get("tags", [])),
         "preferred_sites": data.get("preferred_sites", doc.get("preferred_sites", [])),
         "blocked_sites": data.get("blocked_sites", doc.get("blocked_sites", [])),
         "allow_other_sites": data.get("allow_other_sites", doc.get("allow_other_sites", True)),
@@ -378,26 +380,42 @@ def list_documents_admin():
 def create_document():
     mode = (request.form.get("mode") or "").strip()
     content = request.form.get("content") or ""
-    tags = [t.strip() for t in (request.form.get("tags") or "").split(",") if t.strip()]
+    tag = (request.form.get("tag") or "").strip()
+    always_include = request.form.get("always_include") == "true"
     file = request.files.get("file")
-    s3_keys = []
+    s3_key = None
     openai_file_id = None
+
+    mode_doc = modes_collection.find_one({"name": mode}) if mode else None
+    allowed_tags = mode_doc.get("tags", []) if mode_doc else []
+    if tag and tag not in allowed_tags:
+        return {"error": "Invalid tag"}, 400
+
     if file:
         data = file.read()
         filename = file.filename
-        for tag in tags or ["untagged"]:
-            key = f"{mode}/{tag}/{filename}"
-            s3.put_object(Bucket=S3_BUCKET, Key=key, Body=data, ContentType=file.content_type)
-            s3_keys.append(key)
+        key = f"{mode}/{tag or 'untagged'}/{filename}"
+        meta = {"always-include": "true"} if always_include else {}
+        s3.put_object(
+            Bucket=S3_BUCKET,
+            Key=key,
+            Body=data,
+            ContentType=file.content_type,
+            Metadata=meta,
+        )
+        s3_key = key
         file_stream = io.BytesIO(data)
         openai_file = client.files.create(file=(filename, file_stream), purpose="assistants")
         openai_file_id = openai_file.id
         if VECTOR_STORE_ID:
             try:
+                vs_meta = {"mode": mode, "tag": tag}
+                if always_include:
+                    vs_meta["always_include"] = "true"
                 client.vector_stores.files.create(
                     vector_store_id=VECTOR_STORE_ID,
                     file_id=openai_file_id,
-                    metadata={"mode": mode, "tags": tags},
+                    attributes=vs_meta,
                 )
             except Exception as e:  # noqa: BLE001
                 print("vector store add failed", e)
@@ -405,9 +423,10 @@ def create_document():
         "user_id": request.user["sub"],
         "mode": mode,
         "content": content,
-        "tags": tags,
-        "s3_keys": s3_keys,
+        "tag": tag,
+        "s3_key": s3_key,
         "openai_file_id": openai_file_id,
+        "always_include": always_include,
     }
     result = documents_collection.insert_one(doc)
     doc["_id"] = str(result.inserted_id)
@@ -421,8 +440,8 @@ def update_document(doc_id):
     if not doc:
         return {"error": "Not found"}, 404
     content = request.form.get("content") or ""
-    tags = [t.strip() for t in (request.form.get("tags") or "").split(",") if t.strip()]
-    update = {"content": content, "tags": tags}
+    tag = (request.form.get("tag") or "").strip()
+    update = {"content": content, "tag": tag}
     documents_collection.update_one({"_id": doc["_id"]}, {"$set": update})
     doc.update(update)
     doc["_id"] = str(doc["_id"])
@@ -435,7 +454,8 @@ def delete_document(doc_id):
     doc = documents_collection.find_one({"_id": ObjectId(doc_id), "user_id": request.user["sub"]})
     if not doc:
         return {"error": "Not found"}, 404
-    for key in doc.get("s3_keys", []):
+    key = doc.get("s3_key")
+    if key:
         try:
             s3.delete_object(Bucket=S3_BUCKET, Key=key)
         except Exception as e:  # noqa: BLE001

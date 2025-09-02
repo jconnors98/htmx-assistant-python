@@ -199,6 +199,46 @@ textarea {
   /*min-height: 32px;*/
 }
 
+.tag-input {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  border: 1px solid #82002d;
+  padding: 4px;
+  border-radius: 6px;
+}
+
+.tag-input input {
+  border: none;
+  flex: 1;
+  min-width: 120px;
+}
+
+.chip {
+  background-color: #82002d;
+  color: #fff;
+  border-radius: 12px;
+  padding: 2px 6px;
+  display: flex;
+  align-items: center;
+}
+
+.chip button {
+  background: none;
+  border: none;
+  color: #fff;
+  margin-left: 4px;
+  cursor: pointer;
+}
+
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+
 input[type="text"],
 input[type="password"],
 input[type="file"] {
