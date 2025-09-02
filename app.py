@@ -13,6 +13,9 @@ from bson import ObjectId
 import boto3
 import requests
 from jose import jwk, jwt
+from datetime import datetime
+import hashlib
+import threading
 
 if not config("OPENAI_API_KEY"):
     raise RuntimeError("Missing API key. Check your .env file.")
@@ -31,6 +34,7 @@ except Exception as e:
 db = mongo_client.get_database(config("MONGO_DB", default="bcca-assistant"))
 modes_collection = db.get_collection("modes")
 documents_collection = db.get_collection("documents")
+prompt_logs_collection = db.get_collection("prompt_logs")
 
 print("Connected to MongoDB at", config("MONGO_URI"))
 
@@ -97,6 +101,31 @@ def add_security_headers(response):
     response.headers["Content-Security-Policy"] = "frame-ancestors *"
     return response
 
+def _async_log_prompt(prompt, mode, ip_addr):
+    ip_hash = hashlib.sha256(ip_addr.encode()).hexdigest() if ip_addr else None
+    location = {}
+    if ip_addr:
+        try:
+            resp = requests.get(f"https://ipapi.co/{ip_addr}/json/", timeout=5)
+            print(f"IP API response: {resp.status_code} {resp.text}")
+            if resp.ok:
+                data = resp.json()
+                location = {
+                    "city": data.get("city"),
+                    "region": data.get("region"),
+                    "country": data.get("country_name"),
+                }
+        except Exception:
+            pass
+
+    prompt_logs_collection.insert_one({
+            "prompt": prompt,
+            "mode": mode,
+            "ip_hash": ip_hash,
+            "location": location,
+            "created_at": datetime.utcnow(),
+        })
+
 
 @routes.post("/ask")
 def ask():
@@ -109,6 +138,10 @@ def ask():
             '<div class="bubble">⚠️ Message is required.</div>'
             "</div>"
         )
+    
+    ip_addr = request.headers.get("X-Forwarded-For", request.remote_addr)
+    print(f"Prompt sent from IP: {ip_addr}")
+    threading.Thread(target=_async_log_prompt, args=(message, mode, ip_addr)).start()       
 
     try:
         mode_doc = modes_collection.find_one({"name": mode}) if mode else None
@@ -130,7 +163,7 @@ def ask():
         if vector_store_id and mode:
             file_search_tool = {
                 "type": "file_search",
-                "vector_score_ids": [vector_store_id],
+                "vector_store_ids": [vector_store_id],
                 "filters": {}
             }
 
@@ -143,12 +176,12 @@ def ask():
                             "filters":[
                                 {
                                     "type": "eq",
-                                    "property": "mode",
+                                    "key": "mode",
                                     "value": mode
                                 },
                                 {
                                     "type": "eq",
-                                    "property": "tag",
+                                    "key": "tag",
                                     "value": tag
                                 }
                             ]
@@ -158,12 +191,12 @@ def ask():
                             "filters":[
                                 {
                                     "type": "eq",
-                                    "property": "mode",
+                                    "key": "mode",
                                     "value": mode
                                 },
                                 {
                                     "type": "eq",
-                                    "property": "always_include",
+                                    "key": "always_include",
                                     "value": "true"
                                 }
                             ]
@@ -174,7 +207,7 @@ def ask():
             else:
                 file_search_tool["filters"] = {
                     "type": "eq",
-                    "property": "mode",
+                    "key": "mode",
                     "value": mode
                 }
 
