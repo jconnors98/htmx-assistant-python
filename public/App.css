@@ -20,6 +20,21 @@ h1 {
   margin-bottom: 0.5rem;
 }
 
+h2 {
+  color: #82002d;
+  font-size: 1.4rem;
+  margin-top: 2rem;
+  margin-bottom: 0.75rem;
+}
+
+h3 {
+  color: #82002d;
+  font-size: 1.1rem;
+  margin-top: 1.5rem;
+  margin-bottom: 0.5rem;
+}
+
+
 .intro {
   text-align: center;
   font-size: 0.95rem;
@@ -184,6 +199,17 @@ textarea {
   /*min-height: 32px;*/
 }
 
+input[type="text"],
+input[type="password"],
+input[type="file"] {
+  padding: 0.6rem;
+  font-size: 0.9rem;
+  border: 1px solid #82002d;
+  border-radius: 6px;
+  font-family: inherit;
+}
+
+
 button {
   background-color: #82002d;
   color: white;
@@ -209,6 +235,47 @@ button.secondary:hover {
   background: #82002d;
   color: white;
 }
+
+.admin-section {
+  margin-bottom: 2rem;
+}
+
+.input-group.vertical {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1rem;
+}
+
+.input-group.vertical label {
+  display: flex;
+  flex-direction: column;
+  font-weight: 500;
+}
+
+.input-group.vertical input,
+.input-group.vertical textarea {
+  width: 100%;
+  padding: 0.5rem;
+  font-size: 1rem;
+  border: 1px solid #82002d;
+  border-radius: 6px;
+}
+
+#editor {
+  margin-bottom: 1rem;
+}
+
+#mode-list li,
+#doc-list li {
+  margin-bottom: 0.5rem;
+}
+
+#mode-list,
+#doc-list {
+  list-style: none;
+  padding-left: 0;
+}
+
 
 /* Markdown Styling */
 .markdown {
