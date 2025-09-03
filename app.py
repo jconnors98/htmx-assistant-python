@@ -106,7 +106,7 @@ def _async_log_prompt(prompt, mode, ip_addr):
     location = {}
     if ip_addr:
         try:
-            resp = requests.get(f"https://ipapi.co/{ip_addr}/json/", timeout=5)
+            resp = requests.get(f"https://ipapi.co/{ip_addr}/json/", timeout=30)
             print(f"IP API response: {resp.status_code} {resp.text}")
             if resp.ok:
                 data = resp.json()
@@ -115,7 +115,8 @@ def _async_log_prompt(prompt, mode, ip_addr):
                     "region": data.get("region"),
                     "country": data.get("country_name"),
                 }
-        except Exception:
+        except Exception as e:
+            print(f"Error fetching IP info: {e}")
             pass
 
     prompt_logs_collection.insert_one({
