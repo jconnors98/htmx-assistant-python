@@ -104,6 +104,7 @@ def add_security_headers(response):
 def _async_log_prompt(prompt, mode, ip_addr):
     ip_hash = hashlib.sha256(ip_addr.encode()).hexdigest() if ip_addr else None
     location = {}
+    print(f"Logging prompt from IP: {ip_addr}")
     if ip_addr:
         try:
             resp = requests.get(f"https://ipapi.co/{ip_addr}/json/", timeout=30)
@@ -118,6 +119,8 @@ def _async_log_prompt(prompt, mode, ip_addr):
         except Exception as e:
             print(f"Error fetching IP info: {e}")
             pass
+    else:
+        print("No IP address found.")
 
     prompt_logs_collection.insert_one({
             "prompt": prompt,
