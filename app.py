@@ -269,6 +269,7 @@ def ask():
 
         gpt_result = _call_model("gpt-4.1-mini")
         if not _is_confident(gpt_result):
+            print("Calling gpt-4.1 for more accurate results")
             gpt_result = _call_model("gpt-4.1")
 
         gpt_text = gpt_result.output_text
