@@ -3,13 +3,16 @@
 <head>
   <meta charset="UTF-8"/>
   <title>Admin Modes</title>
+  <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="./App.css" />
 </head>
-<body>
-  <div class="container">
-    <h1>Your Modes</h1>
-    <button id="new-mode">Create New Mode</button>
-    <div id="mode-list"></div>
+<body class="min-h-screen bg-gray-100">
+  <div class="max-w-4xl mx-auto p-6">
+    <div class="flex items-center justify-between mb-6">
+      <h1 class="text-2xl font-bold text-[#82002d]">Your Modes</h1>
+      <button id="new-mode" class="bg-[#82002d] hover:bg-[#a0003f] text-white px-4 py-2 rounded">Create New Mode</button>
+    </div>
+    <div id="mode-list" class="space-y-4"></div>
   </div>
   <script>
     const idToken = localStorage.getItem('idToken') || '';
@@ -29,8 +32,8 @@
       list.innerHTML = '';
       data.modes.forEach(m => {
         const div = document.createElement('div');
-        div.className = 'mode-preview';
-        div.innerHTML = `<h3>${m.name}</h3>${m.description ? `<p>${m.description}</p>` : ''}${(m.tags && m.tags.length) ? `<p>Tags: ${m.tags.join(', ')}</p>` : ''}`;
+        div.className = 'p-4 border border-[#82002d] rounded cursor-pointer hover:bg-gray-50';
+        div.innerHTML = `<h3 class="text-lg font-semibold text-[#82002d]">${m.name}</h3>${m.description ? `<p class="text-sm text-gray-700">${m.description}</p>` : ''}${(m.tags && m.tags.length) ? `<p class="text-xs text-gray-500 mt-1">Tags: ${m.tags.join(', ')}</p>` : ''}`;
         div.onclick = () => window.location.href = '/flask/admin/mode?id=' + m._id;
         list.appendChild(div);
       });

@@ -136,6 +136,7 @@ def ask():
     message = (request.form.get("message") or "").strip()
     mode = (request.form.get("mode") or "").strip()
     tag = (request.form.get("tag") or "").strip()
+    
     if not message:
         return (
             '<div class="chat-entry assistant">'
@@ -241,17 +242,35 @@ def ask():
 
         tools.append({"type": "web_search_preview"})
 
-        gpt_result = client.responses.create(
-            model="gpt-4.1",
-            tools=tools,
-            input=[
-                {
-                    "role": "system",
-                    "content": gpt_system_prompt,
-                },
-                {"role": "user", "content": message},
-            ],
-        )
+        def _call_model(model_name: str):
+            return client.responses.create(
+                model=model_name,
+                tools=tools,
+                input=[
+                    {
+                        "role": "system",
+                        "content": gpt_system_prompt,
+                    },
+                    {"role": "user", "content": message},
+                ],
+            )
+
+        def _is_confident(res) -> bool:
+            try:
+                content = res.output[0].content[0]
+                confidence = (
+                    content.get("confidence")
+                    if isinstance(content, dict)
+                    else getattr(content, "confidence", None)
+                )
+                return confidence is None or confidence >= 0.5
+            except Exception:
+                return True
+
+        gpt_result = _call_model("gpt-4.1-mini")
+        if not _is_confident(gpt_result):
+            gpt_result = _call_model("gpt-4.1")
+
         gpt_text = gpt_result.output_text
         html_reply = markdown(gpt_text)
 
