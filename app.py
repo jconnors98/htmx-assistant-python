@@ -66,7 +66,7 @@ def _get_jwks():
             f"https://cognito-idp.{COGNITO_REGION}.amazonaws.com/"
             f"{COGNITO_USER_POOL_ID}/.well-known/jwks.json"
         )
-        _jwks = requests.get(url, timeout=5).json().get("keys", [])
+        _jwks = requests.get(url, timeout=30).json().get("keys", [])
     return _jwks or []
 
 
@@ -74,6 +74,7 @@ def cognito_auth_required(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
         auth = request.headers.get("Authorization", "")
+        print("Authorization header:", auth)
         if not auth.startswith("Bearer "):
             return {"error": "Unauthorized"}, 401
         token = auth.split(" ", 1)[1]
@@ -84,7 +85,7 @@ def cognito_auth_required(fn):
         jwks = _get_jwks()
         key = next((k for k in jwks if k.get("kid") == headers.get("kid")), None)
         if not key:
-            return {"error": "Unauthorized"}, 401
+            return {"error": "Unauthorized, no key found"}, 401
         try:
             claims = jwt.decode(
                 token,
@@ -93,7 +94,7 @@ def cognito_auth_required(fn):
                 audience=COGNITO_APP_CLIENT_ID,
             )
         except Exception:
-            return {"error": "Unauthorized"}, 401
+            return {"error": "Unauthorized, could not decode token"}, 401
         request.user = {"sub": claims.get("sub")}
         return fn(*args, **kwargs)
 
