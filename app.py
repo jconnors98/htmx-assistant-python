@@ -16,6 +16,7 @@ from jose import jwk, jwt
 from datetime import datetime
 import hashlib
 import threading
+from conversation_service import ConversationService
 
 if not config("OPENAI_API_KEY"):
     raise RuntimeError("Missing API key. Check your .env file.")
@@ -35,6 +36,13 @@ db = mongo_client.get_database(config("MONGO_DB", default="bcca-assistant"))
 modes_collection = db.get_collection("modes")
 documents_collection = db.get_collection("documents")
 prompt_logs_collection = db.get_collection("prompt_logs")
+
+conversation_service = ConversationService(
+    db,
+    modes_collection,
+    client,
+    VECTOR_STORE_ID,
+)
 
 print("Connected to MongoDB at", config("MONGO_URI"))
 
@@ -136,6 +144,8 @@ def ask():
     message = (request.form.get("message") or "").strip()
     mode = (request.form.get("mode") or "").strip()
     tag = (request.form.get("tag") or "").strip()
+    conversation_id = (request.form.get("conversation_id") or "").strip()
+    previous_response_id = (request.form.get("response_id") or "").strip()
     
     if not message:
         return (
@@ -149,130 +159,18 @@ def ask():
     threading.Thread(target=_async_log_prompt, args=(message, mode, ip_addr)).start()       
 
     try:
-        mode_doc = modes_collection.find_one({"name": mode}) if mode else None
-        mode_context = mode_doc.get("description", "") if mode_doc else ""
-        mode_preferred_sites = mode_doc.get("preferred_sites", []) if mode_doc else []
-        mode_blocked_sites = mode_doc.get("blocked_sites", []) if mode_doc else []
-        allow_other_sites = mode_doc.get("allow_other_sites", True) if mode_doc else True
-        prioritize_files = mode_doc.get("prioritize_files", False) if mode_doc else False
-        tags = mode_doc.get("tags", []) if mode_doc else []
-        vector_store_id = VECTOR_STORE_ID
-        interest = mode if mode else "general BCCA information"
-        tools = []
-
-        gpt_system_prompt = (
-            "You're a helpful, warm assistant supporting users with information about the BC Construction Association. "
-            f"The user is interested in {interest}. {mode_context} "
+        if not conversation_id:
+            conversation_id = str(ObjectId())
+        user_id = getattr(request, "user", {}).get("sub", "anonymous")
+        gpt_text, response_id, _usage = conversation_service.respond(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            text=message,
+            mode=mode,
+            tag=tag,
+            previous_response_id=previous_response_id or None,
         )
 
-        if vector_store_id and mode:
-            file_search_tool = {
-                "type": "file_search",
-                "vector_store_ids": [vector_store_id],
-                "filters": {}
-            }
-
-            if tag and tag in tags:
-                file_search_tool["filters"] = {
-                    "type": "or",
-                    "filters":[
-                        {
-                            "type": "and",
-                            "filters":[
-                                {
-                                    "type": "eq",
-                                    "key": "mode",
-                                    "value": mode
-                                },
-                                {
-                                    "type": "eq",
-                                    "key": "tag",
-                                    "value": tag
-                                }
-                            ]
-                        },
-                        {
-                            "type": "and",
-                            "filters":[
-                                {
-                                    "type": "eq",
-                                    "key": "mode",
-                                    "value": mode
-                                },
-                                {
-                                    "type": "eq",
-                                    "key": "always_include",
-                                    "value": "true"
-                                }
-                            ]
-                        }
-                    ]
-                }
-
-            else:
-                file_search_tool["filters"] = {
-                    "type": "eq",
-                    "key": "mode",
-                    "value": mode
-                }
-
-            tools.append(file_search_tool)
-
-            gpt_system_prompt += "You have access to a vector store containing relevant documents. "
-
-            if prioritize_files:
-                gpt_system_prompt += "When answering, prioritize information from the vector store first. Then search the following websites, listed in order of highest priority first, using the asterisk as a match-all character: "
-            else:
-                gpt_system_prompt += "When answering, use both the vector store and the following websites. They are listed in order of highest priority first, using the asterisk as a match-all character: "
-        else:
-            gpt_system_prompt += "When answering, use the following websites. They are listed in order of highest priority first, using the asterisk as a match-all character: "
-
-        gpt_system_prompt += f"{', '.join(mode_preferred_sites)} "
-
-        if allow_other_sites:
-            gpt_system_prompt += (
-                "If you cannot fully answer from these, then use other reputable sources. "
-                f"Do not use the following sites as a source: {', '.join(mode_blocked_sites)} "
-                "In your final answer, list internet sources from my preferred sites before listing any other internet sources."
-            )
-        else:
-            gpt_system_prompt += (
-                "Only use these websites in your web search; do not use any other sources from the internet."
-            )
-
-        tools.append({"type": "web_search_preview"})
-
-        def _call_model(model_name: str):
-            return client.responses.create(
-                model=model_name,
-                tools=tools,
-                input=[
-                    {
-                        "role": "system",
-                        "content": gpt_system_prompt,
-                    },
-                    {"role": "user", "content": message},
-                ],
-            )
-
-        def _is_confident(res) -> bool:
-            try:
-                content = res.output[0].content[0]
-                confidence = (
-                    content.get("confidence")
-                    if isinstance(content, dict)
-                    else getattr(content, "confidence", None)
-                )
-                return confidence is None or confidence >= 0.5
-            except Exception:
-                return True
-
-        gpt_result = _call_model("gpt-4.1-mini")
-        if not _is_confident(gpt_result):
-            print("Calling gpt-4.1 for more accurate results")
-            gpt_result = _call_model("gpt-4.1")
-
-        gpt_text = gpt_result.output_text
         html_reply = markdown(gpt_text)
 
         # Auto-link plain URLs
@@ -294,6 +192,8 @@ def ask():
             f"{html_reply}"
             '<div class="source-tag">Powered by BCCA</div>'
             "</div></div>"
+            f'<input type="hidden" id="conversation_id" name="conversation_id" value="{conversation_id}" hx-swap-oob="true"/>'
+            f'<input type="hidden" id="response_id" name="response_id" value="{response_id}" hx-swap-oob="true"/>'
         )
 
         return html

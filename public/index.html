@@ -35,6 +35,8 @@
               disabled
             ></textarea>
             <input type="hidden" id="mode" name="mode" />
+            <input type="hidden" id="conversation_id" name="conversation_id" />
+            <input type="hidden" id="response_id" name="response_id" />
             <button id="send-btn" type="submit" disabled>Send</button>
             <button type="button" onclick="clearChat()" class="secondary">Clear Chat</button>
         </div>
@@ -121,6 +123,8 @@
     function clearChat() {
       document.querySelectorAll("#chat-box .chat-entry").forEach(el => el.remove());
       document.getElementById("message").value = "";
+      document.getElementById("conversation_id").value = "";
+      document.getElementById("response_id").value = "";
       document.getElementById("message").focus();
     }
 
