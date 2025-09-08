@@ -146,9 +146,13 @@
       list.innerHTML = '';
       data.documents.forEach(doc => {
         const li = document.createElement('li');
-        li.textContent = (doc.tag ? doc.tag + ' - ' : '') + (doc.s3_key || '');
+        li.className = 'flex items-center gap-2';
+        const label = document.createElement('span');
+        label.textContent = (doc.tag ? doc.tag + ' - ' : '') + (doc.s3_key || '');
+        li.appendChild(label);
         const delBtn = document.createElement('button');
         delBtn.textContent = 'Delete';
+        delBtn.className = 'bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded text-sm';
         delBtn.onclick = () => deleteDoc(doc._id);
         li.appendChild(delBtn);
         list.appendChild(li);
