@@ -49,13 +49,19 @@ print("Connected to MongoDB at", config("MONGO_URI"))
 localDevMode = config("LOCAL_DEV_MODE", default="false").lower()
 
 
-
+AWS_ACCESS_KEY_ID = config("AWS_ACCESS_KEY_ID", default=None)
+AWS_SECRET_ACCESS_KEY = config("AWS_SECRET_ACCESS_KEY", default=None)
 COGNITO_REGION = config("COGNITO_REGION", default=None)
 COGNITO_USER_POOL_ID = config("COGNITO_USER_POOL_ID", default=None)
 COGNITO_APP_CLIENT_ID = config("COGNITO_APP_CLIENT_ID", default=None)
 
 S3_BUCKET = config("S3_BUCKET", default="builders-copilot")
-s3 = boto3.client("s3")
+s3 = boto3.client(
+    "s3",
+    aws_access_key_id=AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+    region_name=COGNITO_REGION
+)
 _jwks = None
 
 
