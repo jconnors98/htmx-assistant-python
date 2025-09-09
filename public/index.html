@@ -80,6 +80,7 @@
           if (res.ok) {
             const data = await res.json();
             const prompts = data.prompts || [];
+            document.title = data.title || document.title;
             introEl.textContent = data.intro || "";
             let html = "";
             prompts.forEach(p => {

@@ -7,7 +7,10 @@
 </head>
 <body class="min-h-screen bg-gray-100">
   <div class="max-w-4xl mx-auto p-6">
-    <h1 class="text-2xl font-bold text-[#82002d] mb-6">Mode Editor</h1>
+    <div class="flex items-center justify-between mb-6">
+      <h1 class="text-2xl font-bold text-[#82002d]">Mode Editor</h1>
+      <button id="back-to-admin" class="bg-[#82002d] hover:bg-[#a0003f] text-white px-4 py-2 rounded">Back to Modes</button>
+    </div>
     <section class="mb-8">
       <h2 class="text-xl font-semibold text-[#82002d] mb-4">Mode Settings</h2>
       <div class="flex flex-col space-y-4">
@@ -29,7 +32,9 @@
         </label>
         <label class="flex flex-col">
           <span class="mb-1 font-medium">Prompt Questions</span>
-          <input id="mode-prompts" class="px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-[#82002d]" />
+          <div id="mode-prompts" class="prompt-input flex flex-wrap gap-2 px-2 py-1 border border-gray-300 rounded">
+            <input id="mode-prompt-input" class="flex-1 outline-none" placeholder="Add prompt and press Enter" />
+          </div>
         </label>
         <label class="flex flex-col">
           <span class="mb-1 font-medium">Tags for Files (eg. a category for your files uploaded)</span>
@@ -54,6 +59,7 @@
           <span>Prioritize files to be searched before sites</span>
         </label>
         <button id="mode-save" class="self-start bg-[#82002d] hover:bg-[#a0003f] text-white px-4 py-2 rounded">Save Mode</button>
+        <div id="save-message" class="text-green-600 font-semibold mt-2 hidden">Saved!</div>
       </div>
     </section>
 
@@ -81,10 +87,13 @@
     let modeId = params.get('id');
     let modeName = '';
     let modeTags = [];
+    let modePrompts = [];
 
     async function loadMode() {
       if (!modeId) {
         renderModeTags([]);
+        renderModePrompts([]);
+        document.getElementById('mode-prioritize-files').checked = false;
         return;
       }
       const res = await fetch('/flask/admin/modes/' + modeId, {
@@ -94,6 +103,7 @@
       const m = await res.json();
       modeName = m.name || '';
       modeTags = m.tags || [];
+      modePrompts = m.prompts || [];
       const nameInput = document.getElementById('mode-name');
       nameInput.value = m.name || '';
       nameInput.readOnly = true;
@@ -101,7 +111,7 @@
       document.getElementById('mode-title').value = m.title || '';
       document.getElementById('mode-desc').value = m.description || '';
       document.getElementById('mode-intro').value = m.intro || '';
-      document.getElementById('mode-prompts').value = (m.prompts || []).join(',');
+      renderModePrompts(modePrompts);
       document.getElementById('mode-preferred').value = (m.preferred_sites || []).join(',');
       document.getElementById('mode-blocked').value = (m.blocked_sites || []).join(',');
       document.getElementById('mode-allow-other').checked = m.allow_other_sites !== false;
@@ -116,13 +126,16 @@
         title: document.getElementById('mode-title').value,
         description: document.getElementById('mode-desc').value,
         intro: document.getElementById('mode-intro').value,
-        prompts: document.getElementById('mode-prompts').value.split(',').map(s => s.trim()).filter(Boolean),
+        prompts: Array.from(document.querySelectorAll('#mode-prompts .chip')).map(c => c.dataset.value),
         tags: Array.from(document.querySelectorAll('#mode-tags .chip')).map(c => c.dataset.value),
         preferred_sites: document.getElementById('mode-preferred').value.split(',').map(s => s.trim()).filter(Boolean),
         blocked_sites: document.getElementById('mode-blocked').value.split(',').map(s => s.trim()).filter(Boolean),
         allow_other_sites: document.getElementById('mode-allow-other').checked,
         prioritize_files: document.getElementById('mode-prioritize-files').checked
       };
+      if (!modeId) {
+        body.name = document.getElementById('mode-name').value;
+      }
       const opts = {
         method: modeId ? 'PUT' : 'POST',
         headers: {
@@ -139,6 +152,7 @@
           window.location.href = '/flask/admin/mode?id=' + data._id;
         } else {
           loadMode();
+          showSavedMessage();
         }
       }
     };
@@ -265,6 +279,53 @@
       const input = document.getElementById('mode-tag-input');
       container.insertBefore(chip, input);
     }
+
+    function renderModePrompts(prompts) {
+      const container = document.getElementById('mode-prompts');
+      container.innerHTML = '';
+      const input = document.createElement('input');
+      input.id = 'mode-prompt-input';
+      input.placeholder = 'Add prompt and press Enter';
+      input.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && input.value.trim()) {
+          addModePrompt(input.value.trim());
+          input.value = '';
+        }
+      });
+      container.appendChild(input);
+      (prompts || []).forEach(p => addModePrompt(p));
+      modePrompts = prompts || [];
+    }
+
+    function addModePrompt(prompt) {
+      modePrompts.push(prompt);
+      const container = document.getElementById('mode-prompts');
+      const chip = document.createElement('span');
+      chip.className = 'chip inline-flex items-center bg-[#82002d] text-white rounded-full px-2 py-1 text-sm';
+      chip.dataset.value = prompt;
+      chip.textContent = prompt;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'ml-1 focus:outline-none';
+      btn.textContent = '×';
+      btn.onclick = () => {
+        container.removeChild(chip);
+        modePrompts = modePrompts.filter(p => p !== prompt);
+      };
+      chip.appendChild(btn);
+      const input = document.getElementById('mode-prompt-input');
+      container.insertBefore(chip, input);
+    }
+
+    function showSavedMessage() {
+      const msg = document.getElementById('save-message');
+      msg.classList.remove('hidden');
+      setTimeout(() => msg.classList.add('hidden'), 2000);
+    }
+
+    document.getElementById('back-to-admin').onclick = () => {
+      window.location.href = '/flask/admin';
+    };
 
     document.getElementById('files').addEventListener('change', buildFileRows);
 
