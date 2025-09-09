@@ -116,7 +116,7 @@ def add_security_headers(response):
     response.headers["Content-Security-Policy"] = "frame-ancestors *"
     return response
 
-def _async_log_prompt(prompt, mode, ip_addr):
+def _async_log_prompt(prompt, mode, ip_addr, conversation_id):
     ip_hash = hashlib.sha256(ip_addr.encode()).hexdigest() if ip_addr else None
     location = {}
     print(f"Logging prompt from IP: {ip_addr}")
@@ -140,6 +140,7 @@ def _async_log_prompt(prompt, mode, ip_addr):
     prompt_logs_collection.insert_one({
             "prompt": prompt,
             "mode": mode,
+            "conversation_id": conversation_id,
             "ip_hash": ip_hash,
             "location": location,
             "created_at": datetime.utcnow(),
@@ -161,13 +162,14 @@ def ask():
             "</div>"
         )
     
+    if not conversation_id:
+        conversation_id = str(ObjectId())
+    
     ip_addr = request.headers.get("X-Forwarded-For", request.remote_addr)
     print(f"Prompt sent from IP: {ip_addr}")
-    threading.Thread(target=_async_log_prompt, args=(message, mode, ip_addr)).start()       
+    threading.Thread(target=_async_log_prompt, args=(message, mode, ip_addr, conversation_id)).start()
 
     try:
-        if not conversation_id:
-            conversation_id = str(ObjectId())
         user_id = getattr(request, "user", {}).get("sub", "anonymous")
         gpt_text, response_id, _usage = conversation_service.respond(
             conversation_id=conversation_id,
