@@ -228,6 +228,7 @@ def get_mode(mode):
         "prompts": doc.get("prompts", []),
         "description": doc.get("description", ""),
         "intro": doc.get("intro", ""),
+        "title": doc.get("title", ""),
     }
 
 
@@ -268,6 +269,7 @@ def create_mode():
         "user_id": request.user["sub"],
         "description": data.get("description", ""),
         "intro": data.get("intro", ""),
+        "title": data.get("title", ""),
         "prompts": data.get("prompts", []),
         "tags": data.get("tags", []),
         "preferred_sites": data.get("preferred_sites", []),
@@ -289,7 +291,7 @@ def update_mode(mode_id):
         return {"error": "Not found"}, 404
     data = request.get_json() or {}
     update = {
-        "name": data.get("name", doc.get("name")),
+        "title": data.get("title", doc.get("title", "")),
         "description": data.get("description", doc.get("description", "")),
         "intro": data.get("intro", doc.get("intro", "")),
         "prompts": data.get("prompts", doc.get("prompts", [])),

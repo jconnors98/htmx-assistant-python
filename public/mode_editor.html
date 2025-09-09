@@ -16,6 +16,10 @@
           <input id="mode-name" class="px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-[#82002d]" />
         </label>
         <label class="flex flex-col">
+          <span class="mb-1 font-medium">Title to Display</span>
+          <input id="mode-title" class="px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-[#82002d]" />
+        </label>
+        <label class="flex flex-col">
           <span class="mb-1 font-medium">Describe your Site or Service</span>
           <textarea id="mode-desc" class="px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-[#82002d]"></textarea>
         </label>
@@ -90,7 +94,11 @@
       const m = await res.json();
       modeName = m.name || '';
       modeTags = m.tags || [];
-      document.getElementById('mode-name').value = m.name || '';
+      const nameInput = document.getElementById('mode-name');
+      nameInput.value = m.name || '';
+      nameInput.readOnly = true;
+      nameInput.classList.add('bg-gray-100');
+      document.getElementById('mode-title').value = m.title || '';
       document.getElementById('mode-desc').value = m.description || '';
       document.getElementById('mode-intro').value = m.intro || '';
       document.getElementById('mode-prompts').value = (m.prompts || []).join(',');
@@ -105,7 +113,7 @@
 
     document.getElementById('mode-save').onclick = async () => {
       const body = {
-        name: document.getElementById('mode-name').value,
+        title: document.getElementById('mode-title').value,
         description: document.getElementById('mode-desc').value,
         intro: document.getElementById('mode-intro').value,
         prompts: document.getElementById('mode-prompts').value.split(',').map(s => s.trim()).filter(Boolean),
