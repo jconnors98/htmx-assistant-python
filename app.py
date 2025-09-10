@@ -154,7 +154,9 @@ def ask():
     tag = (request.form.get("tag") or "").strip()
     conversation_id = (request.form.get("conversation_id") or "").strip()
     previous_response_id = (request.form.get("response_id") or "").strip()
-    file = request.files.get("file")
+    mode_doc = modes_collection.find_one({"name": mode}) if mode else None
+    allow_file_upload = mode_doc.get("allow_file_upload", False) if mode_doc else False
+    file = request.files.get("file") if allow_file_upload else None
     openai_file_id = None
     if file and file.filename:
         data = file.read()
@@ -248,6 +250,7 @@ def get_mode(mode):
         "description": doc.get("description", ""),
         "intro": doc.get("intro", ""),
         "title": doc.get("title", ""),
+        "allow_file_upload": doc.get("allow_file_upload", False),
     }
 
 
@@ -295,6 +298,7 @@ def create_mode():
         "blocked_sites": data.get("blocked_sites", []),
         "allow_other_sites": data.get("allow_other_sites", True),
         "prioritize_files": data.get("prioritize_files", False),
+        "allow_file_upload": data.get("allow_file_upload", False),
     }
     result = modes_collection.insert_one(doc)
     doc["_id"] = str(result.inserted_id)
@@ -319,6 +323,7 @@ def update_mode(mode_id):
         "blocked_sites": data.get("blocked_sites", doc.get("blocked_sites", [])),
         "allow_other_sites": data.get("allow_other_sites", doc.get("allow_other_sites", True)),
         "prioritize_files": data.get("prioritize_files", doc.get("prioritize_files", False)),
+        "allow_file_upload": data.get("allow_file_upload", doc.get("allow_file_upload", False)),
     }
     modes_collection.update_one({"_id": doc["_id"]}, {"$set": update})
     doc.update(update)

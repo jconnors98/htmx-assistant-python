@@ -58,6 +58,10 @@
           <input type="checkbox" id="mode-prioritize-files" class="h-4 w-4 text-[#82002d] border-gray-300 rounded" />
           <span>Prioritize files to be searched before sites</span>
         </label>
+        <label class="flex items-center space-x-2">
+          <input type="checkbox" id="mode-allow-upload" class="h-4 w-4 text-[#82002d] border-gray-300 rounded" />
+          <span>Allow users to upload files</span>
+        </label>
         <button id="mode-save" class="self-start bg-[#82002d] hover:bg-[#a0003f] text-white px-4 py-2 rounded">Save Mode</button>
         <div id="save-message" class="text-green-600 font-semibold mt-2 hidden">Saved!</div>
       </div>
@@ -94,6 +98,7 @@
         renderModeTags([]);
         renderModePrompts([]);
         document.getElementById('mode-prioritize-files').checked = false;
+        document.getElementById('mode-allow-upload').checked = false;
         return;
       }
       const res = await fetch('/flask/admin/modes/' + modeId, {
@@ -116,6 +121,7 @@
       document.getElementById('mode-blocked').value = (m.blocked_sites || []).join(',');
       document.getElementById('mode-allow-other').checked = m.allow_other_sites !== false;
       document.getElementById('mode-prioritize-files').checked = !!m.prioritize_files;
+      document.getElementById('mode-allow-upload').checked = !!m.allow_file_upload;
       renderModeTags(modeTags);
       document.getElementById('docs-section').style.display = 'block';
       loadDocs();
@@ -131,7 +137,8 @@
         preferred_sites: document.getElementById('mode-preferred').value.split(',').map(s => s.trim()).filter(Boolean),
         blocked_sites: document.getElementById('mode-blocked').value.split(',').map(s => s.trim()).filter(Boolean),
         allow_other_sites: document.getElementById('mode-allow-other').checked,
-        prioritize_files: document.getElementById('mode-prioritize-files').checked
+        prioritize_files: document.getElementById('mode-prioritize-files').checked,
+        allow_file_upload: document.getElementById('mode-allow-upload').checked
       };
       if (!modeId) {
         body.name = document.getElementById('mode-name').value;

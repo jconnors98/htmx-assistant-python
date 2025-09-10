@@ -23,7 +23,6 @@
         hx-post="/flask/ask"
         hx-target="#chat-box"
         hx-swap="beforeend"
-        hx-encoding="multipart/form-data"
         onsubmit="clearInputAfterSend()"
       >
         <div class="input-group">
@@ -42,7 +41,7 @@
             <button type="button" onclick="clearChat()" class="secondary">Clear Chat</button>
         </div>
         <div class="upload-top">
-          <input type="file" id="file" name="file" />
+          <input type="file" id="file" name="file" style="display:none" />
           <button id="scroll-top" onclick="scrollToTop()">⬆ Top</button>
         </div>
       </form>
@@ -54,6 +53,7 @@
     const mode = urlParams.get("mode");
     const chatForm = document.getElementById("chat-form");
     const introEl = document.getElementById("intro");
+    const fileInput = document.getElementById("file");
 
     document.addEventListener("htmx:beforeRequest", () => {
       const thinking = document.createElement("div");
@@ -91,6 +91,12 @@
               html += `<button onclick="submitPrompt(this.textContent)">${p}</button>`;
             });
             document.getElementById("prompt-buttons").innerHTML = html;
+            fileInput.style.display = data.allow_file_upload ? "block" : "none";
+            if (data.allow_file_upload) {
+              chatForm.setAttribute("hx-encoding", "multipart/form-data");
+            } else {
+              chatForm.removeAttribute("hx-encoding");
+            }
           }
         } catch (err) {
           console.error("Failed to load prompts", err);
