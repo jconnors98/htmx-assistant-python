@@ -23,6 +23,7 @@
         hx-post="/flask/ask"
         hx-target="#chat-box"
         hx-swap="beforeend"
+        hx-encoding="multipart/form-data"
         onsubmit="clearInputAfterSend()"
       >
         <div class="input-group">
@@ -40,9 +41,12 @@
             <button id="send-btn" type="submit" disabled>Send</button>
             <button type="button" onclick="clearChat()" class="secondary">Clear Chat</button>
         </div>
+        <div class="upload-top">
+          <input type="file" id="file" name="file" />
+          <button id="scroll-top" onclick="scrollToTop()">⬆ Top</button>
+        </div>
       </form>
 
-      <button id="scroll-top" onclick="scrollToTop()">⬆ Top</button>
   </div>
 
   <script>
@@ -136,6 +140,8 @@
     function clearInputAfterSend() {
       setTimeout(() => {
         document.getElementById("message").value = "";
+        const fileInput = document.getElementById("file");
+        if (fileInput) fileInput.value = "";
       }, 20);
     }
   </script>

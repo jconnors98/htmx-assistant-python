@@ -171,6 +171,7 @@ class ConversationService:
         mode: str = "",
         tag: str = "",
         previous_response_id: Optional[str] = None,
+        file_id: Optional[str] = None,
     ) -> Tuple[str, str, Optional[dict]]:
         conv_id = ObjectId(conversation_id)
         self.add_user_message(conversation_id, user_id, text)
@@ -179,12 +180,18 @@ class ConversationService:
         full_system_prompt = f"{system_prompt}\n{context}"
 
         def _call_model(model_name: str):
+            user_content: List[Dict] = [
+                {"type": "input_text", "text": text}
+            ]
+            if file_id:
+                user_content.append({"type": "input_file", "file_id": file_id})
+
             params = {
                 "model": model_name,
                 "tools": tools,
                 "input": [
                     {"role": "system", "content": full_system_prompt},
-                    {"role": "user", "content": text},
+                    {"role": "user", "content": user_content},
                 ],
             }
             if (

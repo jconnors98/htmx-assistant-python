@@ -154,7 +154,16 @@ def ask():
     tag = (request.form.get("tag") or "").strip()
     conversation_id = (request.form.get("conversation_id") or "").strip()
     previous_response_id = (request.form.get("response_id") or "").strip()
-    
+    file = request.files.get("file")
+    openai_file_id = None
+    if file and file.filename:
+        data = file.read()
+        file_stream = io.BytesIO(data)
+        uploaded = client.files.create(
+            file=(file.filename, file_stream), purpose="assistants"
+        )
+        openai_file_id = uploaded.id
+
     if not message:
         return (
             '<div class="chat-entry assistant">'
@@ -178,7 +187,15 @@ def ask():
             mode=mode,
             tag=tag,
             previous_response_id=previous_response_id or None,
+            file_id=openai_file_id,
         )
+
+        if openai_file_id:
+            try:
+                client.files.delete(openai_file_id)
+            except Exception as e:  # noqa: BLE001
+                print("openai file delete failed", e)
+
 
         html_reply = markdown(gpt_text)
 

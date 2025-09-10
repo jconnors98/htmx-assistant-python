@@ -238,6 +238,16 @@ textarea {
   margin-bottom: 0.5rem;
 }
 
+.upload-top {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.upload-top input[type="file"] {
+  flex: 1;
+}
 
 input[type="text"],
 input[type="password"],
