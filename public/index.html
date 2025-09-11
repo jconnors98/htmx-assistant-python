@@ -85,6 +85,7 @@
             const data = await res.json();
             const prompts = data.prompts || [];
             document.title = data.title || document.title;
+            document.getElementById('assistant-title').textContent = data.title || 'Builders Copilot';
             introEl.textContent = data.intro || "";
             let html = "";
             prompts.forEach(p => {
