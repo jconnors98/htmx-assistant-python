@@ -8,9 +8,12 @@
 </head>
 <body class="min-h-screen bg-gray-100">
   <div class="max-w-4xl mx-auto p-6">
-    <div class="flex items-center justify-between mb-6">
+    <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-6">
       <h1 class="text-2xl font-bold text-[#82002d]">Your Modes</h1>
-      <button id="new-mode" class="bg-[#82002d] hover:bg-[#a0003f] text-white px-4 py-2 rounded">Create New Mode</button>
+      <div class="flex gap-2">
+        <button id="view-analytics" class="secondary px-4 py-2 rounded">View Analytics</button>
+        <button id="new-mode" class="bg-[#82002d] hover:bg-[#a0003f] text-white px-4 py-2 rounded">Create New Mode</button>
+      </div>
     </div>
     <div id="mode-list" class="space-y-4"></div>
   </div>
@@ -21,6 +24,9 @@
     }
     document.getElementById('new-mode').onclick = () => {
       window.location.href = '/flask/admin/mode';
+    };
+    document.getElementById('view-analytics').onclick = () => {
+      window.location.href = '/flask/admin/analytics';
     };
     async function loadModes() {
       const res = await fetch('/flask/admin/modes', {

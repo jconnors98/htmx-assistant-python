@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Prompt Analytics</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="./App.css" />
+</head>
+<body class="min-h-screen bg-gray-100">
+  <div class="max-w-6xl mx-auto p-6 space-y-6">
+    <header class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+      <div>
+        <h1 class="text-3xl font-bold text-[#82002d]">Prompt Analytics</h1>
+        <p class="text-sm text-gray-600">Generate rich reports from prompt activity and discover how your assistants are used.</p>
+      </div>
+      <div class="flex gap-2">
+        <button id="back-to-admin" class="secondary px-4 py-2">Back to Modes</button>
+      </div>
+    </header>
+
+    <section class="bg-white p-6 rounded-lg shadow">
+      <form id="filter-form" class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <label class="flex flex-col gap-2 text-sm font-semibold text-gray-700">
+          <span>Start date</span>
+          <input type="date" id="start-date" class="border border-[#82002d] rounded px-3 py-2 text-sm" />
+        </label>
+        <label class="flex flex-col gap-2 text-sm font-semibold text-gray-700">
+          <span>End date</span>
+          <input type="date" id="end-date" class="border border-[#82002d] rounded px-3 py-2 text-sm" />
+        </label>
+        <label class="flex flex-col gap-2 text-sm font-semibold text-gray-700">
+          <span>Mode</span>
+          <select id="mode-filter" class="border border-[#82002d] rounded px-3 py-2 text-sm">
+            <option value="">All modes</option>
+          </select>
+        </label>
+        <label class="flex flex-col gap-2 text-sm font-semibold text-gray-700">
+          <span>Prompt contains</span>
+          <input type="text" id="search-term" placeholder="e.g. onboarding" class="border border-[#82002d] rounded px-3 py-2 text-sm" />
+        </label>
+        <div class="flex items-end gap-3 md:col-span-2 lg:col-span-4">
+          <button type="submit" class="px-5 py-2 bg-[#82002d] hover:bg-[#a0003f] text-white rounded">Run report</button>
+          <button type="button" id="reset-filters" class="px-5 py-2 secondary rounded">Reset filters</button>
+        </div>
+      </form>
+      <p id="global-range" class="mt-3 text-xs text-gray-500"></p>
+    </section>
+
+    <div id="loading-state" class="bg-white p-8 text-center text-sm text-gray-500 rounded-lg shadow">
+      Generating analytics report...
+    </div>
+
+    <div id="empty-state" class="hidden bg-white p-8 text-center text-sm text-gray-500 rounded-lg shadow"></div>
+
+    <div id="analytics-content" class="hidden space-y-6">
+      <section class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <article class="bg-white border border-[#82002d]/10 shadow rounded-lg p-5">
+          <p class="text-xs uppercase tracking-wide text-gray-500">Total prompts</p>
+          <p id="stat-total-prompts" class="mt-2 text-3xl font-semibold text-[#82002d]">0</p>
+        </article>
+        <article class="bg-white border border-[#82002d]/10 shadow rounded-lg p-5">
+          <p class="text-xs uppercase tracking-wide text-gray-500">Unique conversations</p>
+          <p id="stat-unique-conversations" class="mt-2 text-3xl font-semibold text-[#82002d]">0</p>
+        </article>
+        <article class="bg-white border border-[#82002d]/10 shadow rounded-lg p-5">
+          <p class="text-xs uppercase tracking-wide text-gray-500">Returning visitors (unique IPs)</p>
+          <p id="stat-unique-users" class="mt-2 text-3xl font-semibold text-[#82002d]">0</p>
+        </article>
+        <article class="bg-white border border-[#82002d]/10 shadow rounded-lg p-5">
+          <p class="text-xs uppercase tracking-wide text-gray-500">Average prompts / day</p>
+          <p id="stat-average-per-day" class="mt-2 text-3xl font-semibold text-[#82002d]">0</p>
+        </article>
+      </section>
+
+      <section class="bg-white border border-[#82002d]/10 shadow rounded-lg p-6">
+        <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 class="text-xl font-semibold text-[#82002d]">Report overview</h2>
+            <p id="report-range" class="text-sm text-gray-600"></p>
+          </div>
+          <p id="report-updated" class="text-xs text-gray-500"></p>
+        </div>
+        <ul id="insights-list" class="mt-4 space-y-2 text-sm text-gray-700"></ul>
+      </section>
+
+      <section class="grid gap-6 lg:grid-cols-2">
+        <article class="bg-white border border-[#82002d]/10 shadow rounded-lg p-6">
+          <div class="flex items-center justify-between">
+            <h2 class="text-lg font-semibold text-[#82002d]">Top modes</h2>
+            <span class="text-xs text-gray-500">Most requested experiences</span>
+          </div>
+          <div id="top-modes" class="mt-4 space-y-3"></div>
+        </article>
+        <article class="bg-white border border-[#82002d]/10 shadow rounded-lg p-6">
+          <div class="flex items-center justify-between">
+            <h2 class="text-lg font-semibold text-[#82002d]">Top countries</h2>
+            <span class="text-xs text-gray-500">Based on IP lookup</span>
+          </div>
+          <div id="top-locations" class="mt-4 space-y-3"></div>
+        </article>
+      </section>
+
+      <section class="grid gap-6 lg:grid-cols-2">
+        <article class="bg-white border border-[#82002d]/10 shadow rounded-lg p-6">
+          <div class="flex items-center justify-between">
+            <h2 class="text-lg font-semibold text-[#82002d]">Daily activity</h2>
+            <span class="text-xs text-gray-500">UTC dates</span>
+          </div>
+          <div id="daily-breakdown" class="mt-4 space-y-3"></div>
+        </article>
+        <article class="bg-white border border-[#82002d]/10 shadow rounded-lg p-6">
+          <div class="flex items-center justify-between">
+            <h2 class="text-lg font-semibold text-[#82002d]">Hourly cadence</h2>
+            <span class="text-xs text-gray-500">UTC hours</span>
+          </div>
+          <div id="hourly-breakdown" class="mt-4 space-y-3"></div>
+        </article>
+      </section>
+
+      <section class="bg-white border border-[#82002d]/10 shadow rounded-lg p-6">
+        <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <h2 class="text-lg font-semibold text-[#82002d]">Recent prompts</h2>
+          <span class="text-xs text-gray-500">Latest 20 entries matching filters</span>
+        </div>
+        <div id="recent-prompts" class="mt-4 grid gap-3"></div>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    const idToken = localStorage.getItem('idToken') || '';
+    if (!idToken) {
+      window.location.href = '/flask/admin/login';
+    }
+
+    const filterForm = document.getElementById('filter-form');
+    const startDateInput = document.getElementById('start-date');
+    const endDateInput = document.getElementById('end-date');
+    const modeSelect = document.getElementById('mode-filter');
+    const searchInput = document.getElementById('search-term');
+    const loadingState = document.getElementById('loading-state');
+    const emptyState = document.getElementById('empty-state');
+    const analyticsContent = document.getElementById('analytics-content');
+    const globalRange = document.getElementById('global-range');
+    const reportRange = document.getElementById('report-range');
+    const reportUpdated = document.getElementById('report-updated');
+    const insightsList = document.getElementById('insights-list');
+    const topModesContainer = document.getElementById('top-modes');
+    const topLocationsContainer = document.getElementById('top-locations');
+    const dailyBreakdown = document.getElementById('daily-breakdown');
+    const hourlyBreakdown = document.getElementById('hourly-breakdown');
+    const recentPromptsContainer = document.getElementById('recent-prompts');
+
+    document.getElementById('back-to-admin').onclick = () => {
+      window.location.href = '/flask/admin';
+    };
+
+    document.getElementById('reset-filters').onclick = () => {
+      filterForm.reset();
+      loadAnalytics({});
+    };
+
+    filterForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const filters = {
+        start_date: startDateInput.value,
+        end_date: endDateInput.value,
+        mode: modeSelect.value,
+        search: searchInput.value.trim(),
+      };
+      loadAnalytics(filters);
+    });
+
+    const numberFormatter = new Intl.NumberFormat();
+    const decimalFormatter = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1, minimumFractionDigits: 0 });
+
+    function buildQuery(filters) {
+      const params = new URLSearchParams();
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value) {
+          params.append(key, value);
+        }
+      });
+      const query = params.toString();
+      return query ? `?${query}` : '';
+    }
+
+    function formatDailyLabel(value) {
+      if (!value) return null;
+      const normalized = value.includes('T') ? value : `${value}T00:00:00Z`;
+      const date = new Date(normalized);
+      return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
+    }
+
+    function formatDateTime(value) {
+      if (!value) return 'Unknown time';
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+    }
+
+    function formatHourLabel(value) {
+      if (value === null || value === undefined) {
+        return 'Unknown';
+      }
+      if (typeof value === 'number') {
+        return `${String(value).padStart(2, '0')}:00`;
+      }
+      return String(value);
+    }
+
+    function describeFilters(filters) {
+      const parts = [];
+      if (filters.start_date || filters.end_date) {
+        const start = filters.start_date ? formatDailyLabel(filters.start_date) : 'beginning';
+        const end = filters.end_date ? formatDailyLabel(filters.end_date) : 'now';
+        parts.push(`${start} → ${end}`);
+      } else {
+        parts.push('All time');
+      }
+      parts.push(filters.mode ? `Mode "${filters.mode}"` : 'All modes');
+      if (filters.search) {
+        parts.push(`Contains "${filters.search}"`);
+      } else {
+        parts.push('All prompts');
+      }
+      return parts.join(' · ');
+    }
+
+    function renderModeOptions(modes, selected) {
+      const previous = selected || modeSelect.value;
+      modeSelect.innerHTML = '<option value="">All modes</option>';
+      (modes || []).forEach((mode) => {
+        const option = document.createElement('option');
+        option.value = mode;
+        option.textContent = mode;
+        modeSelect.appendChild(option);
+      });
+      if (previous && modes && modes.includes(previous)) {
+        modeSelect.value = previous;
+      } else if (selected) {
+        modeSelect.value = selected;
+      }
+    }
+
+    function renderBarList(container, items) {
+      container.innerHTML = '';
+      if (!items || !items.length) {
+        const message = document.createElement('p');
+        message.className = 'text-sm text-gray-500';
+        message.textContent = 'Not enough data for this view yet.';
+        container.appendChild(message);
+        return;
+      }
+      const maxCount = Math.max(...items.map((item) => item.count));
+      items.forEach((item) => {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'space-y-2';
+
+        const header = document.createElement('div');
+        header.className = 'flex items-center justify-between text-sm font-medium text-gray-700';
+        const labelSpan = document.createElement('span');
+        labelSpan.textContent = item.label;
+        const valueSpan = document.createElement('span');
+        valueSpan.textContent = numberFormatter.format(item.count);
+        header.appendChild(labelSpan);
+        header.appendChild(valueSpan);
+
+        const barTrack = document.createElement('div');
+        barTrack.className = 'w-full bg-gray-200 rounded-full h-2';
+        const barFill = document.createElement('div');
+        barFill.className = 'h-2 rounded-full bg-[#82002d]';
+        const width = maxCount ? Math.max(6, Math.round((item.count / maxCount) * 100)) : 0;
+        barFill.style.width = `${width}%`;
+        barTrack.appendChild(barFill);
+
+        wrapper.appendChild(header);
+        wrapper.appendChild(barTrack);
+        container.appendChild(wrapper);
+      });
+    }
+
+    function renderRecentPrompts(prompts) {
+      recentPromptsContainer.innerHTML = '';
+      if (!prompts || !prompts.length) {
+        const message = document.createElement('p');
+        message.className = 'text-sm text-gray-500';
+        message.textContent = 'No prompts match these filters yet.';
+        recentPromptsContainer.appendChild(message);
+        return;
+      }
+      prompts.forEach((entry) => {
+        const card = document.createElement('article');
+        card.className = 'p-4 border border-gray-200 rounded-lg bg-white shadow-sm';
+
+        const header = document.createElement('div');
+        header.className = 'flex flex-wrap items-center justify-between gap-2 text-xs text-gray-600';
+        const modeBadge = document.createElement('span');
+        modeBadge.className = 'px-2 py-1 bg-[#82002d]/10 text-[#82002d] rounded-full font-semibold uppercase tracking-wide';
+        modeBadge.textContent = entry.mode || 'Unknown';
+        const timeStamp = document.createElement('span');
+        timeStamp.textContent = formatDateTime(entry.created_at);
+        header.appendChild(modeBadge);
+        header.appendChild(timeStamp);
+
+        const body = document.createElement('p');
+        body.className = 'mt-3 text-sm text-gray-800 whitespace-pre-wrap leading-relaxed';
+        body.textContent = entry.prompt || '(No prompt text)';
+
+        card.appendChild(header);
+        card.appendChild(body);
+
+        const locationParts = [];
+        if (entry.location) {
+          if (entry.location.city) locationParts.push(entry.location.city);
+          if (entry.location.region) locationParts.push(entry.location.region);
+          if (entry.location.country) locationParts.push(entry.location.country);
+        }
+        if (locationParts.length) {
+          const locationEl = document.createElement('p');
+          locationEl.className = 'mt-2 text-xs text-gray-500';
+          locationEl.textContent = `Location: ${locationParts.join(', ')}`;
+          card.appendChild(locationEl);
+        }
+
+        recentPromptsContainer.appendChild(card);
+      });
+    }
+
+    async function loadAnalytics(filters = {}) {
+      const query = buildQuery(filters);
+      loadingState.classList.remove('hidden');
+      emptyState.classList.add('hidden');
+      analyticsContent.classList.add('hidden');
+
+      try {
+        const response = await fetch(`/flask/admin/analytics/summary${query}`, {
+          headers: { Authorization: `Bearer ${idToken}` },
+        });
+        if (response.status === 401) {
+          localStorage.removeItem('idToken');
+          window.location.href = '/flask/admin/login';
+          return;
+        }
+        if (!response.ok) {
+          throw new Error('Failed to load analytics');
+        }
+        const data = await response.json();
+        renderAnalytics(data, filters);
+      } catch (err) {
+        console.error(err);
+        emptyState.innerHTML = '<p class="text-sm text-red-600">Unable to generate this report right now. Please try again later.</p>';
+        emptyState.classList.remove('hidden');
+      } finally {
+        loadingState.classList.add('hidden');
+      }
+    }
+
+    function renderAnalytics(data, filters) {
+      startDateInput.value = filters.start_date || '';
+      endDateInput.value = filters.end_date || '';
+      searchInput.value = filters.search || '';
+      renderModeOptions(data.available_modes || [], filters.mode || '');
+      if (filters.mode) {
+        modeSelect.value = filters.mode;
+      }
+
+      const rangeDescription = describeFilters(filters);
+      reportRange.textContent = `Filters — ${rangeDescription}`;
+      reportUpdated.textContent = `Updated ${new Date().toLocaleString()}`;
+
+      if (data.global_date_range) {
+        const start = formatDateTime(data.global_date_range.start);
+        const end = formatDateTime(data.global_date_range.end);
+        globalRange.textContent = `Data captured from ${start} to ${end} (UTC).`;
+      } else {
+        globalRange.textContent = 'No historical prompt data stored yet.';
+      }
+
+      if (!data.total_prompts) {
+        analyticsContent.classList.add('hidden');
+        emptyState.innerHTML = `<p class="text-sm text-gray-600">No prompt activity matched these filters.</p><p class="mt-2 text-xs text-gray-500">${rangeDescription}</p>`;
+        emptyState.classList.remove('hidden');
+        return;
+      }
+
+      document.getElementById('stat-total-prompts').textContent = numberFormatter.format(data.total_prompts);
+      document.getElementById('stat-unique-conversations').textContent = numberFormatter.format(data.unique_conversations || 0);
+      document.getElementById('stat-unique-users').textContent = numberFormatter.format(data.unique_users || 0);
+      const averageDaily = data.daily_counts && data.daily_counts.length
+        ? data.total_prompts / data.daily_counts.length
+        : data.total_prompts;
+      document.getElementById('stat-average-per-day').textContent = decimalFormatter.format(averageDaily || 0);
+
+      const insights = [];
+      if (data.top_modes && data.top_modes.length) {
+        const topMode = data.top_modes[0];
+        const topModeName = topMode.mode || 'Unknown';
+        const topModeCount = typeof topMode.count === 'number' ? topMode.count : 0;
+        insights.push(`Top mode: ${topModeName} (${numberFormatter.format(topModeCount)} prompts)`);
+      }
+      if (data.daily_counts && data.daily_counts.length) {
+        const busiest = data.daily_counts.reduce((acc, entry) => (entry.count > acc.count ? entry : acc), data.daily_counts[0]);
+        insights.push(`Busiest day: ${formatDailyLabel(busiest.date)} (${numberFormatter.format(busiest.count)} prompts)`);
+      }
+      if (data.hourly_counts && data.hourly_counts.length) {
+        const peakHour = data.hourly_counts.reduce((acc, entry) => (entry.count > acc.count ? entry : acc), data.hourly_counts[0]);
+        insights.push(`Peak hour (UTC): ${formatHourLabel(peakHour.hour)} (${numberFormatter.format(peakHour.count)} prompts)`);
+      }
+      if (data.top_locations && data.top_locations.length) {
+        const topCountry = data.top_locations[0];
+        const countryName = topCountry.country || 'Unknown';
+        const countryCount = typeof topCountry.count === 'number' ? topCountry.count : 0;
+        insights.push(`Most active country: ${countryName} (${numberFormatter.format(countryCount)} prompts)`);
+      }
+      insightsList.innerHTML = '';
+      if (insights.length) {
+        insights.forEach((text) => {
+          const li = document.createElement('li');
+          li.textContent = text;
+          insightsList.appendChild(li);
+        });
+      } else {
+        const li = document.createElement('li');
+        li.className = 'text-sm text-gray-500';
+        li.textContent = 'Not enough activity yet to generate highlights.';
+        insightsList.appendChild(li);
+      }
+
+      renderBarList(
+        topModesContainer,
+        (data.top_modes || []).map((item) => ({ label: item.mode || 'Unknown', count: item.count || 0 })),
+      );
+      renderBarList(
+        topLocationsContainer,
+        (data.top_locations || []).map((item) => ({ label: item.country || 'Unknown', count: item.count || 0 })),
+      );
+      renderBarList(
+        dailyBreakdown,
+        (data.daily_counts || []).map((item) => ({ label: formatDailyLabel(item.date), count: item.count || 0 })),
+      );
+      renderBarList(
+        hourlyBreakdown,
+        (data.hourly_counts || []).map((item) => ({ label: formatHourLabel(item.hour), count: item.count || 0 })),
+      );
+      renderRecentPrompts(data.recent_prompts || []);
+
+      analyticsContent.classList.remove('hidden');
+      emptyState.classList.add('hidden');
+    }
+
+    loadAnalytics({});
+  </script>
+</body>
+</html>

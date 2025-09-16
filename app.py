@@ -13,7 +13,7 @@ from bson import ObjectId
 import boto3
 import requests
 from jose import jwk, jwt
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
 import threading
 from conversation_service import ConversationService
@@ -145,6 +145,27 @@ def _async_log_prompt(prompt, mode, ip_addr, conversation_id):
             "location": location,
             "created_at": datetime.utcnow(),
         })
+
+def _parse_date(value, end=False):
+    if not value:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        try:
+            parsed = datetime.strptime(text, "%Y-%m-%d")
+        except ValueError:
+            return None
+    if end and parsed.time() == datetime.min.time():
+        parsed = parsed + timedelta(days=1) - timedelta(microseconds=1)
+    return parsed
+
+
 
 
 @routes.post("/ask")
@@ -371,9 +392,164 @@ def admin_page():
     return send_from_directory(routes.static_folder, "admin.html")
 
 
+@routes.get("/admin/analytics")
+def admin_analytics_page():
+    return send_from_directory(routes.static_folder, "admin_analytics.html")
+
+
 @routes.get("/admin/mode")
 def admin_mode_page():
     return send_from_directory(routes.static_folder, "mode_editor.html")
+
+
+@routes.get("/admin/analytics/summary")
+@cognito_auth_required
+def admin_analytics_summary():
+    start_param = (request.args.get("start_date") or "").strip()
+    end_param = (request.args.get("end_date") or "").strip()
+    mode = (request.args.get("mode") or "").strip()
+    search = (request.args.get("search") or "").strip()
+
+    match = {}
+    date_filter = {}
+    start_dt = _parse_date(start_param)
+    end_dt = _parse_date(end_param, end=True)
+    if start_dt:
+        date_filter["$gte"] = start_dt
+    if end_dt:
+        date_filter["$lte"] = end_dt
+    if date_filter:
+        match["created_at"] = date_filter
+    if mode:
+        match["mode"] = mode
+    if search:
+        match["prompt"] = {"$regex": re.escape(search), "$options": "i"}
+
+    pipeline = [{"$match": match}] if match else []
+
+    def _isoformat_with_z(dt):
+        if not dt:
+            return None
+        iso_value = dt.isoformat()
+        if iso_value.endswith("Z") or "+" in iso_value[10:]:
+            return iso_value
+        return f"{iso_value}Z"
+
+    total_prompts = prompt_logs_collection.count_documents(match)
+    conversation_ids = [
+        cid for cid in prompt_logs_collection.distinct("conversation_id", match) if cid
+    ]
+    unique_conversations = len(conversation_ids)
+    ip_hashes = [
+        ip for ip in prompt_logs_collection.distinct("ip_hash", match) if ip
+    ]
+    unique_users = len(ip_hashes)
+
+    top_modes = [
+        {"mode": doc.get("_id") or "Unknown", "count": doc.get("count", 0)}
+        for doc in prompt_logs_collection.aggregate(
+            pipeline
+            + [
+                {"$group": {"_id": "$mode", "count": {"$sum": 1}}},
+                {"$sort": {"count": -1}},
+                {"$limit": 10},
+            ]
+        )
+    ]
+
+    daily_counts = [
+        {"date": doc.get("_id"), "count": doc.get("count", 0)}
+        for doc in prompt_logs_collection.aggregate(
+            pipeline
+            + [
+                {
+                    "$group": {
+                        "_id": {
+                            "$dateToString": {
+                                "format": "%Y-%m-%d",
+                                "date": "$created_at",
+                            }
+                        },
+                        "count": {"$sum": 1},
+                    }
+                },
+                {"$sort": {"_id": 1}},
+            ]
+        )
+    ]
+
+    top_locations = [
+        {"country": doc.get("_id") or "Unknown", "count": doc.get("count", 0)}
+        for doc in prompt_logs_collection.aggregate(
+            pipeline
+            + [
+                {
+                    "$group": {
+                        "_id": {"$ifNull": ["$location.country", "Unknown"]},
+                        "count": {"$sum": 1},
+                    }
+                },
+                {"$sort": {"count": -1}},
+                {"$limit": 10},
+            ]
+        )
+    ]
+
+    hourly_counts = [
+        {"hour": doc.get("_id"), "count": doc.get("count", 0)}
+        for doc in prompt_logs_collection.aggregate(
+            pipeline
+            + [
+                {"$group": {"_id": {"$hour": "$created_at"}, "count": {"$sum": 1}}},
+                {"$sort": {"_id": 1}},
+            ]
+        )
+    ]
+
+    recent_prompts = []
+    for doc in prompt_logs_collection.find(match).sort("created_at", -1).limit(20):
+        created_at = doc.get("created_at")
+        location = doc.get("location") or {}
+        recent_prompts.append(
+            {
+                "prompt": doc.get("prompt", ""),
+                "mode": doc.get("mode") or "Unknown",
+                "created_at": _isoformat_with_z(created_at),
+                "location": {
+                    "city": location.get("city"),
+                    "region": location.get("region"),
+                    "country": location.get("country"),
+                },
+            }
+        )
+
+    available_modes = sorted(
+        [m for m in prompt_logs_collection.distinct("mode") if m]
+    )
+
+    first_log = prompt_logs_collection.find_one({}, sort=[("created_at", 1)])
+    last_log = prompt_logs_collection.find_one({}, sort=[("created_at", -1)])
+
+    start_iso = _isoformat_with_z(first_log.get("created_at")) if first_log else None
+    end_iso = _isoformat_with_z(last_log.get("created_at")) if last_log else None
+    global_date_range = (
+        {"start": start_iso, "end": end_iso}
+        if start_iso and end_iso
+        else None
+    )
+
+    return {
+        "total_prompts": total_prompts,
+        "unique_conversations": unique_conversations,
+        "unique_users": unique_users,
+        "top_modes": top_modes,
+        "daily_counts": daily_counts,
+        "top_locations": top_locations,
+        "hourly_counts": hourly_counts,
+        "recent_prompts": recent_prompts,
+        "available_modes": available_modes,
+        "global_date_range": global_date_range,
+    }
 
 
 @routes.get("/admin/documents")
