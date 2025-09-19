@@ -36,6 +36,7 @@ db = mongo_client.get_database(config("MONGO_DB", default="bcca-assistant"))
 modes_collection = db.get_collection("modes")
 documents_collection = db.get_collection("documents")
 prompt_logs_collection = db.get_collection("prompt_logs")
+superadmins_collection = db.get_collection("superadmins")
 
 conversation_service = ConversationService(
     db,
@@ -76,6 +77,21 @@ def _get_jwks():
     return _jwks or []
 
 
+def _is_super_admin(user_id):
+    if not user_id:
+        return False
+
+    or_clauses = [{"user_id": user_id}]
+    try:
+        or_clauses.append({"_id": ObjectId(user_id)})
+    except Exception:  # noqa: BLE001
+        or_clauses.append({"_id": user_id})
+
+    return (
+        superadmins_collection.count_documents({"$or": or_clauses}, limit=1) > 0
+    )
+
+
 def cognito_auth_required(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
@@ -101,7 +117,11 @@ def cognito_auth_required(fn):
             )
         except Exception:
             return {"error": "Unauthorized, could not decode token"}, 401
-        request.user = {"sub": claims.get("sub")}
+        user_id = claims.get("sub")
+        request.user = {
+            "sub": user_id,
+            "is_super_admin": _is_super_admin(user_id),
+        }
         return fn(*args, **kwargs)
 
     return wrapper
@@ -280,7 +300,10 @@ def get_mode(mode):
 def list_modes_admin():
     docs = []
     print("Listing modes for user:", request.user["sub"])
-    for d in modes_collection.find({"user_id": request.user["sub"]}):
+    query = {}
+    if not request.user.get("is_super_admin"):
+        query["user_id"] = request.user["sub"]
+    for d in modes_collection.find(query):
         d["_id"] = str(d["_id"])
         d.pop("user_id", None)
         docs.append(d)
@@ -290,7 +313,10 @@ def list_modes_admin():
 @routes.get("/admin/modes/<mode_id>")
 @cognito_auth_required
 def get_mode_admin(mode_id):
-    doc = modes_collection.find_one({"_id": ObjectId(mode_id), "user_id": request.user["sub"]})
+    query = {"_id": ObjectId(mode_id)}
+    if not request.user.get("is_super_admin"):
+        query["user_id"] = request.user["sub"]
+    doc = modes_collection.find_one(query)
     if not doc:
         return {"error": "Not found"}, 404
     doc["_id"] = str(doc["_id"])
@@ -330,7 +356,10 @@ def create_mode():
 @routes.put("/admin/modes/<mode_id>")
 @cognito_auth_required
 def update_mode(mode_id):
-    doc = modes_collection.find_one({"_id": ObjectId(mode_id), "user_id": request.user["sub"]})
+    query = {"_id": ObjectId(mode_id)}
+    if not request.user.get("is_super_admin"):
+        query["user_id"] = request.user["sub"]
+    doc = modes_collection.find_one(query)
     if not doc:
         return {"error": "Not found"}, 404
     data = request.get_json() or {}
@@ -556,7 +585,9 @@ def admin_analytics_summary():
 @cognito_auth_required
 def list_documents_admin():
     mode = (request.args.get("mode") or "").strip()
-    query = {"user_id": request.user["sub"]}
+    query = {}
+    if not request.user.get("is_super_admin"):
+        query["user_id"] = request.user["sub"]
     if mode:
         query["mode"] = mode
     docs = []
@@ -577,7 +608,11 @@ def create_document():
     s3_key = None
     openai_file_id = None
 
-    mode_doc = modes_collection.find_one({"name": mode, "user_id": request.user["sub"]}) if mode else None
+    mode_query = {"name": mode} if mode else None
+    if mode_query and not request.user.get("is_super_admin"):
+        mode_query["user_id"] = request.user["sub"]
+    mode_doc = modes_collection.find_one(mode_query) if mode_query else None
+    mode_owner_id = (mode_doc or {}).get("user_id", request.user["sub"])
     allowed_tags = mode_doc.get("tags", []) if mode_doc else []
     if tag and tag not in allowed_tags:
         return {"error": "Invalid tag"}, 400
@@ -611,7 +646,7 @@ def create_document():
             except Exception as e:  # noqa: BLE001
                 print("vector store add failed", e)
     doc = {
-        "user_id": request.user["sub"],
+        "user_id": mode_owner_id,
         "mode": mode,
         "content": content,
         "tag": tag,
@@ -627,7 +662,10 @@ def create_document():
 @routes.delete("/admin/documents/<doc_id>")
 @cognito_auth_required
 def delete_document(doc_id):
-    doc = documents_collection.find_one({"_id": ObjectId(doc_id), "user_id": request.user["sub"]})
+    query = {"_id": ObjectId(doc_id)}
+    if not request.user.get("is_super_admin"):
+        query["user_id"] = request.user["sub"]
+    doc = documents_collection.find_one(query)
     if not doc:
         return {"error": "Not found"}, 404
     key = doc.get("s3_key")
