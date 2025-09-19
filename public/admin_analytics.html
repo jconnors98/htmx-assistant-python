@@ -17,6 +17,7 @@
         <button id="back-to-admin" class="secondary px-4 py-2">Back to Modes</button>
       </div>
     </header>
+    <p id="mode-context" class="hidden text-sm text-gray-600"></p>
 
     <section class="bg-white p-6 rounded-lg shadow">
       <form id="filter-form" class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -84,7 +85,7 @@
       </section>
 
       <section class="grid gap-6 lg:grid-cols-2">
-        <article class="bg-white border border-[#82002d]/10 shadow rounded-lg p-6">
+        <article id="top-modes-section" class="bg-white border border-[#82002d]/10 shadow rounded-lg p-6">
           <div class="flex items-center justify-between">
             <h2 class="text-lg font-semibold text-[#82002d]">Top modes</h2>
             <span class="text-xs text-gray-500">Most requested experiences</span>
@@ -150,6 +151,12 @@
     const dailyBreakdown = document.getElementById('daily-breakdown');
     const hourlyBreakdown = document.getElementById('hourly-breakdown');
     const recentPromptsContainer = document.getElementById('recent-prompts');
+    const topModesSection = document.getElementById('top-modes-section');
+    const modeContext = document.getElementById('mode-context');
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const lockedMode = (urlParams.get('modeId') || '').trim();
+    const hasLockedMode = Boolean(lockedMode);
 
     document.getElementById('back-to-admin').onclick = () => {
       window.location.href = '/flask/admin';
@@ -157,7 +164,10 @@
 
     document.getElementById('reset-filters').onclick = () => {
       filterForm.reset();
-      loadAnalytics({});
+      if (hasLockedMode) {
+        modeSelect.value = lockedMode;
+      }
+      loadAnalytics(hasLockedMode ? { mode: lockedMode } : {});
     };
 
     filterForm.addEventListener('submit', (event) => {
@@ -165,7 +175,7 @@
       const filters = {
         start_date: startDateInput.value,
         end_date: endDateInput.value,
-        mode: modeSelect.value,
+        mode: hasLockedMode ? lockedMode : modeSelect.value,
         search: searchInput.value.trim(),
       };
       loadAnalytics(filters);
@@ -227,6 +237,28 @@
     }
 
     function renderModeOptions(modes, selected) {
+      if (hasLockedMode) {
+        modeSelect.innerHTML = '';
+        const option = document.createElement('option');
+        option.value = lockedMode;
+        option.textContent = lockedMode;
+        modeSelect.appendChild(option);
+        modeSelect.value = lockedMode;
+        modeSelect.disabled = true;
+        modeSelect.classList.add('bg-gray-100', 'cursor-not-allowed');
+        const wrapper = modeSelect.closest('label');
+        if (wrapper) {
+          const labelSpan = wrapper.querySelector('span');
+          if (labelSpan) {
+            labelSpan.textContent = 'Mode (locked)';
+          }
+        }
+        if (modeContext) {
+          modeContext.textContent = `Viewing analytics for mode "${lockedMode}".`;
+          modeContext.classList.remove('hidden');
+        }
+        return;
+      }
       const previous = selected || modeSelect.value;
       modeSelect.innerHTML = '<option value="">All modes</option>';
       (modes || []).forEach((mode) => {
@@ -239,6 +271,19 @@
         modeSelect.value = previous;
       } else if (selected) {
         modeSelect.value = selected;
+      }
+      modeSelect.disabled = false;
+      modeSelect.classList.remove('bg-gray-100', 'cursor-not-allowed');
+      if (modeContext) {
+        modeContext.classList.add('hidden');
+        modeContext.textContent = '';
+      }
+      const wrapper = modeSelect.closest('label');
+      if (wrapper) {
+        const labelSpan = wrapper.querySelector('span');
+        if (labelSpan) {
+          labelSpan.textContent = 'Mode';
+        }
       }
     }
 
@@ -360,7 +405,7 @@
       endDateInput.value = filters.end_date || '';
       searchInput.value = filters.search || '';
       renderModeOptions(data.available_modes || [], filters.mode || '');
-      if (filters.mode) {
+      if (!hasLockedMode && filters.mode) {
         modeSelect.value = filters.mode;
       }
 
@@ -392,7 +437,7 @@
       document.getElementById('stat-average-per-day').textContent = decimalFormatter.format(averageDaily || 0);
 
       const insights = [];
-      if (data.top_modes && data.top_modes.length) {
+      if (!hasLockedMode && data.top_modes && data.top_modes.length) {
         const topMode = data.top_modes[0];
         const topModeName = topMode.mode || 'Unknown';
         const topModeCount = typeof topMode.count === 'number' ? topMode.count : 0;
@@ -426,10 +471,17 @@
         insightsList.appendChild(li);
       }
 
-      renderBarList(
-        topModesContainer,
-        (data.top_modes || []).map((item) => ({ label: item.mode || 'Unknown', count: item.count || 0 })),
-      );
+      if (topModesSection) {
+        topModesSection.classList.toggle('hidden', hasLockedMode);
+      }
+      if (!hasLockedMode) {
+        renderBarList(
+          topModesContainer,
+          (data.top_modes || []).map((item) => ({ label: item.mode || 'Unknown', count: item.count || 0 })),
+        );
+      } else {
+        topModesContainer.innerHTML = '';
+      }
       renderBarList(
         topLocationsContainer,
         (data.top_locations || []).map((item) => ({ label: item.country || 'Unknown', count: item.count || 0 })),
@@ -448,7 +500,8 @@
       emptyState.classList.add('hidden');
     }
 
-    loadAnalytics({});
+    const initialFilters = hasLockedMode ? { mode: lockedMode } : {};
+    loadAnalytics(initialFilters);
   </script>
 </body>
 </html>

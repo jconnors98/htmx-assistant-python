@@ -39,8 +39,34 @@
       data.modes.forEach(m => {
         const div = document.createElement('div');
         div.className = 'p-4 border border-[#82002d] rounded cursor-pointer hover:bg-gray-50';
-        div.innerHTML = `<h3 class="text-lg font-semibold text-[#82002d]">${m.name}</h3>${m.description ? `<p class="text-sm text-gray-700">${m.description}</p>` : ''}${(m.tags && m.tags.length) ? `<p class="text-xs text-gray-500 mt-1">Tags: ${m.tags.join(', ')}</p>` : ''}`;
+        div.innerHTML = `
+          <div class="flex items-start justify-between gap-4">
+            <div class="space-y-1">
+              <h3 class="text-lg font-semibold text-[#82002d]">${m.name}</h3>
+              ${m.description ? `<p class="text-sm text-gray-700">${m.description}</p>` : ''}
+              ${(m.tags && m.tags.length) ? `<p class="text-xs text-gray-500">Tags: ${m.tags.join(', ')}</p>` : ''}
+            </div>
+            <button
+              class="analytics-btn inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[#82002d] transition hover:bg-[#82002d]/10 focus:outline-none focus:ring-2 focus:ring-[#82002d] focus:ring-offset-2"
+              title="View analytics for ${m.name}"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-5 w-5" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 3v18h18M7.5 15.75l3-4.5 3 3 4.5-6" />
+              </svg>
+              <span class="sr-only">View analytics</span>
+            </button>
+          </div>
+        `;
         div.onclick = () => window.location.href = '/flask/admin/mode?id=' + m._id;
+
+        const analyticsBtn = div.querySelector('.analytics-btn');
+        if (analyticsBtn) {
+          analyticsBtn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            window.location.href = '/flask/admin/analytics?modeId=' + encodeURIComponent(m._id);
+          });
+        }
+        
         list.appendChild(div);
       });
     }
