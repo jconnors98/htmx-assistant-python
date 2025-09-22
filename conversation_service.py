@@ -82,7 +82,7 @@ class ConversationService:
         tools: List[Dict] = []
         interest = mode if mode else "general BCCA information"
         gpt_system_prompt = (
-            "You're a helpful, warm assistant supporting users with information about the BC Construction Association. "
+            "You're a helpful, warm assistant supporting users with information about the British Columbia construction industry. "
             f"The user is interested in {interest}. {mode_context} "
         )
         if self.vector_store_id and mode:

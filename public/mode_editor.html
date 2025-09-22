@@ -271,13 +271,13 @@
         }
       });
       container.appendChild(input);
-      (tags || []).forEach(t => addModeTag(t));
-      modeTags = tags || [];
+      modeTags = [...(tags || [])];
+      modeTags.forEach(tag => {
+        container.insertBefore(createTagChip(tag, container), input);
+      });
     }
 
-    function addModeTag(tag) {
-      modeTags.push(tag);
-      const container = document.getElementById('mode-tags');
+    function createTagChip(tag, container) {
       const chip = document.createElement('span');
       chip.className = 'chip inline-flex items-center bg-[#82002d] text-white rounded-full px-2 py-1 text-sm';
       chip.dataset.value = tag;
@@ -286,13 +286,24 @@
       btn.type = 'button';
       btn.className = 'ml-1 focus:outline-none';
       btn.textContent = '×';
-      btn.onclick = () => {
-        container.removeChild(chip);
-        modeTags = modeTags.filter(t => t !== tag);
+      btn.onclick = e => {
+        e.preventDefault();
+        const chips = Array.from(container.querySelectorAll('.chip'));
+        const index = chips.indexOf(chip);
+        if (index !== -1) {
+          modeTags.splice(index, 1);
+        }
+        chip.remove();
       };
       chip.appendChild(btn);
+      return chip;
+    }
+
+    function addModeTag(tag) {
+      modeTags.push(tag);
+      const container = document.getElementById('mode-tags');
       const input = document.getElementById('mode-tag-input');
-      container.insertBefore(chip, input);
+      container.insertBefore(createTagChip(tag, container), input);
     }
 
     function renderModePrompts(prompts) {
@@ -308,13 +319,13 @@
         }
       });
       container.appendChild(input);
-      (prompts || []).forEach(p => addModePrompt(p));
-      modePrompts = prompts || [];
+      modePrompts = [...(prompts || [])];
+      modePrompts.forEach(prompt => {
+        container.insertBefore(createPromptChip(prompt, container), input);
+      });
     }
 
-    function addModePrompt(prompt) {
-      modePrompts.push(prompt);
-      const container = document.getElementById('mode-prompts');
+    function createPromptChip(prompt, container) {
       const chip = document.createElement('span');
       chip.className = 'chip inline-flex items-center bg-[#82002d] text-white rounded-full px-2 py-1 text-sm';
       chip.dataset.value = prompt;
@@ -323,17 +334,24 @@
       btn.type = 'button';
       btn.className = 'ml-1 focus:outline-none';
       btn.textContent = '×';
-      btn.onclick = () => {
+      btn.onclick = e => {
+        e.preventDefault();
         const chips = Array.from(container.querySelectorAll('.chip'));
         const index = chips.indexOf(chip);
         if (index !== -1) {
           modePrompts.splice(index, 1);
         }
-        container.removeChild(chip);
+        chip.remove();
       };
       chip.appendChild(btn);
+      return chip;
+    }
+
+    function addModePrompt(prompt) {
+      modePrompts.push(prompt);
+      const container = document.getElementById('mode-prompts');
       const input = document.getElementById('mode-prompt-input');
-      container.insertBefore(chip, input);
+      container.insertBefore(createPromptChip(prompt, container), input);
     }
 
     function showSavedMessage() {
