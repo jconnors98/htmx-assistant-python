@@ -7,9 +7,15 @@
 </head>
 <body class="min-h-screen bg-gray-100">
   <div class="max-w-4xl mx-auto p-6">
-    <div class="flex items-center justify-between mb-6">
+    <div class="flex items-start justify-between mb-6">
       <h1 class="text-2xl font-bold text-[#82002d]">Mode Editor</h1>
-      <button id="back-to-admin" class="bg-[#82002d] hover:bg-[#a0003f] text-white px-4 py-2 rounded">Back to Modes</button>
+      <div class="flex items-start gap-4">
+        <div id="client-url-wrapper" class="text-right">
+          <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Client URL</div>
+          <a id="client-url" class="text-sm text-[#82002d] hover:underline break-all"></a>
+        </div>
+        <button id="back-to-admin" class="bg-[#82002d] hover:bg-[#a0003f] text-white px-4 py-2 rounded">Back to Modes</button>
+      </div>
     </div>
     <section class="mb-8">
       <h2 class="text-xl font-semibold text-[#82002d] mb-4">Mode Settings</h2>
@@ -99,6 +105,7 @@
         renderModePrompts([]);
         document.getElementById('mode-prioritize-files').checked = false;
         document.getElementById('mode-allow-upload').checked = false;
+        updateClientUrl();
         return;
       }
       const res = await fetch('/flask/admin/modes/' + modeId, {
@@ -125,6 +132,7 @@
       renderModeTags(modeTags);
       document.getElementById('docs-section').style.display = 'block';
       loadDocs();
+      updateClientUrl();
     }
 
     document.getElementById('mode-save').onclick = async () => {
@@ -335,6 +343,28 @@
     };
 
     document.getElementById('files').addEventListener('change', buildFileRows);
+
+    function updateClientUrl() {
+      const nameValue = document.getElementById('mode-name').value.trim();
+      const link = document.getElementById('client-url');
+      const wrapper = document.getElementById('client-url-wrapper');
+      if (!link || !wrapper) return;
+      if (!nameValue) {
+        link.textContent = '—';
+        link.removeAttribute('href');
+        wrapper.classList.add('text-gray-400');
+        return;
+      }
+      const url = 'https://v3.bidcentral.ca/flask/?mode=' + encodeURIComponent(nameValue);
+      link.textContent = url;
+      link.href = url;
+      wrapper.classList.remove('text-gray-400');
+    }
+
+    document.getElementById('mode-name').addEventListener('input', updateClientUrl);
+
+    updateClientUrl();
+
 
     loadMode();
   </script>
