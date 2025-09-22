@@ -219,7 +219,7 @@ def ask():
     
     ip_addr = request.headers.get("X-Forwarded-For", request.remote_addr)
     print(f"Prompt sent from IP: {ip_addr}")
-    threading.Thread(target=_async_log_prompt, args=(message, mode, ip_addr, conversation_id)).start()
+    threading.Thread(target=_async_log_prompt, args=(message, mode_doc['_id'], ip_addr, conversation_id)).start()
 
     try:
         user_id = getattr(request, "user", {}).get("sub", "anonymous")

@@ -57,13 +57,13 @@
             </button>
           </div>
         `;
-        div.onclick = () => window.location.href = '/flask/admin/mode?id=' + m.name;
+        div.onclick = () => window.location.href = '/flask/admin/mode?id=' + m._id;
 
         const analyticsBtn = div.querySelector('.analytics-btn');
         if (analyticsBtn) {
           analyticsBtn.addEventListener('click', (event) => {
             event.stopPropagation();
-            window.location.href = '/flask/admin/analytics?modeId=' + encodeURIComponent(m.name);
+            window.location.href = '/flask/admin/analytics?modeId=' + encodeURIComponent(m._id);
           });
         }
 

@@ -324,8 +324,12 @@
       btn.className = 'ml-1 focus:outline-none';
       btn.textContent = '×';
       btn.onclick = () => {
+        const chips = Array.from(container.querySelectorAll('.chip'));
+        const index = chips.indexOf(chip);
+        if (index !== -1) {
+          modePrompts.splice(index, 1);
+        }
         container.removeChild(chip);
-        modePrompts = modePrompts.filter(p => p !== prompt);
       };
       chip.appendChild(btn);
       const input = document.getElementById('mode-prompt-input');
