@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional, Tuple, List, Dict
+from typing import Optional, Tuple, List, Dict, Any
+from urllib.parse import quote_plus, urlencode
 from bson import ObjectId
 
 
@@ -70,7 +71,9 @@ class ConversationService:
         context = f"<SUMMARY>\n{summary}\n<RECENT_TURNS>\n{recent_text}\n"
         return context
 
-    def _build_prompt_and_tools(self, mode: str, tag: str) -> Tuple[str, List[Dict]]:
+    def _build_prompt_and_tools(
+        self, mode: str, tag: str
+    ) -> Tuple[str, List[Dict], List[Dict[str, Any]]]:
         mode_doc = self.modes.find_one({"name": mode}) if mode else None
         mode_context = mode_doc.get("description", "") if mode_doc else ""
         mode_preferred_sites = mode_doc.get("preferred_sites", []) if mode_doc else []
@@ -78,8 +81,10 @@ class ConversationService:
         allow_other_sites = mode_doc.get("allow_other_sites", True) if mode_doc else True
         prioritize_files = mode_doc.get("prioritize_files", False) if mode_doc else False
         tags = mode_doc.get("tags", []) if mode_doc else []
+        database_config = mode_doc.get("database") if mode_doc else None
 
         tools: List[Dict] = []
+        data_sources: List[Dict[str, Any]] = []
         interest = mode if mode else "general BCCA information"
         gpt_system_prompt = (
             "You're a helpful, warm assistant supporting users with information about the British Columbia construction industry. "
@@ -146,6 +151,15 @@ class ConversationService:
                     "When answering, use the internet. "
                 )
 
+        if database_config:
+            db_source = self._build_database_data_source(database_config)
+            if db_source:
+                data_sources.append(db_source)
+                gpt_system_prompt += (
+                    "You also have access to a structured database configured for this mode."
+                    " Use it to look up precise information when needed. "
+                )
+
         if allow_other_sites and mode_preferred_sites:
             gpt_system_prompt += (
                 "If you cannot fully answer from these, then use other reputable sources. "
@@ -161,7 +175,7 @@ class ConversationService:
 
         print("System prompt:", gpt_system_prompt)
 
-        return gpt_system_prompt, tools
+        return gpt_system_prompt, tools, data_sources
 
     def respond(
         self,
@@ -176,7 +190,7 @@ class ConversationService:
         conv_id = ObjectId(conversation_id)
         self.add_user_message(conversation_id, user_id, text)
         context = self._build_context(conversation_id)
-        system_prompt, tools = self._build_prompt_and_tools(mode, tag)
+        system_prompt, tools, data_sources = self._build_prompt_and_tools(mode, tag)
         full_system_prompt = f"{system_prompt}\n{context}"
 
         def _call_model(model_name: str):
@@ -199,6 +213,12 @@ class ConversationService:
                 and self.messages.count_documents({"conversation_id": conv_id}) <= 6
             ):
                 params["previous_response_id"] = previous_response_id
+
+            if data_sources:
+                return self.client.responses.create(
+                    **params, extra_body={"data_sources": data_sources}
+                )
+            
             return self.client.responses.create(**params)
 
         def _is_confident(res) -> bool:
@@ -233,6 +253,78 @@ class ConversationService:
         self._update_summary(conv_id, text, output_text)
         self._enforce_cap(conv_id)
         return output_text, response.id, usage
+    
+    # Database helpers ---------------------------------------------------
+    def _build_database_data_source(
+        self, database_config: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        if not isinstance(database_config, dict):
+            return None
+
+        if "type" in database_config and "config" in database_config:
+            config = database_config.get("config") or {}
+            connection_uri = config.get("connection_uri")
+            if connection_uri:
+                return {
+                    "type": database_config["type"],
+                    "config": config,
+                }
+            # Fall through to attempt to construct a URI if missing.
+
+        db_type = (database_config.get("type") or "").lower()
+        if db_type in {"postgres", "postgresql"}:
+            connection_uri = database_config.get("connection_uri")
+            if not connection_uri:
+                connection_uri = self._build_postgres_uri(database_config)
+            if not connection_uri:
+                return None
+
+            config: Dict[str, Any] = {}
+            config.update(database_config.get("config") or {})
+            config["connection_uri"] = connection_uri
+            schemas = database_config.get("schemas")
+            if schemas:
+                config.setdefault("schemas", schemas)
+            search_path = database_config.get("search_path")
+            if search_path:
+                config.setdefault("search_path", search_path)
+            max_rows = database_config.get("max_rows")
+            if max_rows:
+                config.setdefault("max_rows", max_rows)
+
+            return {"type": "postgresql", "config": config}
+
+        return None
+
+    def _build_postgres_uri(self, database_config: Dict[str, Any]) -> Optional[str]:
+        required = ["host", "database", "username", "password"]
+        if not all(database_config.get(key) for key in required):
+            return None
+
+        host = database_config["host"]
+        port = database_config.get("port")
+        username = quote_plus(str(database_config["username"]))
+        password = quote_plus(str(database_config["password"]))
+        db_name = database_config["database"]
+
+        query_params: Dict[str, Any] = {}
+        sslmode = database_config.get("sslmode")
+        if sslmode:
+            query_params["sslmode"] = sslmode
+        options = database_config.get("options")
+        extra_query = ""
+        if isinstance(options, dict):
+            for key, value in options.items():
+                if value is not None:
+                    query_params[key] = value
+        if query_params:
+            extra_query = urlencode(query_params, doseq=True)
+        elif isinstance(options, str) and options:
+            extra_query = options.lstrip("?")
+
+        query_string = f"?{extra_query}" if extra_query else ""
+        port_part = f":{port}" if port else ""
+        return f"postgresql://{username}:{password}@{host}{port_part}/{db_name}{query_string}"
 
     # Internal helpers ---------------------------------------------------
     def _update_summary(self, conv_id: ObjectId, user_text: str, assistant_text: str) -> None:

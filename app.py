@@ -139,6 +139,7 @@ def add_security_headers(response):
 def _async_log_prompt(prompt, mode, ip_addr, conversation_id):
     ip_hash = hashlib.sha256(ip_addr.encode()).hexdigest() if ip_addr else None
     location = {}
+    mode = str(mode) if mode else "<unknown>"
     print(f"Logging prompt from IP: {ip_addr}")
     if ip_addr:
         try:
@@ -219,7 +220,10 @@ def ask():
     
     ip_addr = request.headers.get("X-Forwarded-For", request.remote_addr)
     print(f"Prompt sent from IP: {ip_addr}")
-    threading.Thread(target=_async_log_prompt, args=(message, mode_doc['_id'], ip_addr, conversation_id)).start()
+    threading.Thread(
+        target=_async_log_prompt,
+        args=(message, mode_doc["_id"] if mode_doc else None, ip_addr, conversation_id),
+    ).start()
 
     try:
         user_id = getattr(request, "user", {}).get("sub", "anonymous")
@@ -277,13 +281,13 @@ def ask():
 
 @routes.get("/modes")
 def list_modes():
-    docs = list(modes_collection.find({}, {"_id": 0}))
+    docs = list(modes_collection.find({}, {"_id": 0, "database": 0}))
     return {"modes": docs}
 
 
 @routes.get("/modes/<mode>")
 def get_mode(mode):
-    doc = modes_collection.find_one({"name": mode}, {"_id": 0})
+    doc = modes_collection.find_one({"name": mode}, {"_id": 0, "database": 0})
     if not doc:
         return {"prompts": []}, 404
     return {
@@ -347,6 +351,10 @@ def create_mode():
         "prioritize_files": data.get("prioritize_files", False),
         "allow_file_upload": data.get("allow_file_upload", False),
     }
+
+    if "database" in data:
+        doc["database"] = data.get("database")
+
     result = modes_collection.insert_one(doc)
     doc["_id"] = str(result.inserted_id)
     doc.pop("user_id", None)
@@ -375,6 +383,10 @@ def update_mode(mode_id):
         "prioritize_files": data.get("prioritize_files", doc.get("prioritize_files", False)),
         "allow_file_upload": data.get("allow_file_upload", doc.get("allow_file_upload", False)),
     }
+
+    if "database" in data:
+        update["database"] = data.get("database")
+    
     modes_collection.update_one({"_id": doc["_id"]}, {"$set": update})
     doc.update(update)
     doc["_id"] = str(doc["_id"])
