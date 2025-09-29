@@ -8,7 +8,7 @@
   <script src="https://unpkg.com/htmx.org@1.9.5"></script>
 </head>
 <body>
-  <div class="container">
+  <div id="app-container" class="container hidden-until-ready">
     <h1 id="assistant-title">Builders Copilot</h1>
     <p class="intro" id="intro"></p>
     <div id="chat-window">
@@ -54,6 +54,7 @@
     const chatForm = document.getElementById("chat-form");
     const introEl = document.getElementById("intro");
     const fileInput = document.getElementById("file");
+    const appContainer = document.getElementById("app-container");
 
     document.addEventListener("htmx:beforeRequest", () => {
       const thinking = document.createElement("div");
@@ -118,9 +119,17 @@
 
     applyThemeColor(DEFAULT_THEME_COLOR);
 
+    function enableInteraction() {
+      document.getElementById("message").disabled = false;
+      document.getElementById("send-btn").disabled = false;
+      document.getElementById("message").placeholder = "How can I help you?";
+      document.getElementById("message").focus();
+    }
+
     async function init() {
         if (!mode) {
           document.getElementById("message").placeholder = "Mode is required in the URL.";
+          appContainer.classList.remove("hidden-until-ready");
           return;
         }
         document.getElementById("mode").value = mode;
@@ -145,14 +154,16 @@
             } else {
               chatForm.removeAttribute("hx-encoding");
             }
+            enableInteraction();
+          } else {
+            introEl.textContent = "Unable to load mode settings.";
           }
         } catch (err) {
           console.error("Failed to load prompts", err);
+          introEl.textContent = "Unable to load mode settings.";
+        } finally {
+          appContainer.classList.remove("hidden-until-ready");
         }
-      document.getElementById("message").disabled = false;
-      document.getElementById("send-btn").disabled = false;
-      document.getElementById("message").placeholder = "How can I help you?";
-      document.getElementById("message").focus();
     }
 
     document.addEventListener("DOMContentLoaded", init);

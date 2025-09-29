@@ -18,6 +18,11 @@ body {
   padding: 2rem 1rem;
 }
 
+.hidden-until-ready {
+  display: none;
+}
+
+
 /* Headline */
 h1 {
   color: var(--theme-color);
