@@ -18,6 +18,15 @@
     <div id="mode-list" class="space-y-4"></div>
   </div>
   <script>
+    const DEFAULT_THEME_COLOR = '#82002d';
+
+    function normalizeColor(value) {
+      if (!value) return DEFAULT_THEME_COLOR;
+      const text = String(value).trim();
+      if (!text) return DEFAULT_THEME_COLOR;
+      const prefixed = text.startsWith('#') ? text : `#${text}`;
+      return /^#[0-9a-fA-F]{6}$/.test(prefixed) ? prefixed.toLowerCase() : DEFAULT_THEME_COLOR;
+    }
     const idToken = localStorage.getItem('idToken') || '';
     if (!idToken) {
       window.location.href = '/flask/admin/login';
@@ -32,22 +41,28 @@
       const res = await fetch('/flask/admin/modes', {
         headers: { 'Authorization': 'Bearer ' + idToken }
       });
+      if (res.status === 401) {
+        window.location.href = '/flask/admin/login';
+        return;
+      }
       if (!res.ok) return;
       const data = await res.json();
       const list = document.getElementById('mode-list');
       list.innerHTML = '';
       data.modes.forEach(m => {
+        const color = normalizeColor(m.color);
         const div = document.createElement('div');
-        div.className = 'p-4 border border-[#82002d] rounded cursor-pointer hover:bg-gray-50';
+        div.className = 'p-4 border rounded cursor-pointer hover:bg-gray-50';
+        div.style.borderColor = color;
         div.innerHTML = `
           <div class="flex items-start justify-between gap-4">
             <div class="space-y-1">
-              <h3 class="text-lg font-semibold text-[#82002d]">${m.name}</h3>
+              <h3 class="text-lg font-semibold">${m.name}</h3>
               ${m.description ? `<p class="text-sm text-gray-700">${m.description}</p>` : ''}
               ${(m.tags && m.tags.length) ? `<p class="text-xs text-gray-500">Tags: ${m.tags.join(', ')}</p>` : ''}
             </div>
             <button
-              class="analytics-btn inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[#82002d] transition hover:bg-[#82002d]/10 focus:outline-none focus:ring-2 focus:ring-[#82002d] focus:ring-offset-2"
+              class="analytics-btn inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition focus:outline-none focus:ring-2 focus:ring-offset-2"
               title="View analytics for ${m.name}"
             >
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-5 w-5" aria-hidden="true">
@@ -60,7 +75,14 @@
         div.onclick = () => window.location.href = '/flask/admin/mode?id=' + m._id;
 
         const analyticsBtn = div.querySelector('.analytics-btn');
+        const titleEl = div.querySelector('h3');
+        if (titleEl) {
+          titleEl.style.color = color;
+        }
         if (analyticsBtn) {
+          analyticsBtn.style.color = color;
+          analyticsBtn.style.borderColor = color;
+          analyticsBtn.style.boxShadow = `0 0 0 1px ${color}`;
           analyticsBtn.addEventListener('click', (event) => {
             event.stopPropagation();
             window.location.href = '/flask/admin/analytics?modeId=' + encodeURIComponent(m._id);

@@ -72,6 +72,52 @@
       if (!document.getElementById("message").disabled) document.getElementById("message").focus();
     });
 
+    const DEFAULT_THEME_COLOR = "#82002d";
+
+    function normalizeColor(value) {
+      if (!value) return DEFAULT_THEME_COLOR;
+      const text = String(value).trim();
+      if (!text) return DEFAULT_THEME_COLOR;
+      const prefixed = text.startsWith("#") ? text : `#${text}`;
+      return /^#[0-9a-fA-F]{6}$/.test(prefixed) ? prefixed.toLowerCase() : DEFAULT_THEME_COLOR;
+    }
+
+    function adjustColor(hex, factor) {
+      const normalized = normalizeColor(hex).substring(1);
+      const num = parseInt(normalized, 16);
+      const clamp = (value) => Math.max(0, Math.min(255, value));
+      const r = clamp(((num >> 16) & 0xff) + Math.round(255 * factor));
+      const g = clamp(((num >> 8) & 0xff) + Math.round(255 * factor));
+      const b = clamp((num & 0xff) + Math.round(255 * factor));
+      return `#${((1 << 24) + (r << 16) + (g << 8) + b)
+        .toString(16)
+        .slice(1)}`;
+    }
+
+    function getContrastColor(hex) {
+      const normalized = normalizeColor(hex).substring(1);
+      const r = parseInt(normalized.substring(0, 2), 16);
+      const g = parseInt(normalized.substring(2, 4), 16);
+      const b = parseInt(normalized.substring(4, 6), 16);
+      const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+      return luminance > 0.6 ? "#000000" : "#ffffff";
+    }
+
+    function applyThemeColor(color) {
+      const normalized = normalizeColor(color || DEFAULT_THEME_COLOR);
+      document.documentElement.style.setProperty("--theme-color", normalized);
+      document.documentElement.style.setProperty(
+        "--theme-color-hover",
+        adjustColor(normalized, -0.1)
+      );
+      document.documentElement.style.setProperty(
+        "--theme-color-contrast",
+        getContrastColor(normalized)
+      );
+    }
+
+    applyThemeColor(DEFAULT_THEME_COLOR);
+
     async function init() {
         if (!mode) {
           document.getElementById("message").placeholder = "Mode is required in the URL.";
@@ -87,6 +133,7 @@
             document.title = data.title || document.title;
             document.getElementById('assistant-title').textContent = data.title || 'Builders Copilot';
             introEl.textContent = data.intro || "";
+            applyThemeColor(data.color);
             let html = "";
             prompts.forEach(p => {
               html += `<button onclick="submitPrompt(this.textContent)">${p}</button>`;

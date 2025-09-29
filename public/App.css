@@ -1,3 +1,9 @@
+:root {
+  --theme-color: #82002d;
+  --theme-color-hover: #a0003f;
+  --theme-color-contrast: #ffffff;
+}
+
 /* Base Layout */
 body {
   margin: 0;
@@ -14,21 +20,21 @@ body {
 
 /* Headline */
 h1 {
-  color: #82002d;
+  color: var(--theme-color);
   font-size: 1.8rem;
   text-align: center;
   margin-bottom: 0.5rem;
 }
 
 h2 {
-  color: #82002d;
+  color: var(--theme-color);
   font-size: 1.4rem;
   margin-top: 2rem;
   margin-bottom: 0.75rem;
 }
 
 h3 {
-  color: #82002d;
+  color: var(--theme-color);
   font-size: 1.1rem;
   margin-top: 1.5rem;
   margin-bottom: 0.5rem;
@@ -134,8 +140,8 @@ h3 {
 }
 
 .prompt-buttons button {
-  background-color: #82002d;
-  color: white;
+  background-color: var(--theme-color);
+  color: var(--theme-color-contrast);
   border: none;
   border-radius: 20px;
   padding: 0.5rem 1rem;
@@ -145,7 +151,7 @@ h3 {
 }
 
 .prompt-buttons button:hover {
-  background-color: #a0003f;
+  background-color: var(--theme-color-hover);
 }
 
 .mode-buttons {
@@ -162,8 +168,8 @@ h3 {
 }
 
 .mode-buttons button {
-  background-color: #82002d;
-  color: white;
+  background-color: var(--theme-color);
+  color: var(--theme-color-contrast);
   border: none;
   border-radius: 20px;
   padding: 0.5rem 1rem;
@@ -173,11 +179,11 @@ h3 {
 }
 
 .mode-buttons button:hover {
-  background-color: #a0003f;
+  background-color: var(--theme-color-hover);
 }
 
 .mode-buttons button.active {
-  background-color: #a0003f;
+  background-color: var(--theme-color-hover);
 }
 
 
@@ -193,7 +199,7 @@ textarea {
   resize: none;
   padding: 0.6rem;
   font-size: 0.9rem;
-  border: 1px solid #82002d;
+  border: 1px solid var(--theme-color);
   border-radius: 6px;
   font-family: inherit;
   /*min-height: 32px;*/
@@ -203,7 +209,7 @@ textarea {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  border: 1px solid #82002d;
+  border: 1px solid var(--theme-color);
   padding: 4px;
   border-radius: 6px;
 }
@@ -215,8 +221,8 @@ textarea {
 }
 
 .chip {
-  background-color: #82002d;
-  color: #fff;
+  background-color: var(--theme-color);
+  color: var(--theme-color-contrast);
   border-radius: 12px;
   padding: 2px 6px;
   display: flex;
@@ -226,7 +232,7 @@ textarea {
 .chip button {
   background: none;
   border: none;
-  color: #fff;
+  color: var(--theme-color-contrast);
   margin-left: 4px;
   cursor: pointer;
 }
@@ -254,15 +260,15 @@ input[type="password"],
 input[type="file"] {
   padding: 0.6rem;
   font-size: 0.9rem;
-  border: 1px solid #82002d;
+  border: 1px solid var(--theme-color);
   border-radius: 6px;
   font-family: inherit;
 }
 
 
 button {
-  background-color: #82002d;
-  color: white;
+  background-color: var(--theme-color);
+  color: var(--theme-color-contrast);
   border: none;
   border-radius: 6px;
   padding: 0.6rem 1.2rem;
@@ -272,18 +278,18 @@ button {
 }
 
 button:hover {
-  background-color: #a0003f;
+  background-color: var(--theme-color-hover);
 }
 
 button.secondary {
   background: none;
-  border: 1px solid #82002d;
-  color: #82002d;
+  border: 1px solid var(--theme-color);
+  color: var(--theme-color);
 }
 
 button.secondary:hover {
-  background: #82002d;
-  color: white;
+  background: var(--theme-color);
+  color: var(--theme-color-contrast);
 }
 
 .admin-section {
@@ -307,7 +313,7 @@ button.secondary:hover {
   width: 100%;
   padding: 0.5rem;
   font-size: 1rem;
-  border: 1px solid #82002d;
+  border: 1px solid var(--theme-color);
   border-radius: 6px;
 }
 
@@ -327,7 +333,7 @@ button.secondary:hover {
 }
 
 .mode-preview {
-  border: 1px solid #82002d;
+  border: 1px solid var(--theme-color);
   border-radius: 6px;
   padding: 1rem;
   margin: 0.5rem 0;

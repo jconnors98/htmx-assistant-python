@@ -49,12 +49,13 @@ print("Connected to MongoDB at", config("MONGO_URI"))
 
 localDevMode = config("LOCAL_DEV_MODE", default="false").lower()
 
-
 AWS_ACCESS_KEY_ID = config("AWS_ACCESS_KEY_ID", default=None)
 AWS_SECRET_ACCESS_KEY = config("AWS_SECRET_ACCESS_KEY", default=None)
 COGNITO_REGION = config("COGNITO_REGION", default=None)
 COGNITO_USER_POOL_ID = config("COGNITO_USER_POOL_ID", default=None)
 COGNITO_APP_CLIENT_ID = config("COGNITO_APP_CLIENT_ID", default=None)
+
+DEFAULT_MODE_COLOR = "#82002d"
 
 S3_BUCKET = config("S3_BUCKET", default="builders-copilot")
 s3 = boto3.client(
@@ -64,6 +65,22 @@ s3 = boto3.client(
     region_name=COGNITO_REGION
 )
 _jwks = None
+
+
+def _get_priority_source(data, default="sites"):
+    if not data:
+        return default
+
+    preference = data.get("priority_source")
+    if isinstance(preference, str):
+        preference = preference.strip().lower()
+    if preference in {"sites", "files"}:
+        return preference
+
+    if data.get("prioritize_files"):
+        return "files"
+
+    return default
 
 
 def _get_jwks():
@@ -186,7 +203,21 @@ def _parse_date(value, end=False):
         parsed = parsed + timedelta(days=1) - timedelta(microseconds=1)
     return parsed
 
+def _normalize_color(value):
+    if not value:
+        return DEFAULT_MODE_COLOR
 
+    text = str(value).strip()
+    if not text:
+        return DEFAULT_MODE_COLOR
+
+    if not text.startswith("#"):
+        text = f"#{text}"
+
+    if not re.fullmatch(r"#[0-9a-fA-F]{6}", text):
+        return DEFAULT_MODE_COLOR
+
+    return text.lower()
 
 
 @routes.post("/ask")
@@ -282,6 +313,8 @@ def ask():
 @routes.get("/modes")
 def list_modes():
     docs = list(modes_collection.find({}, {"_id": 0, "database": 0}))
+    for doc in docs:
+        doc["color"] = _normalize_color(doc.get("color"))
     return {"modes": docs}
 
 
@@ -296,6 +329,7 @@ def get_mode(mode):
         "intro": doc.get("intro", ""),
         "title": doc.get("title", ""),
         "allow_file_upload": doc.get("allow_file_upload", False),
+        "color": _normalize_color(doc.get("color")),
     }
 
 
@@ -310,6 +344,9 @@ def list_modes_admin():
     for d in modes_collection.find(query):
         d["_id"] = str(d["_id"])
         d.pop("user_id", None)
+        d["priority_source"] = _get_priority_source(d)
+        d.pop("prioritize_files", None)
+        d["color"] = _normalize_color(d.get("color"))
         docs.append(d)
     return {"modes": docs}
 
@@ -324,7 +361,10 @@ def get_mode_admin(mode_id):
     if not doc:
         return {"error": "Not found"}, 404
     doc["_id"] = str(doc["_id"])
+    doc["priority_source"] = _get_priority_source(doc)
+    doc.pop("prioritize_files", None)
     doc.pop("user_id", None)
+    doc["color"] = _normalize_color(doc.get("color"))
     return doc
 
 
@@ -348,9 +388,11 @@ def create_mode():
         "preferred_sites": data.get("preferred_sites", []),
         "blocked_sites": data.get("blocked_sites", []),
         "allow_other_sites": data.get("allow_other_sites", True),
-        "prioritize_files": data.get("prioritize_files", False),
         "allow_file_upload": data.get("allow_file_upload", False),
+        "color": _normalize_color(data.get("color")),
     }
+
+    doc["priority_source"] = _get_priority_source(data)
 
     if "database" in data:
         doc["database"] = data.get("database")
@@ -358,6 +400,7 @@ def create_mode():
     result = modes_collection.insert_one(doc)
     doc["_id"] = str(result.inserted_id)
     doc.pop("user_id", None)
+    doc.pop("prioritize_files", None)
     return doc, 201
 
 
@@ -380,17 +423,21 @@ def update_mode(mode_id):
         "preferred_sites": data.get("preferred_sites", doc.get("preferred_sites", [])),
         "blocked_sites": data.get("blocked_sites", doc.get("blocked_sites", [])),
         "allow_other_sites": data.get("allow_other_sites", doc.get("allow_other_sites", True)),
-        "prioritize_files": data.get("prioritize_files", doc.get("prioritize_files", False)),
         "allow_file_upload": data.get("allow_file_upload", doc.get("allow_file_upload", False)),
+        "color": _normalize_color(data.get("color", doc.get("color", DEFAULT_MODE_COLOR))),
     }
+
+    update["priority_source"] = _get_priority_source(data)
 
     if "database" in data:
         update["database"] = data.get("database")
     
-    modes_collection.update_one({"_id": doc["_id"]}, {"$set": update})
+    modes_collection.update_one({"_id": doc["_id"]}, {"$set": update, "$unset": {"prioritize_files": ""}})
     doc.update(update)
     doc["_id"] = str(doc["_id"])
     doc.pop("user_id", None)
+    doc.pop("prioritize_files", None)
+    doc["color"] = _normalize_color(doc.get("color"))
     return doc
 
 

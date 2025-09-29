@@ -79,7 +79,7 @@ class ConversationService:
         mode_preferred_sites = mode_doc.get("preferred_sites", []) if mode_doc else []
         mode_blocked_sites = mode_doc.get("blocked_sites", []) if mode_doc else []
         allow_other_sites = mode_doc.get("allow_other_sites", True) if mode_doc else True
-        prioritize_files = mode_doc.get("prioritize_files", False) if mode_doc else False
+        priority_source = mode_doc.get("priority_source", "sites") if mode_doc else "sites"
         tags = mode_doc.get("tags", []) if mode_doc else []
         database_config = mode_doc.get("database") if mode_doc else None
 
@@ -126,9 +126,18 @@ class ConversationService:
 
         if self.vector_store_id and mode:
             gpt_system_prompt += "You have access to a vector store containing relevant documents. "
-            if prioritize_files:
+            if priority_source == "files":
+                if mode_preferred_sites:
+                    gpt_system_prompt += (
+                        "Always begin by reviewing the files in the vector store. If you cannot find a complete answer there, then search the preferred websites in order of priority. "
+                    )
+                else:
+                    gpt_system_prompt += (
+                        "Always begin by reviewing the files in the vector store. If you still need more information, expand your search to reputable internet sources. "
+                    )
+            elif priority_source == "sites" and mode_preferred_sites:
                 gpt_system_prompt += (
-                    "When answering, prioritize information from the vector store first. "  
+                    "Always begin by searching the preferred websites listed below, in order. If those sites do not provide the answer, then review the files in the vector store. " 
                 )
             else:
                 gpt_system_prompt += (
@@ -172,8 +181,6 @@ class ConversationService:
             )
 
         tools.append({"type": "web_search_preview"})
-
-        print("System prompt:", gpt_system_prompt)
 
         return gpt_system_prompt, tools, data_sources
 
