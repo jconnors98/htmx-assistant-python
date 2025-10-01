@@ -2,6 +2,7 @@
   --theme-color: #82002d;
   --theme-color-hover: #a0003f;
   --theme-color-contrast: #ffffff;
+  --text-color: #ffffff;
 }
 
 /* Base Layout */
@@ -146,7 +147,7 @@ h3 {
 
 .prompt-buttons button {
   background-color: var(--theme-color);
-  color: var(--theme-color-contrast);
+  color: var(--text-color);
   border: none;
   border-radius: 20px;
   padding: 0.5rem 1rem;
@@ -174,7 +175,7 @@ h3 {
 
 .mode-buttons button {
   background-color: var(--theme-color);
-  color: var(--theme-color-contrast);
+  color: var(--text-color);
   border: none;
   border-radius: 20px;
   padding: 0.5rem 1rem;
@@ -227,7 +228,7 @@ textarea {
 
 .chip {
   background-color: var(--theme-color);
-  color: var(--theme-color-contrast);
+  color: var(--text-color);
   border-radius: 12px;
   padding: 2px 6px;
   display: flex;
@@ -237,7 +238,7 @@ textarea {
 .chip button {
   background: none;
   border: none;
-  color: var(--theme-color-contrast);
+  color: var(--text-color);
   margin-left: 4px;
   cursor: pointer;
 }
@@ -249,16 +250,143 @@ textarea {
   margin-bottom: 0.5rem;
 }
 
-.upload-top {
+.upload-toggle-btn {
+  background-color: var(--theme-color);
+  color: var(--text-color);
+  border: none;
+  border-radius: 6px;
+  padding: 0.6rem 1.2rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+  min-width: 50px;
+  transition: background-color 0.2s ease;
   display: flex;
   align-items: center;
+  justify-content: center;
+}
+
+.upload-toggle-btn:hover {
+  background-color: var(--theme-color-hover);
+}
+
+.upload-toggle-btn.active {
+  background-color: var(--theme-color-hover);
+  transform: scale(1.02);
+}
+
+.scroll-top-btn {
+  min-width: 50px;
+}
+
+.upload-area {
+  margin-top: 0.5rem;
+  animation: slideDown 0.3s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.upload-dropzone {
+  border: 2px dashed #ccc;
+  border-radius: 8px;
+  padding: 1.5rem;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  background: #fafafa;
+  margin-bottom: 0.5rem;
+}
+
+.upload-dropzone:hover {
+  border-color: var(--theme-color);
+  background: #f0f8ff;
+}
+
+.upload-dropzone.drag-over {
+  border-color: var(--theme-color);
+  background: #e6f3ff;
+  transform: scale(1.02);
+}
+
+.upload-icon {
+  font-size: 2rem;
+  margin-bottom: 0.5rem;
+  opacity: 0.6;
+}
+
+.upload-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.upload-primary {
+  font-weight: 500;
+  color: var(--theme-color);
+  font-size: 0.9rem;
+}
+
+.upload-secondary {
+  font-size: 0.8rem;
+  color: #666;
+}
+
+.uploaded-files {
+  display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
   margin-top: 0.5rem;
 }
 
-.upload-top input[type="file"] {
-  flex: 1;
+.file-preview {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: #f0f0f0;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 0.5rem;
+  font-size: 0.85rem;
+  max-width: 200px;
 }
+
+.file-preview .file-icon {
+  font-size: 1.2rem;
+}
+
+.file-preview .file-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-preview .file-remove {
+  background: none;
+  border: none;
+  color: #999;
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 0;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.file-preview .file-remove:hover {
+  color: #d32f2f;
+}
+
 
 input[type="text"],
 input[type="password"],
@@ -273,7 +401,7 @@ input[type="file"] {
 
 button {
   background-color: var(--theme-color);
-  color: var(--theme-color-contrast);
+  color: var(--text-color);
   border: none;
   border-radius: 6px;
   padding: 0.6rem 1.2rem;
@@ -294,7 +422,7 @@ button.secondary {
 
 button.secondary:hover {
   background: var(--theme-color);
-  color: var(--theme-color-contrast);
+  color: var(--text-color);
 }
 
 .admin-section {

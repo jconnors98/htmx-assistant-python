@@ -33,6 +33,10 @@
           <input id="mode-color" type="color" value="#82002d" class="h-12 w-24 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-[#82002d]" />
         </label>
         <label class="flex flex-col">
+          <span class="mb-1 font-medium">Text Color</span>
+          <input id="mode-text-color" type="color" value="#ffffff" class="h-12 w-24 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-[#82002d]" />
+        </label>
+        <label class="flex flex-col">
           <span class="mb-1 font-medium">Describe your Site or Service</span>
           <textarea id="mode-desc" class="px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-[#82002d]"></textarea>
         </label>
@@ -102,6 +106,7 @@
 
   <script>
     const DEFAULT_THEME_COLOR = '#82002d';
+    const DEFAULT_TEXT_COLOR = '#ffffff';
 
     function normalizeColor(value) {
       if (!value) return DEFAULT_THEME_COLOR;
@@ -109,6 +114,14 @@
       if (!text) return DEFAULT_THEME_COLOR;
       const prefixed = text.startsWith('#') ? text : `#${text}`;
       return /^#[0-9a-fA-F]{6}$/.test(prefixed) ? prefixed.toLowerCase() : DEFAULT_THEME_COLOR;
+    }
+
+    function normalizeTextColor(value) {
+      if (!value) return DEFAULT_TEXT_COLOR;
+      const text = String(value).trim();
+      if (!text) return DEFAULT_TEXT_COLOR;
+      const prefixed = text.startsWith('#') ? text : `#${text}`;
+      return /^#[0-9a-fA-F]{6}$/.test(prefixed) ? prefixed.toLowerCase() : DEFAULT_TEXT_COLOR;
     }
 
     const idToken = localStorage.getItem('idToken') || '';
@@ -134,7 +147,9 @@
     let modeTags = [];
     let modePrompts = [];
     const colorInput = document.getElementById('mode-color');
+    const textColorInput = document.getElementById('mode-text-color');
     colorInput.value = DEFAULT_THEME_COLOR;
+    textColorInput.value = DEFAULT_TEXT_COLOR;
 
     async function loadMode() {
       if (!modeId) {
@@ -144,6 +159,7 @@
         document.getElementById('mode-priority-files').checked = false;
         document.getElementById('mode-allow-upload').checked = false;
         colorInput.value = DEFAULT_THEME_COLOR;
+        textColorInput.value = DEFAULT_TEXT_COLOR;
         updateClientUrl();
         return;
       }
@@ -163,6 +179,7 @@
       document.getElementById('mode-desc').value = m.description || '';
       document.getElementById('mode-intro').value = m.intro || '';
       colorInput.value = normalizeColor(m.color);
+      textColorInput.value = normalizeTextColor(m.text_color);
       renderModePrompts(modePrompts);
       document.getElementById('mode-preferred').value = (m.preferred_sites || []).join(',');
       document.getElementById('mode-blocked').value = (m.blocked_sites || []).join(',');
@@ -188,7 +205,8 @@
         allow_other_sites: document.getElementById('mode-allow-other').checked,
         priority_source: (document.querySelector('input[name="mode-priority-source"]:checked') || { value: 'sites' }).value,
         allow_file_upload: document.getElementById('mode-allow-upload').checked,
-        color: normalizeColor(colorInput.value)
+        color: normalizeColor(colorInput.value),
+        text_color: normalizeTextColor(textColorInput.value)
       };
       if (!modeId) {
         body.name = document.getElementById('mode-name').value;

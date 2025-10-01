@@ -56,6 +56,7 @@ COGNITO_USER_POOL_ID = config("COGNITO_USER_POOL_ID", default=None)
 COGNITO_APP_CLIENT_ID = config("COGNITO_APP_CLIENT_ID", default=None)
 
 DEFAULT_MODE_COLOR = "#82002d"
+DEFAULT_TEXT_COLOR = "#ffffff"
 
 S3_BUCKET = config("S3_BUCKET", default="builders-copilot")
 s3 = boto3.client(
@@ -220,6 +221,23 @@ def _normalize_color(value):
     return text.lower()
 
 
+def _normalize_text_color(value):
+    if not value:
+        return DEFAULT_TEXT_COLOR
+
+    text = str(value).strip()
+    if not text:
+        return DEFAULT_TEXT_COLOR
+
+    if not text.startswith("#"):
+        text = f"#{text}"
+
+    if not re.fullmatch(r"#[0-9a-fA-F]{6}", text):
+        return DEFAULT_TEXT_COLOR
+
+    return text.lower()
+
+
 @routes.post("/ask")
 def ask():
     message = (request.form.get("message") or "").strip()
@@ -315,6 +333,7 @@ def list_modes():
     docs = list(modes_collection.find({}, {"_id": 0, "database": 0}))
     for doc in docs:
         doc["color"] = _normalize_color(doc.get("color"))
+        doc["text_color"] = _normalize_text_color(doc.get("text_color"))
     return {"modes": docs}
 
 
@@ -330,6 +349,7 @@ def get_mode(mode):
         "title": doc.get("title", ""),
         "allow_file_upload": doc.get("allow_file_upload", False),
         "color": _normalize_color(doc.get("color")),
+        "text_color": _normalize_text_color(doc.get("text_color")),
     }
 
 
@@ -347,6 +367,7 @@ def list_modes_admin():
         d["priority_source"] = _get_priority_source(d)
         d.pop("prioritize_files", None)
         d["color"] = _normalize_color(d.get("color"))
+        d["text_color"] = _normalize_text_color(d.get("text_color"))
         docs.append(d)
     return {"modes": docs}
 
@@ -365,6 +386,7 @@ def get_mode_admin(mode_id):
     doc.pop("prioritize_files", None)
     doc.pop("user_id", None)
     doc["color"] = _normalize_color(doc.get("color"))
+    doc["text_color"] = _normalize_text_color(doc.get("text_color"))
     return doc
 
 
@@ -390,6 +412,7 @@ def create_mode():
         "allow_other_sites": data.get("allow_other_sites", True),
         "allow_file_upload": data.get("allow_file_upload", False),
         "color": _normalize_color(data.get("color")),
+        "text_color": _normalize_text_color(data.get("text_color")),
     }
 
     doc["priority_source"] = _get_priority_source(data)
@@ -425,6 +448,7 @@ def update_mode(mode_id):
         "allow_other_sites": data.get("allow_other_sites", doc.get("allow_other_sites", True)),
         "allow_file_upload": data.get("allow_file_upload", doc.get("allow_file_upload", False)),
         "color": _normalize_color(data.get("color", doc.get("color", DEFAULT_MODE_COLOR))),
+        "text_color": _normalize_text_color(data.get("text_color", doc.get("text_color", DEFAULT_TEXT_COLOR))),
     }
 
     update["priority_source"] = _get_priority_source(data)
@@ -438,6 +462,7 @@ def update_mode(mode_id):
     doc.pop("user_id", None)
     doc.pop("prioritize_files", None)
     doc["color"] = _normalize_color(doc.get("color"))
+    doc["text_color"] = _normalize_text_color(doc.get("text_color"))
     return doc
 
 

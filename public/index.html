@@ -23,7 +23,7 @@
         hx-post="/flask/ask"
         hx-target="#chat-box"
         hx-swap="beforeend"
-        onsubmit="clearInputAfterSend()"
+        onsubmit="handleFormSubmit(event)"
       >
         <div class="input-group">
             <textarea
@@ -38,11 +38,24 @@
             <input type="hidden" id="conversation_id" name="conversation_id" />
             <input type="hidden" id="response_id" name="response_id" />
             <button id="send-btn" type="submit" disabled>Send</button>
+            <button type="button" class="upload-toggle-btn" id="upload-toggle-btn" onclick="toggleUploadArea()">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5c0-1.38 1.12-2.5 2.5-2.5s2.5 1.12 2.5 2.5v10.5c0 .55-.45 1-1 1s-1-.45-1-1V6H10v9.5c0 1.38 1.12 2.5 2.5 2.5s2.5-1.12 2.5-2.5V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z"/>
+              </svg>
+            </button>
+            <button type="button" onclick="scrollToTop()" class="secondary scroll-top-btn">↑</button>
             <button type="button" onclick="clearChat()" class="secondary">Clear Chat</button>
         </div>
-        <div class="upload-top">
-          <input type="file" id="file" name="file" style="display:none" />
-          <button id="scroll-top" onclick="scrollToTop()">⬆ Top</button>
+        <div class="upload-area" id="upload-area" style="display: none;">
+          <input type="file" id="file" name="file" style="display:none" accept="*/*" />
+          <div class="upload-dropzone" id="upload-dropzone">
+            <div class="upload-icon">📎</div>
+            <div class="upload-text">
+              <span class="upload-primary">Click to upload</span>
+              <span class="upload-secondary">or drag and drop files here</span>
+            </div>
+          </div>
+          <div class="uploaded-files" id="uploaded-files"></div>
         </div>
       </form>
 
@@ -54,7 +67,13 @@
     const chatForm = document.getElementById("chat-form");
     const introEl = document.getElementById("intro");
     const fileInput = document.getElementById("file");
+    const uploadArea = document.getElementById("upload-area");
+    const uploadDropzone = document.getElementById("upload-dropzone");
+    const uploadedFiles = document.getElementById("uploaded-files");
+    const uploadToggleBtn = document.getElementById("upload-toggle-btn");
     const appContainer = document.getElementById("app-container");
+    let selectedFiles = [];
+    let uploadAreaVisible = false;
 
     document.addEventListener("htmx:beforeRequest", () => {
       const thinking = document.createElement("div");
@@ -74,6 +93,7 @@
     });
 
     const DEFAULT_THEME_COLOR = "#82002d";
+    const DEFAULT_TEXT_COLOR = "#ffffff";
 
     function normalizeColor(value) {
       if (!value) return DEFAULT_THEME_COLOR;
@@ -81,6 +101,14 @@
       if (!text) return DEFAULT_THEME_COLOR;
       const prefixed = text.startsWith("#") ? text : `#${text}`;
       return /^#[0-9a-fA-F]{6}$/.test(prefixed) ? prefixed.toLowerCase() : DEFAULT_THEME_COLOR;
+    }
+
+    function normalizeTextColor(value) {
+      if (!value) return DEFAULT_TEXT_COLOR;
+      const text = String(value).trim();
+      if (!text) return DEFAULT_TEXT_COLOR;
+      const prefixed = text.startsWith("#") ? text : `#${text}`;
+      return /^#[0-9a-fA-F]{6}$/.test(prefixed) ? prefixed.toLowerCase() : DEFAULT_TEXT_COLOR;
     }
 
     function adjustColor(hex, factor) {
@@ -104,8 +132,9 @@
       return luminance > 0.6 ? "#000000" : "#ffffff";
     }
 
-    function applyThemeColor(color) {
+    function applyThemeColor(color, textColor) {
       const normalized = normalizeColor(color || DEFAULT_THEME_COLOR);
+      const normalizedTextColor = normalizeTextColor(textColor || DEFAULT_TEXT_COLOR);
       document.documentElement.style.setProperty("--theme-color", normalized);
       document.documentElement.style.setProperty(
         "--theme-color-hover",
@@ -115,9 +144,10 @@
         "--theme-color-contrast",
         getContrastColor(normalized)
       );
+      document.documentElement.style.setProperty("--text-color", normalizedTextColor);
     }
 
-    applyThemeColor(DEFAULT_THEME_COLOR);
+    applyThemeColor(DEFAULT_THEME_COLOR, DEFAULT_TEXT_COLOR);
 
     function enableInteraction() {
       document.getElementById("message").disabled = false;
@@ -142,15 +172,16 @@
             document.title = data.title || document.title;
             document.getElementById('assistant-title').textContent = data.title || 'Builders Copilot';
             introEl.textContent = data.intro || "";
-            applyThemeColor(data.color);
+            applyThemeColor(data.color, data.text_color);
             let html = "";
             prompts.forEach(p => {
               html += `<button onclick="submitPrompt(this.textContent)">${p}</button>`;
             });
             document.getElementById("prompt-buttons").innerHTML = html;
-            fileInput.style.display = data.allow_file_upload ? "block" : "none";
+            uploadToggleBtn.style.display = data.allow_file_upload ? "block" : "none";
             if (data.allow_file_upload) {
               chatForm.setAttribute("hx-encoding", "multipart/form-data");
+              setupFileUpload();
             } else {
               chatForm.removeAttribute("hx-encoding");
             }
@@ -175,6 +206,11 @@
       prompt.className = "chat-entry user";
       prompt.innerHTML = `<div class="bubble">${text}</div>`;
       document.getElementById("chat-box").appendChild(prompt);
+      
+      // Scroll to the new prompt
+      const chatBox = document.getElementById("chat-box");
+      chatBox.scrollTop = chatBox.scrollHeight;
+      
       chatForm.requestSubmit();
       setTimeout(() => {
         document.getElementById("message").value = "";
@@ -202,12 +238,122 @@
       document.getElementById("chat-box").scrollTop = 0;
     }
 
-    function clearInputAfterSend() {
+    function handleFormSubmit(event) {
+      const message = document.getElementById("message").value.trim();
+      if (message) {
+        // Add user message to chat box before submitting
+        const prompt = document.createElement("div");
+        prompt.className = "chat-entry user";
+        prompt.innerHTML = `<div class="bubble">${message}</div>`;
+        document.getElementById("chat-box").appendChild(prompt);
+        
+        // Scroll to the new prompt
+        const chatBox = document.getElementById("chat-box");
+        chatBox.scrollTop = chatBox.scrollHeight;
+      }
+      
+      // Clear input after a short delay
       setTimeout(() => {
         document.getElementById("message").value = "";
-        const fileInput = document.getElementById("file");
-        if (fileInput) fileInput.value = "";
+        clearSelectedFiles();
       }, 20);
+      
+      // Allow the form to submit normally
+      return true;
+    }
+
+    function setupFileUpload() {
+      // Click to upload
+      uploadDropzone.addEventListener('click', () => {
+        fileInput.click();
+      });
+
+      // File input change
+      fileInput.addEventListener('change', (e) => {
+        handleFiles(e.target.files);
+      });
+
+      // Drag and drop
+      uploadDropzone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        uploadDropzone.classList.add('drag-over');
+      });
+
+      uploadDropzone.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        uploadDropzone.classList.remove('drag-over');
+      });
+
+      uploadDropzone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        uploadDropzone.classList.remove('drag-over');
+        handleFiles(e.dataTransfer.files);
+      });
+    }
+
+    function handleFiles(files) {
+      selectedFiles = Array.from(files);
+      displaySelectedFiles();
+    }
+
+    function displaySelectedFiles() {
+      uploadedFiles.innerHTML = '';
+      selectedFiles.forEach((file, index) => {
+        const filePreview = document.createElement('div');
+        filePreview.className = 'file-preview';
+        
+        const fileIcon = getFileIcon(file.type);
+        const fileName = file.name.length > 20 ? file.name.substring(0, 20) + '...' : file.name;
+        
+        filePreview.innerHTML = `
+          <span class="file-icon">${fileIcon}</span>
+          <span class="file-name">${fileName}</span>
+          <button class="file-remove" onclick="removeFile(${index})">×</button>
+        `;
+        
+        uploadedFiles.appendChild(filePreview);
+      });
+    }
+
+    function getFileIcon(fileType) {
+      if (fileType.startsWith('image/')) return '🖼️';
+      if (fileType.startsWith('video/')) return '🎥';
+      if (fileType.startsWith('audio/')) return '🎵';
+      if (fileType.includes('pdf')) return '📄';
+      if (fileType.includes('word') || fileType.includes('document')) return '📝';
+      if (fileType.includes('excel') || fileType.includes('spreadsheet')) return '📊';
+      if (fileType.includes('powerpoint') || fileType.includes('presentation')) return '📋';
+      if (fileType.includes('zip') || fileType.includes('rar')) return '🗜️';
+      return '📎';
+    }
+
+    function removeFile(index) {
+      selectedFiles.splice(index, 1);
+      displaySelectedFiles();
+    }
+
+    function clearSelectedFiles() {
+      selectedFiles = [];
+      displaySelectedFiles();
+      fileInput.value = '';
+    }
+
+    function toggleUploadArea() {
+      uploadAreaVisible = !uploadAreaVisible;
+      
+      if (uploadAreaVisible) {
+        uploadArea.style.display = 'block';
+        uploadToggleBtn.classList.add('active');
+        // Focus on the upload area after it appears
+        setTimeout(() => {
+          uploadDropzone.focus();
+        }, 100);
+      } else {
+        uploadArea.style.display = 'none';
+        uploadToggleBtn.classList.remove('active');
+        // Clear selected files when hiding
+        clearSelectedFiles();
+      }
     }
   </script>
 </body>
