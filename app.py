@@ -339,7 +339,6 @@ def ask():
             '<div class="chat-entry assistant">'
             '<div class="bubble markdown">'
             f"{html_reply}"
-            '<div class="source-tag">Powered by BCCA</div>'
             "</div></div>"
             f'<input type="hidden" id="conversation_id" name="conversation_id" value="{conversation_id}" hx-swap-oob="true"/>'
             f'<input type="hidden" id="response_id" name="response_id" value="{response_id}" hx-swap-oob="true"/>'

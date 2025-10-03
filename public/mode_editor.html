@@ -449,6 +449,7 @@
       const url = 'https://v3.bidcentral.ca/flask/?mode=' + encodeURIComponent(nameValue);
       link.textContent = url;
       link.href = url;
+      link.target = '_blank';
       wrapper.classList.remove('text-gray-400');
     }
 
