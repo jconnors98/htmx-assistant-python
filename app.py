@@ -114,7 +114,6 @@ def cognito_auth_required(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
         auth = request.headers.get("Authorization", "")
-        print("Authorization header:", auth)
         if not auth.startswith("Bearer "):
             return {"error": "Unauthorized"}, 401
         token = auth.split(" ", 1)[1]
@@ -348,7 +347,7 @@ def ask():
 
         return html
     except Exception as err:  # noqa: BLE001
-        print("❌ Error blending AI responses:", err)
+        print("Error blending AI responses:", err)
         return (
             '<div class="chat-entry assistant">'
             '<div class="bubble">❌ There was an error getting a response. Please try again.</div>'
