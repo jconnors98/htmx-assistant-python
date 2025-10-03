@@ -48,6 +48,58 @@ class ConversationService:
         )
         self._enforce_cap(conv_id)
 
+    def store_conversation_files(self, conversation_id: str, file_ids: List[str]) -> None:
+        """Store uploaded file IDs with the conversation for future use."""
+        conv_id = ObjectId(conversation_id)
+        self.conversations.update_one(
+            {"_id": conv_id},
+            {"$addToSet": {"uploaded_files": {"$each": file_ids}}},
+            upsert=True
+        )
+
+    def get_conversation_files(self, conversation_id: str) -> List[str]:
+        """Get all uploaded file IDs for a conversation."""
+        conv_id = ObjectId(conversation_id)
+        conv_doc = self.conversations.find_one({"_id": conv_id})
+        return conv_doc.get("uploaded_files", []) if conv_doc else []
+
+    def clear_conversation_files(self, conversation_id: str) -> List[str]:
+        """Clear and return all uploaded file IDs for a conversation."""
+        conv_id = ObjectId(conversation_id)
+        conv_doc = self.conversations.find_one({"_id": conv_id})
+        file_ids = conv_doc.get("uploaded_files", []) if conv_doc else []
+        
+        # Remove files from conversation
+        self.conversations.update_one(
+            {"_id": conv_id},
+            {"$unset": {"uploaded_files": ""}}
+        )
+        
+        return file_ids
+
+    def cleanup_old_files(self, days_old: int = 7) -> List[str]:
+        """Clean up files from conversations older than specified days."""
+        from datetime import datetime, timedelta
+        
+        cutoff_date = datetime.utcnow() - timedelta(days=days_old)
+        old_conversations = self.conversations.find({
+            "updated_at": {"$lt": cutoff_date},
+            "uploaded_files": {"$exists": True, "$ne": []}
+        })
+        
+        all_old_files = []
+        for conv in old_conversations:
+            file_ids = conv.get("uploaded_files", [])
+            all_old_files.extend(file_ids)
+            
+            # Remove files from conversation
+            self.conversations.update_one(
+                {"_id": conv["_id"]},
+                {"$unset": {"uploaded_files": ""}}
+            )
+        
+        return all_old_files
+
     def _build_context(self, conversation_id: str) -> str:
         """Build summary and recent history context for the model."""
         conv_id = ObjectId(conversation_id)
@@ -193,19 +245,31 @@ class ConversationService:
         tag: str = "",
         previous_response_id: Optional[str] = None,
         file_id: Optional[str] = None,
+        file_ids: Optional[List[str]] = None,
     ) -> Tuple[str, str, Optional[dict]]:
         conv_id = ObjectId(conversation_id)
         self.add_user_message(conversation_id, user_id, text)
         context = self._build_context(conversation_id)
         system_prompt, tools, data_sources = self._build_prompt_and_tools(mode, tag)
         full_system_prompt = f"{system_prompt}\n{context}"
+        
+        # Get all files for this conversation (previous + new)
+        conversation_files = self.get_conversation_files(conversation_id)
+        all_file_ids = list(set((file_ids or []) + conversation_files))  # Combine and deduplicate
 
         def _call_model(model_name: str):
             user_content: List[Dict] = [
                 {"type": "input_text", "text": text}
             ]
+            
+            # Handle single file_id (backward compatibility)
             if file_id:
                 user_content.append({"type": "input_file", "file_id": file_id})
+            
+            # Handle all file_ids (new + conversation files)
+            if all_file_ids:
+                for fid in all_file_ids:
+                    user_content.append({"type": "input_file", "file_id": fid})
 
             params = {
                 "model": model_name,

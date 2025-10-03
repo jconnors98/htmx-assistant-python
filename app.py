@@ -238,6 +238,41 @@ def _normalize_text_color(value):
     return text.lower()
 
 
+@routes.post("/upload-files")
+def upload_files():
+    files = request.files.getlist("files")
+    file_ids = []
+    
+    for file in files:
+        if file and file.filename:
+            data = file.read()
+            file_stream = io.BytesIO(data)
+            uploaded = client.files.create(
+                file=(file.filename, file_stream), purpose="assistants"
+            )
+            file_ids.append(uploaded.id)
+    
+    return {"file_ids": file_ids}
+
+
+@routes.post("/clear-conversation")
+def clear_conversation():
+    conversation_id = (request.form.get("conversation_id") or "").strip()
+    if conversation_id:
+        # Get and clear files from conversation
+        file_ids = conversation_service.clear_conversation_files(conversation_id)
+        
+        # Delete the files from OpenAI
+        for file_id in file_ids:
+            try:
+                client.files.delete(file_id)
+                print(f"Deleted file: {file_id}")
+            except Exception as e:  # noqa: BLE001
+                print(f"Failed to delete file {file_id}: {e}")
+    
+    return {"status": "cleared"}
+
+
 @routes.post("/ask")
 def ask():
     message = (request.form.get("message") or "").strip()
@@ -247,15 +282,10 @@ def ask():
     previous_response_id = (request.form.get("response_id") or "").strip()
     mode_doc = modes_collection.find_one({"name": mode}) if mode else None
     allow_file_upload = mode_doc.get("allow_file_upload", False) if mode_doc else False
-    file = request.files.get("file") if allow_file_upload else None
-    openai_file_id = None
-    if file and file.filename:
-        data = file.read()
-        file_stream = io.BytesIO(data)
-        uploaded = client.files.create(
-            file=(file.filename, file_stream), purpose="assistants"
-        )
-        openai_file_id = uploaded.id
+    
+    # Handle uploaded file IDs from the upload endpoint
+    uploaded_file_ids = request.form.getlist("uploaded_files")
+    openai_file_ids = uploaded_file_ids if allow_file_upload and uploaded_file_ids else []
 
     if not message:
         return (
@@ -283,14 +313,12 @@ def ask():
             mode=mode,
             tag=tag,
             previous_response_id=previous_response_id or None,
-            file_id=openai_file_id,
+            file_ids=openai_file_ids,
         )
 
-        if openai_file_id:
-            try:
-                client.files.delete(openai_file_id)
-            except Exception as e:  # noqa: BLE001
-                print("openai file delete failed", e)
+        # Store uploaded files with the conversation for future use
+        if openai_file_ids:
+            conversation_service.store_conversation_files(conversation_id, openai_file_ids)
 
 
         html_reply = markdown(gpt_text)

@@ -20,9 +20,6 @@
       <!-- Text-based chat -->
       <form
         id="chat-form"
-        hx-post="/flask/ask"
-        hx-target="#chat-box"
-        hx-swap="beforeend"
         onsubmit="handleFormSubmit(event)"
       >
         <div class="input-group">
@@ -55,6 +52,12 @@
               <span class="upload-secondary">or drag and drop files here</span>
             </div>
           </div>
+          <div class="upload-progress" id="upload-progress" style="display: none;">
+            <div class="progress-bar">
+              <div class="progress-fill" id="progress-fill"></div>
+            </div>
+            <div class="progress-text" id="progress-text">Uploading...</div>
+          </div>
           <div class="uploaded-files" id="uploaded-files"></div>
         </div>
       </form>
@@ -74,6 +77,8 @@
     const appContainer = document.getElementById("app-container");
     let selectedFiles = [];
     let uploadAreaVisible = false;
+    let uploadedFileIds = [];
+    let isUploading = false;
 
     document.addEventListener("htmx:beforeRequest", () => {
       const thinking = document.createElement("div");
@@ -180,10 +185,7 @@
             document.getElementById("prompt-buttons").innerHTML = html;
             uploadToggleBtn.style.display = data.allow_file_upload ? "block" : "none";
             if (data.allow_file_upload) {
-              chatForm.setAttribute("hx-encoding", "multipart/form-data");
               setupFileUpload();
-            } else {
-              chatForm.removeAttribute("hx-encoding");
             }
             enableInteraction();
           } else {
@@ -202,16 +204,19 @@
     // Submit a prompt
     function submitPrompt(text) {
       document.getElementById("message").value = text;
-      const prompt = document.createElement("div");
-      prompt.className = "chat-entry user";
-      prompt.innerHTML = `<div class="bubble">${text}</div>`;
-      document.getElementById("chat-box").appendChild(prompt);
       
-      // Scroll to the new prompt
-      const chatBox = document.getElementById("chat-box");
-      chatBox.scrollTop = chatBox.scrollHeight;
+      // If there are files to upload and they haven't been uploaded yet
+      if (selectedFiles.length > 0 && uploadedFileIds.length === 0) {
+        uploadFiles().then(() => {
+          submitFormWithMessage(text);
+        }).catch((error) => {
+          console.error('Upload failed:', error);
+          alert('File upload failed. Please try again.');
+        });
+      } else {
+        submitFormWithMessage(text);
+      }
       
-      chatForm.requestSubmit();
       setTimeout(() => {
         document.getElementById("message").value = "";
       }, 20);
@@ -227,10 +232,27 @@
 
     // Clear chat and reset
     function clearChat() {
+      const conversationId = document.getElementById("conversation_id").value;
+      
+      // Clear files on server if there's a conversation
+      if (conversationId) {
+        fetch('/flask/clear-conversation', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: `conversation_id=${encodeURIComponent(conversationId)}`
+        }).catch(error => {
+          console.error('Failed to clear conversation files:', error);
+        });
+      }
+      
+      // Clear UI
       document.querySelectorAll("#chat-box .chat-entry").forEach(el => el.remove());
       document.getElementById("message").value = "";
       document.getElementById("conversation_id").value = "";
       document.getElementById("response_id").value = "";
+      clearSelectedFiles();
       document.getElementById("message").focus();
     }
 
@@ -239,27 +261,62 @@
     }
 
     function handleFormSubmit(event) {
+      event.preventDefault();
+      
       const message = document.getElementById("message").value.trim();
-      if (message) {
-        // Add user message to chat box before submitting
-        const prompt = document.createElement("div");
-        prompt.className = "chat-entry user";
-        prompt.innerHTML = `<div class="bubble">${message}</div>`;
-        document.getElementById("chat-box").appendChild(prompt);
-        
-        // Scroll to the new prompt
-        const chatBox = document.getElementById("chat-box");
-        chatBox.scrollTop = chatBox.scrollHeight;
+      if (!message) return false;
+      
+      // If there are files to upload and they haven't been uploaded yet
+      if (selectedFiles.length > 0 && uploadedFileIds.length === 0) {
+        uploadFiles().then(() => {
+          submitFormWithMessage(message);
+        }).catch((error) => {
+          console.error('Upload failed:', error);
+          alert('File upload failed. Please try again.');
+        });
+      } else {
+        submitFormWithMessage(message);
       }
       
-      // Clear input after a short delay
+      return false;
+    }
+
+    function submitFormWithMessage(message) {
+      // Add user message to chat box
+      const prompt = document.createElement("div");
+      prompt.className = "chat-entry user";
+      prompt.innerHTML = `<div class="bubble">${message}</div>`;
+      document.getElementById("chat-box").appendChild(prompt);
+      
+      // Scroll to the new prompt
+      const chatBox = document.getElementById("chat-box");
+      chatBox.scrollTop = chatBox.scrollHeight;
+      
+      // Create form data object
+      const formValues = {
+        message: message,
+        mode: document.getElementById('mode').value,
+        conversation_id: document.getElementById('conversation_id').value,
+        response_id: document.getElementById('response_id').value
+      };
+      
+      // Add uploaded file IDs
+      if (uploadedFileIds.length > 0) {
+        formValues.uploaded_files = uploadedFileIds;
+      }
+      
+      // Submit via HTMX
+      htmx.ajax('POST', '/flask/ask', {
+        values: formValues,
+        target: '#chat-box',
+        swap: 'beforeend'
+      });
+      
+      // Clear input after submission
       setTimeout(() => {
         document.getElementById("message").value = "";
         clearSelectedFiles();
       }, 20);
-      
-      // Allow the form to submit normally
-      return true;
     }
 
     function setupFileUpload() {
@@ -304,11 +361,17 @@
         
         const fileIcon = getFileIcon(file.type);
         const fileName = file.name.length > 20 ? file.name.substring(0, 20) + '...' : file.name;
-        
+        const isUploaded = uploadedFileIds.length > 0;
+        const uploadedCheck = isUploaded ? '<span class="file-uploaded">✓</span>' : '';
         filePreview.innerHTML = `
           <span class="file-icon">${fileIcon}</span>
           <span class="file-name">${fileName}</span>
-          <button class="file-remove" onclick="removeFile(${index})">×</button>
+          ${uploadedCheck}
+          <button class="file-remove" onclick="removeFile(${index})">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+            </svg>
+          </button>
         `;
         
         uploadedFiles.appendChild(filePreview);
@@ -334,8 +397,87 @@
 
     function clearSelectedFiles() {
       selectedFiles = [];
+      uploadedFileIds = [];
       displaySelectedFiles();
       fileInput.value = '';
+      hideProgress();
+    }
+
+    function uploadFiles() {
+      return new Promise((resolve, reject) => {
+        if (selectedFiles.length === 0) {
+          resolve();
+          return;
+        }
+
+        isUploading = true;
+        showProgress();
+        
+        const formData = new FormData();
+        selectedFiles.forEach(file => {
+          formData.append('files', file);
+        });
+
+        const xhr = new XMLHttpRequest();
+        
+        xhr.upload.addEventListener('progress', (e) => {
+          if (e.lengthComputable) {
+            const percentComplete = (e.loaded / e.total) * 100;
+            updateProgress(percentComplete);
+          }
+        });
+
+        xhr.addEventListener('load', () => {
+          if (xhr.status === 200) {
+            try {
+              const response = JSON.parse(xhr.responseText);
+              uploadedFileIds = response.file_ids || [];
+              console.log('uploadedFileIds', uploadedFileIds);
+              hideProgress();
+              isUploading = false;
+              displaySelectedFiles(); // Refresh display to show upload status
+              resolve();
+            } catch (e) {
+              hideProgress();
+              isUploading = false;
+              reject(new Error('Invalid response from server'));
+            }
+          } else {
+            hideProgress();
+            isUploading = false;
+            reject(new Error(`Upload failed with status: ${xhr.status}`));
+          }
+        });
+
+        xhr.addEventListener('error', () => {
+          hideProgress();
+          isUploading = false;
+          reject(new Error('Upload failed'));
+        });
+
+        console.log('xhr.open');
+        xhr.open('POST', '/flask/upload-files');
+        console.log('xhr.send');
+        xhr.send(formData);
+      });
+    }
+
+    function showProgress() {
+      console.log('showProgress');
+      document.getElementById('upload-progress').style.display = 'block';
+      document.getElementById('progress-fill').style.width = '0%';
+      document.getElementById('progress-text').textContent = 'Uploading...';
+    }
+
+    function updateProgress(percent) {
+      console.log('updateProgress');
+      document.getElementById('progress-fill').style.width = percent + '%';
+      document.getElementById('progress-text').textContent = `Uploading... ${Math.round(percent)}%`;
+    }
+
+    function hideProgress() {
+      console.log('hideProgress');
+      document.getElementById('upload-progress').style.display = 'none';
     }
 
     function toggleUploadArea() {

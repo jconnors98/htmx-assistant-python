@@ -339,6 +339,32 @@ textarea {
   color: #666;
 }
 
+.upload-progress {
+  margin: 0.5rem 0;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 8px;
+  background: #e0e0e0;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 0.5rem;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--theme-color);
+  width: 0%;
+  transition: width 0.3s ease;
+}
+
+.progress-text {
+  font-size: 0.8rem;
+  color: #666;
+  text-align: center;
+}
+
 .uploaded-files {
   display: flex;
   flex-wrap: wrap;
@@ -355,11 +381,13 @@ textarea {
   border-radius: 6px;
   padding: 0.5rem;
   font-size: 0.85rem;
-  max-width: 200px;
+  max-width: 220px;
+  position: relative;
 }
 
 .file-preview .file-icon {
   font-size: 1.2rem;
+  flex-shrink: 0;
 }
 
 .file-preview .file-name {
@@ -367,6 +395,15 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  margin-right: 0.5rem;
+}
+
+.file-preview .file-uploaded {
+  color: #4caf50;
+  font-size: 1rem;
+  font-weight: bold;
+  flex-shrink: 0;
+  margin-right: 0.25rem;
 }
 
 .file-preview .file-remove {
@@ -374,17 +411,25 @@ textarea {
   border: none;
   color: #999;
   cursor: pointer;
-  font-size: 1rem;
-  padding: 0;
-  width: 20px;
-  height: 20px;
+  padding: 2px;
+  width: 24px;
+  height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
+  border-radius: 4px;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
 }
 
 .file-preview .file-remove:hover {
   color: #d32f2f;
+  background: rgba(211, 47, 47, 0.1);
+}
+
+.file-preview .file-remove svg {
+  width: 14px;
+  height: 14px;
 }
 
 
