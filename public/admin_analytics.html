@@ -47,6 +47,36 @@
       <p id="global-range" class="mt-3 text-xs text-gray-500"></p>
     </section>
 
+    <section class="bg-white p-6 rounded-lg shadow">
+      <div class="flex flex-col gap-4">
+        <div>
+          <h2 class="text-lg font-semibold text-[#82002d] mb-2">Ask Questions About Your Data</h2>
+          <p class="text-sm text-gray-600">Ask natural language questions about your analytics data. For example: "What are the most popular modes?" or "How many users are from Canada?"</p>
+        </div>
+        <div class="flex gap-3">
+          <input 
+            type="text" 
+            id="nl-search-input" 
+            placeholder="Ask a question about your analytics data..." 
+            class="flex-1 border border-[#82002d] rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#82002d]"
+          />
+          <button 
+            type="button" 
+            id="nl-search-btn" 
+            class="px-5 py-2 bg-[#82002d] hover:bg-[#a0003f] text-white rounded text-sm font-medium"
+          >
+            Ask
+          </button>
+        </div>
+        <div id="nl-search-results" class="hidden mt-4 p-4 bg-gray-50 rounded-lg">
+          <div id="nl-search-loading" class="hidden text-sm text-gray-500 text-center">
+            Processing your question...
+          </div>
+          <div id="nl-search-content" class="hidden"></div>
+        </div>
+      </div>
+    </section>
+
     <div id="loading-state" class="bg-white p-8 text-center text-sm text-gray-500 rounded-lg shadow">
       Generating analytics report...
     </div>
@@ -54,10 +84,14 @@
     <div id="empty-state" class="hidden bg-white p-8 text-center text-sm text-gray-500 rounded-lg shadow"></div>
 
     <div id="analytics-content" class="hidden space-y-6">
-      <section class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <section class="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         <article class="bg-white border border-[#82002d]/10 shadow rounded-lg p-5">
           <p class="text-xs uppercase tracking-wide text-gray-500">Total prompts</p>
           <p id="stat-total-prompts" class="mt-2 text-3xl font-semibold text-[#82002d]">0</p>
+        </article>
+        <article class="bg-white border border-[#82002d]/10 shadow rounded-lg p-5">
+          <p class="text-xs uppercase tracking-wide text-gray-500">Total responses</p>
+          <p id="stat-total-responses" class="mt-2 text-3xl font-semibold text-[#82002d]">0</p>
         </article>
         <article class="bg-white border border-[#82002d]/10 shadow rounded-lg p-5">
           <p class="text-xs uppercase tracking-wide text-gray-500">Unique conversations</p>
@@ -99,6 +133,14 @@
           </div>
           <div id="top-locations" class="mt-4 space-y-3"></div>
         </article>
+      </section>
+
+      <section class="bg-white border border-[#82002d]/10 shadow rounded-lg p-6">
+        <div class="flex items-center justify-between">
+          <h2 class="text-lg font-semibold text-[#82002d]">Top cities</h2>
+          <span class="text-xs text-gray-500">Based on IP lookup</span>
+        </div>
+        <div id="top-cities" class="mt-4 space-y-3"></div>
       </section>
 
       <section class="grid gap-6 lg:grid-cols-2">
@@ -148,11 +190,19 @@
     const insightsList = document.getElementById('insights-list');
     const topModesContainer = document.getElementById('top-modes');
     const topLocationsContainer = document.getElementById('top-locations');
+    const topCitiesContainer = document.getElementById('top-cities');
     const dailyBreakdown = document.getElementById('daily-breakdown');
     const hourlyBreakdown = document.getElementById('hourly-breakdown');
     const recentPromptsContainer = document.getElementById('recent-prompts');
     const topModesSection = document.getElementById('top-modes-section');
     const modeContext = document.getElementById('mode-context');
+    
+    // Natural language search elements
+    const nlSearchInput = document.getElementById('nl-search-input');
+    const nlSearchBtn = document.getElementById('nl-search-btn');
+    const nlSearchResults = document.getElementById('nl-search-results');
+    const nlSearchLoading = document.getElementById('nl-search-loading');
+    const nlSearchContent = document.getElementById('nl-search-content');
 
     const urlParams = new URLSearchParams(window.location.search);
     const lockedMode = (urlParams.get('modeId') || '').trim();
@@ -169,6 +219,23 @@
       }
       loadAnalytics(hasLockedMode ? { mode: lockedMode } : {});
     };
+
+    // Natural language search functionality
+    nlSearchBtn.onclick = () => {
+      const query = nlSearchInput.value.trim();
+      if (!query) return;
+      
+      performNaturalLanguageSearch(query);
+    };
+
+    nlSearchInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        const query = nlSearchInput.value.trim();
+        if (!query) return;
+        
+        performNaturalLanguageSearch(query);
+      }
+    });
 
     filterForm.addEventListener('submit', (event) => {
       event.preventDefault();
@@ -218,7 +285,7 @@
       return String(value);
     }
 
-    function describeFilters(filters) {
+    function describeFilters(filters, availableModes = []) {
       const parts = [];
       if (filters.start_date || filters.end_date) {
         const start = filters.start_date ? formatDailyLabel(filters.start_date) : 'beginning';
@@ -227,7 +294,14 @@
       } else {
         parts.push('All time');
       }
-      parts.push(filters.mode ? `Mode "${filters.mode}"` : 'All modes');
+      // Convert mode ID to title for display
+      if (filters.mode) {
+        const selectedMode = availableModes.find(mode => mode.id === filters.mode);
+        const modeTitle = selectedMode ? selectedMode.title : filters.mode;
+        parts.push(`Mode "${modeTitle}"`);
+      } else {
+        parts.push('All modes');
+      }
       if (filters.search) {
         parts.push(`Contains "${filters.search}"`);
       } else {
@@ -263,15 +337,24 @@
       modeSelect.innerHTML = '<option value="">All modes</option>';
       (modes || []).forEach((mode) => {
         const option = document.createElement('option');
-        option.value = mode;
-        option.textContent = mode;
+        option.value = mode.id; // Use mode ID as value
+        option.textContent = mode.title; // Display mode title
         modeSelect.appendChild(option);
       });
-      if (previous && modes && modes.includes(previous)) {
-        modeSelect.value = previous;
+      
+      // Find the mode ID that matches the selected title
+      if (previous) {
+        const selectedMode = modes.find(mode => mode.title === previous);
+        if (selectedMode) {
+          modeSelect.value = selectedMode.id;
+        }
       } else if (selected) {
-        modeSelect.value = selected;
+        const selectedMode = modes.find(mode => mode.title === selected);
+        if (selectedMode) {
+          modeSelect.value = selectedMode.id;
+        }
       }
+      
       modeSelect.disabled = false;
       modeSelect.classList.remove('bg-gray-100', 'cursor-not-allowed');
       if (modeContext) {
@@ -324,6 +407,141 @@
       });
     }
 
+    function renderCitiesList(container, cities) {
+      container.innerHTML = '';
+      if (!cities || !cities.length) {
+        const message = document.createElement('p');
+        message.className = 'text-sm text-gray-500';
+        message.textContent = 'Not enough data for this view yet.';
+        container.appendChild(message);
+        return;
+      }
+      const maxCount = Math.max(...cities.map((city) => city.count));
+      cities.forEach((city) => {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'space-y-2';
+
+        const header = document.createElement('div');
+        header.className = 'flex items-center justify-between text-sm font-medium text-gray-700';
+        const labelSpan = document.createElement('span');
+        labelSpan.textContent = `${city.city}, ${city.country}`;
+        const valueSpan = document.createElement('span');
+        valueSpan.textContent = numberFormatter.format(city.count);
+        header.appendChild(labelSpan);
+        header.appendChild(valueSpan);
+
+        const barTrack = document.createElement('div');
+        barTrack.className = 'w-full bg-gray-200 rounded-full h-2';
+        const barFill = document.createElement('div');
+        barFill.className = 'h-2 rounded-full bg-[#82002d]';
+        const width = maxCount ? Math.max(6, Math.round((city.count / maxCount) * 100)) : 0;
+        barFill.style.width = `${width}%`;
+        barTrack.appendChild(barFill);
+
+        wrapper.appendChild(header);
+        wrapper.appendChild(barTrack);
+        container.appendChild(wrapper);
+      });
+    }
+
+    async function performNaturalLanguageSearch(query) {
+      nlSearchResults.classList.remove('hidden');
+      nlSearchLoading.classList.remove('hidden');
+      nlSearchContent.classList.add('hidden');
+      
+      try {
+        const filters = {
+          start_date: startDateInput.value,
+          end_date: endDateInput.value,
+          mode: hasLockedMode ? lockedMode : modeSelect.value,
+          search: searchInput.value.trim(),
+        };
+        
+        const queryParams = new URLSearchParams();
+        queryParams.append('query', query);
+        Object.entries(filters).forEach(([key, value]) => {
+          if (value) {
+            queryParams.append(key, value);
+          }
+        });
+        
+        const response = await fetch(`/flask/admin/analytics/search?${queryParams.toString()}`, {
+          headers: { Authorization: `Bearer ${idToken}` },
+        });
+        
+        if (response.status === 401) {
+          localStorage.removeItem('idToken');
+          window.location.href = '/flask/admin/login';
+          return;
+        }
+        
+        if (!response.ok) {
+          throw new Error('Failed to process search query');
+        }
+        
+        const result = await response.json();
+        displaySearchResults(result);
+        
+      } catch (error) {
+        console.error('Search error:', error);
+        displaySearchError('Unable to process your question. Please try again.');
+      } finally {
+        nlSearchLoading.classList.add('hidden');
+      }
+    }
+
+    function displaySearchResults(result) {
+      nlSearchContent.innerHTML = '';
+      nlSearchContent.classList.remove('hidden');
+      
+      if (result.error) {
+        displaySearchError(result.error);
+        return;
+      }
+      
+      const resultDiv = document.createElement('div');
+      resultDiv.className = 'space-y-4';
+      
+      // Display the human-readable answer
+      if (result.answer) {
+        const answerDiv = document.createElement('div');
+        answerDiv.className = 'p-4 bg-white border border-gray-200 rounded-lg shadow-sm';
+        const answerText = document.createElement('div');
+        answerText.className = 'text-sm text-gray-800 leading-relaxed whitespace-pre-wrap';
+        answerText.textContent = result.answer;
+        answerDiv.appendChild(answerText);
+        resultDiv.appendChild(answerDiv);
+      } else {
+        // Fallback if no answer is provided
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'p-4 bg-red-50 border border-red-200 rounded-lg';
+        const errorText = document.createElement('p');
+        errorText.className = 'text-sm text-red-700';
+        errorText.textContent = 'No response received. Please try again.';
+        errorDiv.appendChild(errorText);
+        resultDiv.appendChild(errorDiv);
+      }
+      
+      nlSearchContent.appendChild(resultDiv);
+    }
+
+    function displaySearchError(message) {
+      nlSearchContent.innerHTML = '';
+      nlSearchContent.classList.remove('hidden');
+      
+      const errorDiv = document.createElement('div');
+      errorDiv.className = 'p-3 bg-red-50 border border-red-200 rounded-lg';
+      const errorTitle = document.createElement('p');
+      errorTitle.className = 'text-sm font-semibold text-red-800 mb-1';
+      errorTitle.textContent = 'Error:';
+      const errorText = document.createElement('p');
+      errorText.className = 'text-sm text-red-700';
+      errorText.textContent = message;
+      errorDiv.appendChild(errorTitle);
+      errorDiv.appendChild(errorText);
+      nlSearchContent.appendChild(errorDiv);
+    }
+
     function renderRecentPrompts(prompts) {
       recentPromptsContainer.innerHTML = '';
       if (!prompts || !prompts.length) {
@@ -346,13 +564,45 @@
         timeStamp.textContent = formatDateTime(entry.created_at);
         header.appendChild(modeBadge);
         header.appendChild(timeStamp);
-
-        const body = document.createElement('p');
-        body.className = 'mt-3 text-sm text-gray-800 whitespace-pre-wrap leading-relaxed';
-        body.textContent = entry.prompt || '(No prompt text)';
-
         card.appendChild(header);
-        card.appendChild(body);
+
+        // Add prompt if available
+        if (entry.prompt) {
+          const promptBody = document.createElement('div');
+          promptBody.className = 'mt-3';
+          const promptLabel = document.createElement('p');
+          promptLabel.className = 'text-xs font-semibold text-gray-600 uppercase tracking-wide';
+          promptLabel.textContent = 'User Prompt:';
+          const promptText = document.createElement('p');
+          promptText.className = 'mt-1 text-sm text-gray-800 whitespace-pre-wrap leading-relaxed';
+          promptText.textContent = entry.prompt;
+          promptBody.appendChild(promptLabel);
+          promptBody.appendChild(promptText);
+          card.appendChild(promptBody);
+        }
+
+        // Add response if available
+        if (entry.response) {
+          const responseBody = document.createElement('div');
+          responseBody.className = 'mt-3';
+          const responseLabel = document.createElement('p');
+          responseLabel.className = 'text-xs font-semibold text-gray-600 uppercase tracking-wide';
+          responseLabel.textContent = 'AI Response:';
+          const responseText = document.createElement('p');
+          responseText.className = 'mt-1 text-sm text-gray-800 whitespace-pre-wrap leading-relaxed';
+          responseText.textContent = entry.response;
+          responseBody.appendChild(responseLabel);
+          responseBody.appendChild(responseText);
+          card.appendChild(responseBody);
+        }
+
+        // Show message if neither prompt nor response available
+        if (!entry.prompt && !entry.response) {
+          const body = document.createElement('p');
+          body.className = 'mt-3 text-sm text-gray-800 whitespace-pre-wrap leading-relaxed';
+          body.textContent = '(No content available)';
+          card.appendChild(body);
+        }
 
         const locationParts = [];
         if (entry.location) {
@@ -406,10 +656,11 @@
       searchInput.value = filters.search || '';
       renderModeOptions(data.available_modes || [], filters.mode || '');
       if (!hasLockedMode && filters.mode) {
+        // filters.mode now contains the mode ID, so we can set it directly
         modeSelect.value = filters.mode;
       }
 
-      const rangeDescription = describeFilters(filters);
+      const rangeDescription = describeFilters(filters, data.available_modes || []);
       reportRange.textContent = `Filters — ${rangeDescription}`;
       reportUpdated.textContent = `Updated ${new Date().toLocaleString()}`;
 
@@ -429,6 +680,7 @@
       }
 
       document.getElementById('stat-total-prompts').textContent = numberFormatter.format(data.total_prompts);
+      document.getElementById('stat-total-responses').textContent = numberFormatter.format(data.total_responses || 0);
       document.getElementById('stat-unique-conversations').textContent = numberFormatter.format(data.unique_conversations || 0);
       document.getElementById('stat-unique-users').textContent = numberFormatter.format(data.unique_users || 0);
       const averageDaily = data.daily_counts && data.daily_counts.length
@@ -486,6 +738,7 @@
         topLocationsContainer,
         (data.top_locations || []).map((item) => ({ label: item.country || 'Unknown', count: item.count || 0 })),
       );
+      renderCitiesList(topCitiesContainer, data.top_cities || []);
       renderBarList(
         dailyBreakdown,
         (data.daily_counts || []).map((item) => ({ label: formatDailyLabel(item.date), count: item.count || 0 })),

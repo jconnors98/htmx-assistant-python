@@ -1,6 +1,7 @@
 import os
 import re
 import io
+import json
 from functools import wraps
 from flask import Flask, Blueprint, request, send_from_directory
 from markdown import markdown
@@ -153,11 +154,14 @@ def add_security_headers(response):
     response.headers["Content-Security-Policy"] = "frame-ancestors *"
     return response
 
-def _async_log_prompt(prompt, mode, ip_addr, conversation_id):
+def _async_log_prompt(prompt=None, response=None, mode=None, ip_addr=None, conversation_id=None, response_id=None):
     ip_hash = hashlib.sha256(ip_addr.encode()).hexdigest() if ip_addr else None
     location = {}
     mode = str(mode) if mode else "<unknown>"
-    print(f"Logging prompt from IP: {ip_addr}")
+    
+    log_type = "response" if response else "prompt"
+    print(f"Logging {log_type} from IP: {ip_addr}")
+    
     if ip_addr:
         try:
             resp = requests.get(f"https://ipapi.co/{ip_addr}/json/", timeout=30)
@@ -175,14 +179,22 @@ def _async_log_prompt(prompt, mode, ip_addr, conversation_id):
     else:
         print("No IP address found.")
 
-    prompt_logs_collection.insert_one({
-            "prompt": prompt,
-            "mode": mode,
-            "conversation_id": conversation_id,
-            "ip_hash": ip_hash,
-            "location": location,
-            "created_at": datetime.utcnow(),
-        })
+    log_entry = {
+        "mode": mode,
+        "conversation_id": conversation_id,
+        "ip_hash": ip_hash,
+        "location": location,
+        "created_at": datetime.utcnow(),
+    }
+    
+    if prompt is not None:
+        log_entry["prompt"] = prompt
+    if response is not None:
+        log_entry["response"] = response
+    if response_id is not None:
+        log_entry["response_id"] = response_id
+
+    prompt_logs_collection.insert_one(log_entry)
 
 def _parse_date(value, end=False):
     if not value:
@@ -298,9 +310,16 @@ def ask():
     
     ip_addr = request.headers.get("X-Forwarded-For", request.remote_addr)
     print(f"Prompt sent from IP: {ip_addr}")
+    
+    # Log the user prompt
     threading.Thread(
         target=_async_log_prompt,
-        args=(message, mode_doc["_id"] if mode_doc else None, ip_addr, conversation_id),
+        kwargs={
+            "prompt": message,
+            "mode": mode_doc["_id"] if mode_doc else None,
+            "ip_addr": ip_addr,
+            "conversation_id": conversation_id,
+        },
     ).start()
 
     try:
@@ -314,6 +333,18 @@ def ask():
             previous_response_id=previous_response_id or None,
             file_ids=openai_file_ids,
         )
+
+        # Log the AI response
+        threading.Thread(
+            target=_async_log_prompt,
+            kwargs={
+                "response": gpt_text,
+                "mode": mode_doc["_id"] if mode_doc else None,
+                "ip_addr": ip_addr,
+                "conversation_id": conversation_id,
+                "response_id": response_id,
+            },
+        ).start()
 
         # Store uploaded files with the conversation for future use
         if openai_file_ids:
@@ -346,7 +377,7 @@ def ask():
 
         return html
     except Exception as err:  # noqa: BLE001
-        print("Error blending AI responses:", err)
+        print("Error getting AI response:", err)
         return (
             '<div class="chat-entry assistant">'
             '<div class="bubble">❌ There was an error getting a response. Please try again.</div>'
@@ -574,7 +605,8 @@ def admin_analytics_summary():
             return iso_value
         return f"{iso_value}Z"
 
-    total_prompts = prompt_logs_collection.count_documents(match)
+    total_prompts = prompt_logs_collection.count_documents({**match, "prompt": {"$exists": True}})
+    total_responses = prompt_logs_collection.count_documents({**match, "response": {"$exists": True}})
     conversation_ids = [
         cid for cid in prompt_logs_collection.distinct("conversation_id", match) if cid
     ]
@@ -584,8 +616,9 @@ def admin_analytics_summary():
     ]
     unique_users = len(ip_hashes)
 
-    top_modes = [
-        {"mode": doc.get("_id") or "Unknown", "count": doc.get("count", 0)}
+    # Get mode IDs and their counts
+    mode_counts = [
+        {"mode_id": doc.get("_id"), "count": doc.get("count", 0)}
         for doc in prompt_logs_collection.aggregate(
             pipeline
             + [
@@ -595,6 +628,26 @@ def admin_analytics_summary():
             ]
         )
     ]
+    
+    # Convert mode IDs to mode titles
+    top_modes = []
+    for mode_data in mode_counts:
+        mode_id = mode_data["mode_id"]
+        if mode_id:
+            try:
+                mode_doc = modes_collection.find_one({"_id": ObjectId(mode_id)})
+                mode_title = mode_doc.get("title") or mode_doc.get("name") if mode_doc else "Unknown"
+            except Exception as e:
+                print(f"Error converting mode ID to title: {e}")
+                mode_title = "Unknown"
+        else:
+            mode_title = "Unknown"
+            print("Mode ID is None")
+        
+        top_modes.append({
+            "mode": mode_title,
+            "count": mode_data["count"]
+        })
 
     daily_counts = [
         {"date": doc.get("_id"), "count": doc.get("count", 0)}
@@ -634,6 +687,30 @@ def admin_analytics_summary():
         )
     ]
 
+    top_cities = [
+        {
+            "city": doc.get("_id", {}).get("city") or "Unknown",
+            "country": doc.get("_id", {}).get("country") or "Unknown",
+            "count": doc.get("count", 0)
+        }
+        for doc in prompt_logs_collection.aggregate(
+            pipeline
+            + [
+                {
+                    "$group": {
+                        "_id": {
+                            "city": {"$ifNull": ["$location.city", "Unknown"]},
+                            "country": {"$ifNull": ["$location.country", "Unknown"]}
+                        },
+                        "count": {"$sum": 1},
+                    }
+                },
+                {"$sort": {"count": -1}},
+                {"$limit": 15},
+            ]
+        )
+    ]
+
     hourly_counts = [
         {"hour": doc.get("_id"), "count": doc.get("count", 0)}
         for doc in prompt_logs_collection.aggregate(
@@ -649,10 +726,25 @@ def admin_analytics_summary():
     for doc in prompt_logs_collection.find(match).sort("created_at", -1).limit(20):
         created_at = doc.get("created_at")
         location = doc.get("location") or {}
+        mode_id = doc.get("mode")
+        
+        # Convert mode ID to mode title
+        mode_title = "Unknown"
+        if mode_id:
+            try:
+                mode_doc = modes_collection.find_one({"_id": ObjectId(mode_id)})
+                mode_title = mode_doc.get("title") or mode_doc.get("name") if mode_doc else "Unknown"
+            except Exception as e:
+                mode_title = "Unknown"
+                print(f"Error converting mode ID to title: {e}")
+        else:
+            print("Mode ID is None")
+        
         recent_prompts.append(
             {
                 "prompt": doc.get("prompt", ""),
-                "mode": doc.get("mode") or "Unknown",
+                "response": doc.get("response", ""),
+                "mode": mode_title,
                 "created_at": _isoformat_with_z(created_at),
                 "location": {
                     "city": location.get("city"),
@@ -662,9 +754,24 @@ def admin_analytics_summary():
             }
         )
 
-    available_modes = sorted(
-        [m for m in prompt_logs_collection.distinct("mode") if m]
-    )
+    # Convert available mode IDs to mode titles and return both
+    available_mode_ids = [m for m in prompt_logs_collection.distinct("mode") if m]
+    available_modes = []
+    for mode_id in available_mode_ids:
+        try:
+            mode_doc = modes_collection.find_one({"_id": ObjectId(mode_id)})
+            mode_title = mode_doc.get("title") or mode_doc.get("name") if mode_doc else "Unknown"
+            available_modes.append({
+                "id": mode_id,
+                "title": mode_title
+            })
+        except Exception as e:
+            print(f"Error converting mode ID to title: {e}")
+            available_modes.append({
+                "id": mode_id,
+                "title": "Unknown"
+            })
+    available_modes = sorted(available_modes, key=lambda x: x["title"])
 
     first_log = prompt_logs_collection.find_one({}, sort=[("created_at", 1)])
     last_log = prompt_logs_collection.find_one({}, sort=[("created_at", -1)])
@@ -679,16 +786,363 @@ def admin_analytics_summary():
 
     return {
         "total_prompts": total_prompts,
+        "total_responses": total_responses,
         "unique_conversations": unique_conversations,
         "unique_users": unique_users,
         "top_modes": top_modes,
         "daily_counts": daily_counts,
         "top_locations": top_locations,
+        "top_cities": top_cities,
         "hourly_counts": hourly_counts,
         "recent_prompts": recent_prompts,
         "available_modes": available_modes,
         "global_date_range": global_date_range,
     }
+
+
+@routes.get("/admin/analytics/search")
+@cognito_auth_required
+def admin_analytics_search():
+    query = (request.args.get("query") or "").strip()
+    if not query:
+        return {"error": "Query is required"}, 400
+    
+    start_param = (request.args.get("start_date") or "").strip()
+    end_param = (request.args.get("end_date") or "").strip()
+    mode = (request.args.get("mode") or "").strip()
+    search = (request.args.get("search") or "").strip()
+
+    # Build the same match criteria as the main analytics endpoint
+    match = {}
+    date_filter = {}
+    start_dt = _parse_date(start_param)
+    end_dt = _parse_date(end_param, end=True)
+    if start_dt:
+        date_filter["$gte"] = start_dt
+    if end_dt:
+        date_filter["$lte"] = end_dt
+    if date_filter:
+        match["created_at"] = date_filter
+    if mode:
+        match["mode"] = mode
+    if search:
+        match["prompt"] = {"$regex": re.escape(search), "$options": "i"}
+
+    pipeline = [{"$match": match}] if match else []
+
+    try:
+        # Use AI to interpret the query and generate appropriate analytics
+        result = _process_natural_language_query(query, pipeline, match)
+        return result
+    except Exception as e:
+        print(f"Error processing natural language query: {e}")
+        return {"error": "Unable to process your question. Please try rephrasing it."}, 500
+
+
+def _process_natural_language_query(query, pipeline, match):
+    """Process natural language queries about analytics data using AI."""
+    
+    # Get current analytics data for context
+    analytics_data = _get_analytics_data_for_query(pipeline, match)
+    
+    # Create a prompt for the AI to interpret the query
+    system_prompt = """You are an analytics assistant that helps interpret natural language questions about user interaction data.
+
+You have access to these tool functions:
+- search_prompts(query_text): Search for prompts containing specific text or keywords
+- get_top_prompts(): Get the most frequently used prompt messages and their counts
+
+When answering questions about prompts:
+- You can analyze specific prompts and how often they're used via the get_top_prompts tool function
+- You can identify the most common questions or requests via the get_top_prompts tool function
+- You can find patterns in user behavior based on prompt content via the get_top_prompts tool function
+- You can answer questions about specific prompt text or topics via the search_prompts tool function
+- You can search for prompts containing certain keywords or phrases via the search_prompts tool function
+
+When answering questions:
+1. Interpret what the user is asking for
+2. Use the appropriate tool functions to gather specific data
+3. Provide a clear, helpful answer based on the data
+4. Include specific numbers and insights
+5. If the question can't be answered confidently and in full with the available data, use the appropriate tool functions to gather specific data
+
+Provide your response as a clear, conversational, human-readable answer. Include specific numbers, insights, and data points directly in your response. Be helpful and informative."""
+
+    user_prompt = f"""Analytics Data:
+{analytics_data}
+
+User Question: "{query}"
+
+Please analyze this question and provide insights based on the available data."""
+
+    try:
+        # Define the available tools for the AI (Responses API format)
+        tools = [
+            {
+                "type": "function",
+                "name": "search_prompts",
+                "description": "Search for prompts containing specific text or keywords",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query_text": {
+                            "type": "string",
+                            "description": "The text or keywords to search for in prompts"
+                        }
+                    },
+                    "required": ["query_text"]
+                }
+            },
+            {
+                "type": "function", 
+                "name": "get_top_prompts",
+                "description": "Get the most frequently used prompts",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of prompts to return (default: 20)"
+                        }
+                    },
+                    "required": []
+                }
+            }
+        ]
+        
+        # Use Responses API instead of Chat Completions
+        response = client.responses.create(
+            model="gpt-4o-mini",
+            tools=tools,
+            input=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ]
+        )
+        
+        # Handle function calls if the AI wants to use tools
+        if hasattr(response, 'output') and response.output and len(response.output) > 0:
+            output = response.output[0]
+            print("output", output)
+            # Check for tool calls directly on the output
+            if output.type == "function_call":
+
+                print("tool call: ", output)
+                function_name = output.name
+                function_args = output.arguments
+                
+                # Parse function arguments
+                if isinstance(function_args, str):
+                    function_args = json.loads(function_args)
+                
+                # Execute the requested tool function
+                if function_name == "search_prompts":
+                    search_results = _search_prompts_tool(
+                        function_args.get("query_text", ""), 
+                        pipeline, 
+                        match
+                    )
+                    tool_result = f"Found {len(search_results)} matching prompts:\n" + "\n".join([f"- \"{p['prompt']}\" (used {p['count']} times)" for p in search_results])
+                    
+                elif function_name == "get_top_prompts":
+                    limit = function_args.get("limit", 20)
+                    top_prompts = _get_unique_prompts_data(pipeline, match, limit)
+                    tool_result = f"Top {len(top_prompts)} most frequent prompts:\n" + "\n".join([f"- \"{p['prompt']}\" (used {p['count']} times)" for p in top_prompts])
+                else:
+                    tool_result = "Unknown tool function requested."
+                
+                # Get the AI's final response with tool results
+                final_response = client.responses.create(
+                    model="gpt-4o-mini",
+                    input=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                        output,
+                        {"output": tool_result, "call_id": output.call_id, "type": "function_call_output"}
+                    ]
+                )
+                
+                # Use only the final response, not the original response
+                ai_response = final_response.output_text.strip()
+            else:
+                print("no tool calls")
+                # No tool calls, use direct response
+                ai_response = response.output_text.strip()
+        else:
+            ai_response = response.output_text.strip()
+        
+        # Return the AI response directly as human-readable text
+        return {
+            "answer": ai_response
+        }
+            
+    except Exception as e:
+        print(f"Error calling AI for query processing: {e}")
+        return {
+            "error": "Unable to process your question with AI. Please try a simpler question."
+        }
+
+
+def _search_prompts_tool(query_text, pipeline, match, limit=20):
+    """Tool function to search for prompts containing specific text or patterns."""
+    
+    # Create a regex pattern for case-insensitive search
+    search_pattern = re.escape(query_text.lower())
+    
+    # Search for prompts containing the query text
+    matching_prompts = []
+    for doc in prompt_logs_collection.aggregate(
+        pipeline + [
+            {
+                "$match": {
+                    **match, 
+                    "prompt": {
+                        "$exists": True, 
+                        "$ne": "",
+                        "$regex": search_pattern,
+                        "$options": "i"
+                    }
+                }
+            },
+            {"$group": {"_id": "$prompt", "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}},
+            {"$limit": limit},
+        ]
+    ):
+        prompt_text = doc.get("_id", "")
+        count = doc.get("count", 0)
+        
+        # Truncate very long prompts for readability
+        display_text = prompt_text[:200] + "..." if len(prompt_text) > 200 else prompt_text
+        
+        matching_prompts.append({
+            "prompt": display_text,
+            "full_prompt": prompt_text,
+            "count": count
+        })
+    
+    return matching_prompts
+
+
+def _get_unique_prompts_data(pipeline, match, limit=50):
+    """Get unique prompts and their repetition counts for AI analysis."""
+    
+    # Get unique prompts with their counts
+    unique_prompts = []
+    for doc in prompt_logs_collection.aggregate(
+        pipeline + [
+            {"$match": {**match, "prompt": {"$exists": True, "$ne": ""}}},
+            {"$group": {"_id": "$prompt", "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}},
+            {"$limit": limit},
+        ]
+    ):
+        prompt_text = doc.get("_id", "")
+        count = doc.get("count", 0)
+        
+        # Truncate very long prompts for readability
+        display_text = prompt_text[:200] + "..." if len(prompt_text) > 200 else prompt_text
+        
+        unique_prompts.append({
+            "prompt": display_text,
+            "full_prompt": prompt_text,
+            "count": count
+        })
+    print("unique_prompts", unique_prompts)
+    return unique_prompts
+
+
+def _get_analytics_data_for_query(pipeline, match):
+    """Get relevant analytics data for AI processing."""
+    
+    # Get basic counts
+    total_prompts = prompt_logs_collection.count_documents({**match, "prompt": {"$exists": True}})
+    total_responses = prompt_logs_collection.count_documents({**match, "response": {"$exists": True}})
+    unique_conversations = len([cid for cid in prompt_logs_collection.distinct("conversation_id", match) if cid])
+    unique_users = len([ip for ip in prompt_logs_collection.distinct("ip_hash", match) if ip])
+    
+    # Get top modes
+    mode_counts = [
+        {"mode_id": doc.get("_id"), "count": doc.get("count", 0)}
+        for doc in prompt_logs_collection.aggregate(
+            pipeline + [
+                {"$group": {"_id": "$mode", "count": {"$sum": 1}}},
+                {"$sort": {"count": -1}},
+                {"$limit": 5},
+            ]
+        )
+    ]
+    
+    top_modes_text = []
+    for mode_data in mode_counts:
+        mode_id = mode_data["mode_id"]
+        if mode_id:
+            try:
+                mode_doc = modes_collection.find_one({"_id": ObjectId(mode_id)})
+                mode_title = mode_doc.get("title") or mode_doc.get("name") if mode_doc else "Unknown"
+            except Exception:
+                mode_title = "Unknown"
+        else:
+            mode_title = "Unknown"
+        top_modes_text.append(f"- {mode_title}: {mode_data['count']} interactions")
+    
+    # Get top countries
+    top_countries = [
+        {"country": doc.get("_id") or "Unknown", "count": doc.get("count", 0)}
+        for doc in prompt_logs_collection.aggregate(
+            pipeline + [
+                {
+                    "$group": {
+                        "_id": {"$ifNull": ["$location.country", "Unknown"]},
+                        "count": {"$sum": 1},
+                    }
+                },
+                {"$sort": {"count": -1}},
+                {"$limit": 5},
+            ]
+        )
+    ]
+    
+    top_countries_text = [f"- {country['country']}: {country['count']} interactions" for country in top_countries]
+    
+    # Get daily activity (last 7 days)
+    daily_counts = [
+        {"date": doc.get("_id"), "count": doc.get("count", 0)}
+        for doc in prompt_logs_collection.aggregate(
+            pipeline + [
+                {
+                    "$group": {
+                        "_id": {
+                            "$dateToString": {
+                                "format": "%Y-%m-%d",
+                                "date": "$created_at",
+                            }
+                        },
+                        "count": {"$sum": 1},
+                    }
+                },
+                {"$sort": {"_id": -1}},
+                {"$limit": 7},
+            ]
+        )
+    ]
+    
+    daily_text = [f"- {day['date']}: {day['count']} interactions" for day in daily_counts]
+    
+    return f"""Summary Statistics:
+- Total Prompts: {total_prompts}
+- Total Responses: {total_responses}
+- Unique Conversations: {unique_conversations}
+- Unique Users: {unique_users}
+
+Top Modes by Usage:
+{chr(10).join(top_modes_text)}
+
+Top Countries by Usage:
+{chr(10).join(top_countries_text)}
+
+Recent Daily Activity (last 7 days):
+{chr(10).join(daily_text)}"""
 
 
 @routes.get("/admin/documents")

@@ -137,10 +137,10 @@ class ConversationService:
 
         tools: List[Dict] = []
         data_sources: List[Dict[str, Any]] = []
-        interest = mode if mode else "general BCCA information"
+        interest = mode_doc.get("title", "general BCCA information") if mode_doc else "general BCCA information"
         gpt_system_prompt = (
             "You're a helpful, warm assistant supporting users with information about the British Columbia construction industry. "
-            f"The user is interested in {interest}. {mode_context} "
+            f"The user is interested in {interest}. {mode_context}. "
         )
         if self.vector_store_id and mode:
             file_search_tool: Dict = {
@@ -222,17 +222,20 @@ class ConversationService:
                 )
 
         if allow_other_sites and mode_preferred_sites:
-            gpt_system_prompt += (
-                "If you cannot fully answer from these, then use other reputable sources. "
-                f"Do not use the following sites as a source: {', '.join(mode_blocked_sites)} "
-                "In your final answer, list internet sources from my preferred sites before listing any other internet sources."
-            )
+            gpt_system_prompt += "If you cannot fully answer from these, then use other reputable sources. "
+            if mode_blocked_sites:
+                gpt_system_prompt += f"Do not use the following sites as a source: {', '.join(mode_blocked_sites)} "
+
+            gpt_system_prompt += "In your final answer, list internet sources from my preferred sites before listing any other internet sources."
+            
         elif mode_preferred_sites:
             gpt_system_prompt += (
                 "Only use these websites in your web search; do not use any other sources from the internet."
             )
+        
+        gpt_system_prompt += "Do not repeat information."
 
-        tools.append({"type": "web_search_preview"})
+        tools.append({"type": "web_search"})
 
         return gpt_system_prompt, tools, data_sources
 
@@ -294,18 +297,28 @@ class ConversationService:
 
         def _is_confident(res) -> bool:
             try:
-                content = res.output[0].content[0]
-                confidence = (
-                    content.get("confidence")
-                    if isinstance(content, dict)
-                    else getattr(content, "confidence", None)
-                )
-                return confidence is None or confidence >= 0.5
+                # Check if the response has the expected structure
+                if hasattr(res, 'output') and res.output and len(res.output) > 0:
+                    output = res.output[0]
+                    if hasattr(output, 'content') and output.content and len(output.content) > 0:
+                        content = output.content[0]
+                        if isinstance(content, dict):
+                            confidence = content.get("confidence")
+                        else:
+                            confidence = getattr(content, "confidence", None)
+                        
+                        # Return True if confidence is None (no confidence score) or >= 0.5
+                        return confidence is None or confidence >= 0.5
+                
+                # If we can't find confidence info, assume confident
+                return True
             except Exception:
+                # If anything goes wrong, assume confident to avoid double calls
                 return True
 
         response = _call_model("gpt-4.1-mini")
         if not _is_confident(response):
+            print("response from mini model is not confident, calling gpt-4.1")
             response = _call_model("gpt-4.1")
         output_text = response.output_text
         now = datetime.utcnow()
