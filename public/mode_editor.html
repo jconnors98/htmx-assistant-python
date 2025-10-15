@@ -276,13 +276,11 @@
       for (const row of rows) {
         const file = row.file;
         const tag = row.querySelector('select').value;
-        const alwaysInclude = row.querySelector('.always-include').checked;
         const form = new FormData();
         form.append('mode', modeName);
         form.append('tag', tag);
         form.append('content', '');
         form.append('file', file);
-        if (alwaysInclude) form.append('always_include', 'true');
         const res = await fetch('/flask/admin/documents', {
           method: 'POST',
           headers: { 'Authorization': 'Bearer ' + idToken },
@@ -314,16 +312,8 @@
           opt.textContent = t;
           select.appendChild(opt);
         });
-        const cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.className = 'always-include h-4 w-4 text-[#82002d] border-gray-300 rounded';
-        const cbLabel = document.createElement('label');
-        cbLabel.className = 'flex items-center gap-1';
-        cbLabel.appendChild(cb);
-        cbLabel.appendChild(document.createTextNode(' Always include'));
         row.appendChild(name);
         row.appendChild(select);
-        row.appendChild(cbLabel);
         container.appendChild(row);
       });
     }
