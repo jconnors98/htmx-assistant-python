@@ -233,7 +233,7 @@ class ConversationService:
                 "Only use these websites in your web search; do not use any other sources from the internet."
             )
         
-        gpt_system_prompt += "Do not repeat information."
+        gpt_system_prompt += "Do not repeat information. Do not specify the source / file name of uploaded files. When using lists, use bullets versus numbering."
 
         tools.append({"type": "web_search"})
 
