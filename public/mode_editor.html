@@ -52,7 +52,7 @@
         </label>
         <label class="flex flex-col">
           <span class="mb-1 font-medium">Preferred Sites (comma-separated, in order of highest priority first)</span>
-          <input id="mode-preferred" class="px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-[#82002d]" />
+          <textarea id="mode-preferred" class="px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-[#82002d] resize-none overflow-hidden" rows="1"></textarea>
         </label>
         <label class="flex flex-col">
           <span class="mb-1 font-medium">Blocked Sites (comma-separated - sites you don't want searched)</span>
@@ -182,6 +182,7 @@
       textColorInput.value = normalizeTextColor(m.text_color);
       renderModePrompts(modePrompts);
       document.getElementById('mode-preferred').value = (m.preferred_sites || []).join(',');
+      autoExpandTextarea(document.getElementById('mode-preferred'));
       document.getElementById('mode-blocked').value = (m.blocked_sites || []).join(',');
       document.getElementById('mode-allow-other').checked = m.allow_other_sites !== false;
       const priority = (m.priority_source === 'files') ? 'files' : 'sites';
@@ -330,6 +331,14 @@
     function renderModeTags(tags) {
       const container = document.getElementById('mode-tags');
       container.innerHTML = '';
+      const label = container.closest('label');
+      if (label) {
+        label.addEventListener('click', e => {
+          // Only prevent default if clicking on chips or chip content
+          e.preventDefault();
+          e.stopPropagation();
+        });
+      }
       const input = document.createElement('input');
       input.id = 'mode-tag-input';
       input.placeholder = 'Add tag and press Enter';
@@ -350,20 +359,35 @@
       const chip = document.createElement('span');
       chip.className = 'chip inline-flex items-center bg-[#82002d] text-white rounded-full px-2 py-1 text-sm';
       chip.dataset.value = tag;
-      chip.textContent = tag;
+      
+      // Create a span for the tag text
+      const tagText = document.createElement('span');
+      tagText.textContent = tag;
+      chip.appendChild(tagText);
+      
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'ml-1 focus:outline-none';
       btn.textContent = '×';
-      btn.onclick = e => {
+      
+      // Use addEventListener instead of onclick to have better control
+      btn.addEventListener('click', e => {
         e.preventDefault();
-        const chips = Array.from(container.querySelectorAll('.chip'));
-        const index = chips.indexOf(chip);
+        e.stopPropagation();
+        // Find the index in the modeTags array by value, not DOM position
+        const index = modeTags.indexOf(tag);
         if (index !== -1) {
           modeTags.splice(index, 1);
         }
         chip.remove();
-      };
+      });
+      
+      // Prevent the chip itself from being clickable by the label
+      chip.addEventListener('click', e => {
+        e.preventDefault();
+        e.stopPropagation();
+      });
+      
       chip.appendChild(btn);
       return chip;
     }
@@ -378,6 +402,17 @@
     function renderModePrompts(prompts) {
       const container = document.getElementById('mode-prompts');
       container.innerHTML = '';
+      
+      // Prevent the label from interfering with chip clicks
+      const label = container.closest('label');
+      if (label) {
+        label.addEventListener('click', e => {
+          // Only prevent default if clicking on chips or chip content
+          e.preventDefault();
+          e.stopPropagation();
+        });
+      }
+      
       const input = document.createElement('input');
       input.id = 'mode-prompt-input';
       input.placeholder = 'Add prompt and press Enter';
@@ -398,20 +433,35 @@
       const chip = document.createElement('span');
       chip.className = 'chip inline-flex items-center bg-[#82002d] text-white rounded-full px-2 py-1 text-sm';
       chip.dataset.value = prompt;
-      chip.textContent = prompt;
+      
+      // Create a span for the prompt text
+      const promptText = document.createElement('span');
+      promptText.textContent = prompt;
+      chip.appendChild(promptText);
+      
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'ml-1 focus:outline-none';
       btn.textContent = '×';
-      btn.onclick = e => {
+      
+      // Use addEventListener instead of onclick to have better control
+      btn.addEventListener('click', e => {
         e.preventDefault();
-        const chips = Array.from(container.querySelectorAll('.chip'));
-        const index = chips.indexOf(chip);
+        e.stopPropagation();
+        // Find the index in the modePrompts array by value, not DOM position
+        const index = modePrompts.indexOf(prompt);
         if (index !== -1) {
           modePrompts.splice(index, 1);
         }
         chip.remove();
-      };
+      });
+      
+      // Prevent the chip itself from being clickable by the label
+      chip.addEventListener('click', e => {
+        e.preventDefault();
+        e.stopPropagation();
+      });
+      
       chip.appendChild(btn);
       return chip;
     }
@@ -454,6 +504,18 @@
     }
 
     document.getElementById('mode-name').addEventListener('input', updateClientUrl);
+
+    // Auto-expand textarea for preferred sites
+    function autoExpandTextarea(textarea) {
+      textarea.style.height = 'auto';
+      textarea.style.height = textarea.scrollHeight + 'px';
+    }
+
+    const preferredTextarea = document.getElementById('mode-preferred');
+    preferredTextarea.addEventListener('input', () => autoExpandTextarea(preferredTextarea));
+    
+    // Initialize the textarea height
+    autoExpandTextarea(preferredTextarea);
 
     updateClientUrl();
 
