@@ -5,17 +5,81 @@
   <title>Admin Modes</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="./App.css" />
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: '#82002d',
+            'primary-light': '#a0003f',
+            'primary-dark': '#6b0024',
+            secondary: '#f8fafc',
+            accent: '#e2e8f0'
+          },
+          boxShadow: {
+            'soft': '0 2px 15px -3px rgba(0, 0, 0, 0.07), 0 10px 20px -2px rgba(0, 0, 0, 0.04)',
+            'medium': '0 4px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+            'strong': '0 10px 40px -10px rgba(0, 0, 0, 0.15), 0 4px 6px -2px rgba(0, 0, 0, 0.05)'
+          },
+          animation: {
+            'fade-in': 'fadeIn 0.3s ease-in-out',
+            'slide-up': 'slideUp 0.3s ease-out',
+            'pulse-soft': 'pulseSoft 2s infinite'
+          },
+          keyframes: {
+            fadeIn: {
+              '0%': { opacity: '0' },
+              '100%': { opacity: '1' }
+            },
+            slideUp: {
+              '0%': { transform: 'translateY(10px)', opacity: '0' },
+              '100%': { transform: 'translateY(0)', opacity: '1' }
+            },
+            pulseSoft: {
+              '0%, 100%': { opacity: '1' },
+              '50%': { opacity: '0.8' }
+            }
+          }
+        }
+      }
+    }
+  </script>
 </head>
-<body class="min-h-screen bg-gray-100">
-  <div class="max-w-4xl mx-auto p-6">
-    <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-6">
-      <h1 class="text-2xl font-bold text-[#82002d]">Your Modes</h1>
-      <div class="flex gap-2">
-        <button id="view-analytics" class="secondary px-4 py-2 rounded">View Analytics</button>
-        <button id="new-mode" class="bg-[#82002d] hover:bg-[#a0003f] text-white px-4 py-2 rounded">Create New Mode</button>
+<body class="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
+  <div class="max-w-6xl mx-auto p-6">
+    <!-- Enhanced Header -->
+    <div class="bg-white rounded-2xl shadow-soft border border-gray-100 p-8 mb-8 animate-fade-in">
+      <div class="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+        <div class="flex items-center gap-4">
+          <div class="w-12 h-12 bg-gradient-to-br from-primary to-primary-light rounded-2xl flex items-center justify-center shadow-medium">
+            <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+            </svg>
+          </div>
+          <div>
+            <h1 class="text-3xl font-bold text-gray-900">Your Modes</h1>
+            <p class="text-gray-600 mt-1">Manage and configure your AI assistant modes</p>
+          </div>
+        </div>
+        <div class="flex gap-3">
+          <button id="view-analytics" class="bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white px-6 py-3 rounded-xl font-medium shadow-medium hover:shadow-strong transition-all duration-200 transform hover:-translate-y-0.5 flex items-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+            </svg>
+            View Analytics
+          </button>
+          <button id="new-mode" class="bg-gradient-to-r from-primary to-primary-light hover:from-primary-light hover:to-primary-dark text-white px-6 py-3 rounded-xl font-medium shadow-medium hover:shadow-strong transition-all duration-200 transform hover:-translate-y-0.5 flex items-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+            </svg>
+            Create New Mode
+          </button>
+        </div>
       </div>
     </div>
-    <div id="mode-list" class="space-y-4"></div>
+    <!-- Enhanced Mode List -->
+    <div id="mode-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"></div>
   </div>
   <script>
     const DEFAULT_THEME_COLOR = '#82002d';
@@ -26,6 +90,18 @@
       if (!text) return DEFAULT_THEME_COLOR;
       const prefixed = text.startsWith('#') ? text : `#${text}`;
       return /^#[0-9a-fA-F]{6}$/.test(prefixed) ? prefixed.toLowerCase() : DEFAULT_THEME_COLOR;
+    }
+
+    function adjustColor(hex, factor) {
+      const normalized = normalizeColor(hex).substring(1);
+      const num = parseInt(normalized, 16);
+      const clamp = (value) => Math.max(0, Math.min(255, value));
+      const r = clamp(((num >> 16) & 0xff) + Math.round(255 * factor));
+      const g = clamp(((num >> 8) & 0xff) + Math.round(255 * factor));
+      const b = clamp((num & 0xff) + Math.round(255 * factor));
+      return `#${((1 << 24) + (r << 16) + (g << 8) + b)
+        .toString(16)
+        .slice(1)}`;
     }
     const idToken = localStorage.getItem('idToken') || '';
     if (!idToken) {
@@ -49,40 +125,64 @@
       const data = await res.json();
       const list = document.getElementById('mode-list');
       list.innerHTML = '';
-      data.modes.forEach(m => {
+      data.modes.forEach((m, index) => {
         const color = normalizeColor(m.color);
         const div = document.createElement('div');
-        div.className = 'p-4 border rounded cursor-pointer hover:bg-gray-50';
-        div.style.borderColor = color;
+        div.className = 'bg-white rounded-2xl shadow-soft border border-gray-100 p-6 cursor-pointer hover:shadow-medium hover:-translate-y-1 transition-all duration-200 animate-slide-up';
+        div.style.animationDelay = `${index * 0.1}s`;
         div.innerHTML = `
-          <div class="flex items-start justify-between gap-4">
-            <div class="space-y-1">
-              <h3 class="text-lg font-semibold">${m.name}</h3>
-              ${m.description ? `<p class="text-sm text-gray-700">${m.description}</p>` : ''}
-              ${(m.tags && m.tags.length) ? `<p class="text-xs text-gray-500">Tags: ${m.tags.join(', ')}</p>` : ''}
+          <div class="flex items-start justify-between gap-4 mb-4">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-xl flex items-center justify-center shadow-sm" style="background: linear-gradient(135deg, ${color}, ${adjustColor(color, -0.1)})">
+                <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path>
+                </svg>
+              </div>
+              <div>
+                <h3 class="text-lg font-semibold text-gray-900">${m.name}</h3>
+                <p class="text-sm text-gray-500">AI Assistant Mode</p>
+              </div>
             </div>
             <button
-              class="analytics-btn inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition focus:outline-none focus:ring-2 focus:ring-offset-2"
+              class="analytics-btn inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-all duration-200 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-offset-2"
               title="View analytics for ${m.name}"
+              style="color: ${color}; border: 1px solid ${color};"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-5 w-5" aria-hidden="true">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-4 w-4" aria-hidden="true">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M3 3v18h18M7.5 15.75l3-4.5 3 3 4.5-6" />
               </svg>
               <span class="sr-only">View analytics</span>
             </button>
           </div>
+          <div class="space-y-3">
+            ${m.description ? `<p class="text-sm text-gray-600 leading-relaxed">${m.description}</p>` : ''}
+            ${(m.tags && m.tags.length) ? `
+              <div class="flex flex-wrap gap-2">
+                ${m.tags.slice(0, 3).map(tag => `
+                  <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                    ${tag}
+                  </span>
+                `).join('')}
+                ${m.tags.length > 3 ? `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">+${m.tags.length - 3} more</span>` : ''}
+              </div>
+            ` : ''}
+            <div class="flex items-center justify-between pt-3 border-t border-gray-100">
+              <div class="flex items-center gap-2 text-xs text-gray-500">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+                Last updated
+              </div>
+              <div class="text-xs text-gray-400">
+                Click to edit
+              </div>
+            </div>
+          </div>
         `;
         div.onclick = () => window.location.href = '/flask/admin/mode?id=' + m._id;
 
         const analyticsBtn = div.querySelector('.analytics-btn');
-        const titleEl = div.querySelector('h3');
-        if (titleEl) {
-          titleEl.style.color = color;
-        }
         if (analyticsBtn) {
-          analyticsBtn.style.color = color;
-          analyticsBtn.style.borderColor = color;
-          analyticsBtn.style.boxShadow = `0 0 0 1px ${color}`;
           analyticsBtn.addEventListener('click', (event) => {
             event.stopPropagation();
             window.location.href = '/flask/admin/analytics?modeId=' + encodeURIComponent(m._id);
