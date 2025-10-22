@@ -1,6 +1,7 @@
 import mysql.connector
 from decouple import config
 
+print("Connecting to MySQL")
 # Connect to server
 cnx = mysql.connector.connect(
     host=config("MYSQL_HOST"),
@@ -10,12 +11,13 @@ cnx = mysql.connector.connect(
     password=config("MYSQL_PASSWORD"),
     ssl_ca=config("MYSQL_CERT_PATH")
 )
+print("Connected to MySQL")
 
 # Get a cursor
 cur = cnx.cursor()
 
 # Execute a query
-cur.execute("SELECT status, source FROM permit_data WHERE id=10")
+cur.execute("SELECT 1 FROM permit_data")
 
 # Fetch one result
 row = cur.fetchone()
