@@ -3,13 +3,15 @@ from decouple import config
 
 print("Connecting to MySQL")
 # Connect to server
+
 cnx = mysql.connector.connect(
     host=config("MYSQL_HOST"),
     database=config("MYSQL_DATABASE"),
     port=3306,
     user=config("MYSQL_USER"),
     password=config("MYSQL_PASSWORD"),
-    ssl_ca=config("MYSQL_CERT_PATH")
+    ssl_ca=config("MYSQL_CERT_PATH"),
+    collation="utf8mb4_unicode_ci"
 )
 print("Connected to MySQL")
 
@@ -17,7 +19,7 @@ print("Connected to MySQL")
 cur = cnx.cursor()
 
 # Execute a query
-cur.execute("SELECT 1 FROM permit_data")
+cur.execute("SELECT * FROM permit_data LIMIT 10")
 
 # Fetch one result
 row = cur.fetchone()
