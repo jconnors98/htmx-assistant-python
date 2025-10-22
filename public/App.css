@@ -251,26 +251,24 @@ textarea {
 }
 
 .upload-toggle-btn {
-  background-color: var(--theme-color);
-  color: var(--text-color);
+  background-color: transparent;
+  color: inherit;
   border: none;
-  border-radius: 6px;
-  padding: 0.6rem 1.2rem;
-  font-size: 0.9rem;
+  border-radius: 0;
+  padding: 0;
   cursor: pointer;
-  min-width: 50px;
-  transition: background-color 0.2s ease;
+  transition: all 0.2s ease;
   display: flex;
   align-items: center;
   justify-content: center;
+  min-width: 0;
 }
 
 .upload-toggle-btn:hover {
-  background-color: var(--theme-color-hover);
+  background-color: transparent;
 }
 
 .upload-toggle-btn.active {
-  background-color: var(--theme-color-hover);
   transform: scale(1.02);
 }
 
@@ -550,7 +548,9 @@ button.secondary:hover {
     min-height: 32px;
   }
 
-  button {
+  /* Only apply full width to secondary action buttons, not primary action buttons */
+  .scroll-top-btn,
+  .clear-chat-btn {
     width: 100%;
   }
 
