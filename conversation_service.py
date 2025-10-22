@@ -237,6 +237,33 @@ class ConversationService:
 
         tools.append({"type": "web_search"})
 
+        # Add MySQL permit search tool for permitsca mode
+        if mode == "permitsca":
+            permit_search_tool = {
+                "type": "function",
+                "name": "search_permits",
+                "description": "Search for permits in the database using project description keywords",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Search terms to look for in permit project descriptions"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of results to return (default: 10)",
+                            "default": 10
+                        }
+                    },
+                    "required": ["query"]
+                }
+            }
+            tools.append(permit_search_tool)
+            
+            # Update system prompt to mention permit search capability
+            gpt_system_prompt += " You have access to a permit database search tool. Use the search_permits function to find relevant permits when users ask about specific projects, locations, or permit types. "
+
         return gpt_system_prompt, tools, data_sources
 
     def respond(
@@ -317,7 +344,52 @@ class ConversationService:
                 return True
 
         response = _call_model("gpt-4.1-mini")
-        if not _is_confident(response):
+        
+        called_function = False
+        # Handle function calls for permit search (permitsca mode only)
+        if mode == "permitsca" and hasattr(response, 'output') and response.output and len(response.output) > 0:
+            output = response.output[0]
+            if output.type == "function_call":
+                function_name = output.name
+                function_args = output.arguments
+                
+                # Parse function arguments
+                if isinstance(function_args, str):
+                    import json
+                    function_args = json.loads(function_args)
+                
+                # Execute the permit search tool
+                if function_name == "search_permits":
+                    # Import the tool function from functions.py
+                    from functions import _search_permits_tool
+                    
+                    query_text = function_args.get("query", "")
+                    limit = function_args.get("limit", 10)
+                    
+                    search_results = _search_permits_tool(query_text, limit)
+                    
+                    # Format results for the AI
+                    if search_results:
+                        tool_result = f"Found {len(search_results)} permits matching '{query_text}':\n"
+                        for i, permit in enumerate(search_results, 1):
+                            tool_result += f"{i}. Permit #{permit.get('permit_number', 'N/A')} - {permit.get('project_description', 'No description')[:500]}... (Status: {permit.get('status', 'Unknown')})\n"
+                    else:
+                        tool_result = f"No permits found matching '{query_text}'"
+                    
+                    # Get the AI's final response with tool results
+                    final_response = self.client.responses.create(
+                        model="gpt-4.1-mini",
+                        input=[
+                            {"role": "system", "content": full_system_prompt},
+                            {"role": "user", "content": text},
+                            output,
+                            {"output": tool_result, "call_id": output.call_id, "type": "function_call_output"},
+                        ],
+                    )
+                    response = final_response
+                    called_function = True
+        
+        if not _is_confident(response) and not called_function:
             print("response from mini model is not confident, calling gpt-4.1")
             response = _call_model("gpt-4.1")
         output_text = response.output_text
