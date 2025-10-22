@@ -386,7 +386,7 @@ def _search_permits_tool(query_text, limit=10):
                    date_added, permit_number
             FROM permit_data 
             WHERE project_description LIKE %s 
-            ORDER BY updated_at DESC 
+            ORDER BY date_added DESC 
             LIMIT %s
         """
         print("search query", search_query)
