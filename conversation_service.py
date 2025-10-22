@@ -132,6 +132,7 @@ class ConversationService:
         mode_blocked_sites = mode_doc.get("blocked_sites", []) if mode_doc else []
         allow_other_sites = mode_doc.get("allow_other_sites", True) if mode_doc else True
         priority_source = mode_doc.get("priority_source", "sites") if mode_doc else "sites"
+        has_files = mode_doc.get("has_files", False) if mode_doc else False
         tags = mode_doc.get("tags", []) if mode_doc else []
         database_config = mode_doc.get("database") if mode_doc else None
 
@@ -142,7 +143,7 @@ class ConversationService:
             "You're a helpful, warm assistant supporting users with information about the British Columbia construction industry. "
             f"The user is interested in {interest}. {mode_context}. "
         )
-        if self.vector_store_id and mode:
+        if self.vector_store_id and mode and has_files and mode != "permitsca":
             file_search_tool: Dict = {
                 "type": "file_search",
                 "vector_store_ids": [self.vector_store_id],
@@ -176,7 +177,6 @@ class ConversationService:
                 }
             tools.append(file_search_tool)
 
-        if self.vector_store_id and mode:
             gpt_system_prompt += "You have access to a vector store containing relevant documents. "
             if priority_source == "files":
                 if mode_preferred_sites:
@@ -201,44 +201,10 @@ class ConversationService:
                     "When searching the internet, search the following websites, listed in order of highest priority first, using the asterisk as a match-all character: "
                     f"{', '.join(mode_preferred_sites)} "
                 )
-        else:
-            if mode_preferred_sites:
-                gpt_system_prompt += (
-                    "When answering, use the following websites. They are listed in order of highest priority first, using the asterisk as a match-all character: "
-                    f"{', '.join(mode_preferred_sites)} "
-                )
-            else:
-                gpt_system_prompt += (
-                    "When answering, use the internet. "
-                )
+            gpt_system_prompt += "Do not specify the source / file name of uploaded files. "
+            tools.append({"type": "web_search"})
 
-        if database_config:
-            db_source = self._build_database_data_source(database_config)
-            if db_source:
-                data_sources.append(db_source)
-                gpt_system_prompt += (
-                    "You also have access to a structured database configured for this mode."
-                    " Use it to look up precise information when needed. "
-                )
-
-        if allow_other_sites and mode_preferred_sites:
-            gpt_system_prompt += "If you cannot fully answer from these, then use other reputable sources. "
-            if mode_blocked_sites:
-                gpt_system_prompt += f"Do not use the following sites as a source: {', '.join(mode_blocked_sites)} "
-
-            gpt_system_prompt += "In your final answer, list internet sources from my preferred sites before listing any other internet sources."
-            
-        elif mode_preferred_sites:
-            gpt_system_prompt += (
-                "Only use these websites in your web search; do not use any other sources from the internet."
-            )
-        
-        gpt_system_prompt += "Do not repeat information. Do not specify the source / file name of uploaded files. When using lists, use bullets versus numbering."
-
-        tools.append({"type": "web_search"})
-
-        # Add MySQL permit search tool for permitsca mode
-        if mode == "permitsca":
+        elif mode == "permitsca":
             permit_search_tool = {
                 "type": "function",
                 "name": "search_permits",
@@ -262,7 +228,43 @@ class ConversationService:
             tools.append(permit_search_tool)
             
             # Update system prompt to mention permit search capability
-            gpt_system_prompt += " You have access to a permit database search tool. Use the search_permits function to find relevant permits when users ask about specific projects, locations, or permit types. "
+            gpt_system_prompt += "You have access to a permit database search tool. Use the search_permits function to find relevant permits. "
+
+        else:
+            if mode_preferred_sites:
+                gpt_system_prompt += (
+                    "When answering, use the following websites. They are listed in order of highest priority first, using the asterisk as a match-all character: "
+                    f"{', '.join(mode_preferred_sites)} "
+                )
+            else:
+                gpt_system_prompt += (
+                    "When answering, use the internet. "
+                )
+
+            tools.append({"type": "web_search"})
+
+        # if database_config:
+        #     db_source = self._build_database_data_source(database_config)
+        #     if db_source:
+        #         data_sources.append(db_source)
+        #         gpt_system_prompt += (
+        #             "You also have access to a structured database configured for this mode."
+        #             " Use it to look up precise information when needed. "
+        #         )
+
+        if allow_other_sites and mode_preferred_sites and mode != "permitsca":
+            gpt_system_prompt += "If you cannot fully answer from these, then use other reputable sources. "
+            if mode_blocked_sites:
+                gpt_system_prompt += f"Do not use the following sites as a source: {', '.join(mode_blocked_sites)} "
+
+            gpt_system_prompt += "In your final answer, list internet sources from my preferred sites before listing any other internet sources. "
+            
+        elif mode_preferred_sites and mode != "permitsca":
+            gpt_system_prompt += (
+                "Only use these websites in your web search; do not use any other sources from the internet. "
+            )
+        
+        gpt_system_prompt += "Do not repeat information. When using lists, use bullets versus numbering."
 
         return gpt_system_prompt, tools, data_sources
 

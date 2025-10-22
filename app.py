@@ -275,6 +275,7 @@ def get_mode(mode):
         "intro": doc.get("intro", ""),
         "title": doc.get("title", ""),
         "allow_file_upload": doc.get("allow_file_upload", False),
+        "has_files": doc.get("has_files", False),
         "color": _normalize_color(doc.get("color"), DEFAULT_MODE_COLOR),
         "text_color": _normalize_text_color(doc.get("text_color"), DEFAULT_TEXT_COLOR),
     }
@@ -338,6 +339,7 @@ def create_mode():
         "blocked_sites": data.get("blocked_sites", []),
         "allow_other_sites": data.get("allow_other_sites", True),
         "allow_file_upload": data.get("allow_file_upload", False),
+        "has_files": False,
         "color": _normalize_color(data.get("color")),
         "text_color": _normalize_text_color(data.get("text_color")),
     }
@@ -374,6 +376,7 @@ def update_mode(mode_id):
         "blocked_sites": data.get("blocked_sites", doc.get("blocked_sites", [])),
         "allow_other_sites": data.get("allow_other_sites", doc.get("allow_other_sites", True)),
         "allow_file_upload": data.get("allow_file_upload", doc.get("allow_file_upload", False)),
+        "has_files": doc.get("has_files", False),
         "color": _normalize_color(data.get("color", doc.get("color", DEFAULT_MODE_COLOR))),
         "text_color": _normalize_text_color(data.get("text_color", doc.get("text_color", DEFAULT_TEXT_COLOR))),
     }
@@ -784,6 +787,14 @@ def create_document():
     }
     result = documents_collection.insert_one(doc)
     doc["_id"] = str(result.inserted_id)
+    
+    # If a file was uploaded, update the mode's has_files field to True
+    if file and mode_doc:
+        modes_collection.update_one(
+            {"_id": mode_doc["_id"]}, 
+            {"$set": {"has_files": True}}
+        )
+    
     return doc, 201
 
 
@@ -815,6 +826,28 @@ def delete_document(doc_id):
             except Exception as e:  # noqa: BLE001
                 print("vector store delete failed", e)
     documents_collection.delete_one({"_id": doc["_id"]})
+    
+    # Check if there are any remaining files for this mode
+    if doc.get("mode"):
+        mode_query = {"name": doc["mode"]}
+        if not request.user.get("is_super_admin"):
+            mode_query["user_id"] = request.user["sub"]
+        mode_doc = modes_collection.find_one(mode_query)
+        
+        if mode_doc:
+            # Count remaining documents with files for this mode
+            remaining_files_count = documents_collection.count_documents({
+                "mode": doc["mode"],
+                "s3_key": {"$exists": True, "$ne": None}
+            })
+            
+            # If no files remain, set has_files to False
+            if remaining_files_count == 0:
+                modes_collection.update_one(
+                    {"_id": mode_doc["_id"]}, 
+                    {"$set": {"has_files": False}}
+                )
+    
     return {"status": "deleted"}
 
 
