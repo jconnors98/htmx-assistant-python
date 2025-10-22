@@ -15,7 +15,6 @@ from typing import Optional, Dict, Any, List
 from bson import ObjectId
 from decouple import config
 
-
 # Global variables that need to be imported from app.py
 _jwks = None
 
@@ -363,6 +362,7 @@ def _get_unique_prompts_data(pipeline, match, prompt_logs_collection, limit=50):
 
 def _search_permits_tool(query_text, limit=10):
     """Tool function to search for permits in MySQL database using project_description column."""
+    print("searching permits", query_text, limit)
     try:
         import mysql.connector
         from decouple import config
@@ -377,7 +377,7 @@ def _search_permits_tool(query_text, limit=10):
             ssl_ca=config("MYSQL_CERT_PATH"),
             collation="utf8mb4_unicode_ci"
         )
-        
+        print("connected to mysql")
         cursor = cnx.cursor(dictionary=True)
         
         # Search for permits using LIKE with wildcards for partial matches
@@ -389,6 +389,7 @@ def _search_permits_tool(query_text, limit=10):
             ORDER BY updated_at DESC 
             LIMIT %s
         """
+        print("search query", search_query)
         
         # Add wildcards for partial matching
         search_pattern = f"%{query_text}%"
