@@ -395,6 +395,7 @@ def _search_permits_tool(query_text, limit=10):
         cursor.execute(search_query, (search_pattern, limit))
         
         results = cursor.fetchall()
+        print("results", results)
         
         cursor.close()
         cnx.close()
