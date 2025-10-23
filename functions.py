@@ -280,9 +280,9 @@ Please analyze this question and provide insights based on the available data.""
                         {"output": tool_result, "call_id": output.call_id, "type": "function_call_output"},
                     ],
                 )
-                return {"response": final_response.output_text}
+                return {"answer": final_response.output_text}
         
-        return {"response": response.output_text}
+        return {"answer": response.output_text}
         
     except Exception as e:
         print(f"Error calling AI for query processing: {e}")
