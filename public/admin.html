@@ -107,12 +107,39 @@
     if (!idToken) {
       window.location.href = '/flask/admin/login';
     }
+
+    // Fetch user info to check superadmin status
+    async function checkUserPermissions() {
+      try {
+        const response = await fetch('/flask/admin/user', {
+          headers: { Authorization: `Bearer ${idToken}` }
+        });
+        if (response.status === 401) {
+          localStorage.removeItem('idToken');
+          window.location.href = '/flask/admin/login';
+          return;
+        }
+        if (response.ok) {
+          const userInfo = await response.json();
+          const viewAnalyticsBtn = document.getElementById('view-analytics');
+          if (!userInfo.is_super_admin && viewAnalyticsBtn) {
+            viewAnalyticsBtn.style.display = 'none';
+          }
+        }
+      } catch (err) {
+        console.error('Error checking user permissions:', err);
+      }
+    }
+
     document.getElementById('new-mode').onclick = () => {
       window.location.href = '/flask/admin/mode';
     };
     document.getElementById('view-analytics').onclick = () => {
       window.location.href = '/flask/admin/analytics';
     };
+
+    // Check user permissions on page load
+    checkUserPermissions();
     async function loadModes() {
       const res = await fetch('/flask/admin/modes', {
         headers: { 'Authorization': 'Bearer ' + idToken }

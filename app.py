@@ -825,6 +825,15 @@ def admin_analytics_search():
         return {"error": "Unable to process your question. Please try rephrasing it."}, 500
 
 
+@routes.get("/admin/user")
+@cognito_auth_required
+def get_user_info():
+    return {
+        "user_id": request.user["sub"],
+        "is_super_admin": request.user.get("is_super_admin", False)
+    }
+
+
 @routes.get("/admin/documents")
 @cognito_auth_required
 def list_documents_admin():
