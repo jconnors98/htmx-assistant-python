@@ -265,7 +265,7 @@ Please analyze this question and provide insights based on the available data.""
                     
                 elif function_name == "get_top_prompts":
                     limit = function_args.get("limit", 20)
-                    top_prompts = _get_unique_prompts_data(pipeline, match, limit, prompt_logs_collection)
+                    top_prompts = _get_unique_prompts_data(pipeline, match, prompt_logs_collection, limit)
                     tool_result = f"Top {len(top_prompts)} most frequent prompts:\n" + "\n".join([f"- \"{p['prompt']}\" (used {p['count']} times)" for p in top_prompts])
                 else:
                     tool_result = "Unknown tool function requested."
