@@ -430,6 +430,119 @@ def admin_login():
     }
 
 
+@routes.post("/api/refresh-token")
+def refresh_token():
+    """Refresh Cognito tokens using refresh token."""
+    data = request.get_json() or {}
+    refresh_token = data.get("refresh_token")
+    if not refresh_token:
+        return {"error": "Refresh token is required"}, 400
+    if not (COGNITO_REGION and COGNITO_APP_CLIENT_ID):
+        return {"error": "Cognito not configured"}, 500
+    
+    cognito = boto3.client("cognito-idp", region_name=COGNITO_REGION)
+    try:
+        resp = cognito.initiate_auth(
+            AuthFlow="REFRESH_TOKEN_AUTH",
+            AuthParameters={"REFRESH_TOKEN": refresh_token},
+            ClientId=COGNITO_APP_CLIENT_ID,
+        )
+    except cognito.exceptions.NotAuthorizedException:
+        return {"error": "Invalid refresh token"}, 401
+    except Exception as e:  # noqa: BLE001
+        print("cognito refresh failed", e)
+        return {"error": "Token refresh failed"}, 500
+    
+    auth = resp.get("AuthenticationResult", {})
+    return {
+        "id_token": auth.get("IdToken"),
+        "access_token": auth.get("AccessToken"),
+        "refresh_token": auth.get("RefreshToken", refresh_token),  # Use existing if no new one
+    }
+
+
+@routes.post("/api/permitsca")
+@cognito_auth_required
+def permitsca_api():
+    """API endpoint for permitsca mode that returns JSON responses."""
+    data = request.get_json() or {}
+    message = (data.get("message") or "").strip()
+    tag = (data.get("tag") or "").strip()
+    conversation_id = (data.get("conversation_id") or "").strip()
+    previous_response_id = (data.get("response_id") or "").strip()
+    
+    # Force permitsca mode
+    mode = "permitsca"
+    mode_doc = modes_collection.find_one({"name": mode})
+    allow_file_upload = mode_doc.get("allow_file_upload", False) if mode_doc else False
+    
+    # Handle uploaded file IDs
+    uploaded_file_ids = data.get("uploaded_files", [])
+    openai_file_ids = uploaded_file_ids if allow_file_upload and uploaded_file_ids else []
+
+    if not message:
+        return {"error": "Message is required"}, 400
+    
+    if not conversation_id:
+        conversation_id = str(ObjectId())
+    
+    ip_addr = request.headers.get("X-Forwarded-For", request.remote_addr)
+    print(f"Permitsca API prompt sent from IP: {ip_addr}")
+    
+    # Log the user prompt
+    threading.Thread(
+        target=_async_log_prompt,
+        kwargs={
+            "prompt": message,
+            "mode": mode_doc["_id"] if mode_doc else None,
+            "ip_addr": ip_addr,
+            "conversation_id": conversation_id,
+            "prompt_logs_collection": prompt_logs_collection,
+        },
+    ).start()
+
+    try:
+        user_id = request.user.get("sub", "anonymous")
+        gpt_text, response_id, usage = conversation_service.respond(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            text=message,
+            mode=mode,
+            tag=tag,
+            previous_response_id=previous_response_id or None,
+            file_ids=openai_file_ids,
+        )
+
+        # Log the AI response
+        threading.Thread(
+            target=_async_log_prompt,
+            kwargs={
+                "response": gpt_text,
+                "mode": mode_doc["_id"] if mode_doc else None,
+                "ip_addr": ip_addr,
+                "conversation_id": conversation_id,
+                "response_id": response_id,
+                "prompt_logs_collection": prompt_logs_collection,
+            },
+        ).start()
+
+        # Store uploaded files with the conversation for future use
+        if openai_file_ids:
+            conversation_service.store_conversation_files(conversation_id, openai_file_ids)
+
+        return {
+            "response": gpt_text,
+            "conversation_id": conversation_id,
+            "response_id": response_id,
+            "usage": usage,
+            "mode": mode,
+            "tag": tag,
+        }
+    except Exception as err:  # noqa: BLE001
+        print("Error getting AI response:", err)
+        return {"error": "There was an error getting a response. Please try again."}, 500
+
+
 @routes.get("/admin")
 def admin_page():
     return send_from_directory(routes.static_folder, "admin.html")
