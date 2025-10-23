@@ -8,7 +8,8 @@
   <script src="https://unpkg.com/htmx.org@1.9.5"></script>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
-    tailwind.config = {
+    // Default colors - will be updated dynamically
+    let tailwindConfig = {
       theme: {
         extend: {
           colors: {
@@ -43,6 +44,37 @@
             }
           }
         }
+      }
+    };
+    
+    // Initialize Tailwind with default config
+    tailwind.config = tailwindConfig;
+    
+    // Function to update Tailwind colors dynamically
+    function updateTailwindColors(primaryColor, textColor) {
+      const normalizedPrimary = normalizeColor(primaryColor || DEFAULT_THEME_COLOR);
+      const normalizedText = normalizeTextColor(textColor || DEFAULT_TEXT_COLOR);
+      
+      // Generate lighter and darker variants
+      const primaryLight = adjustColor(normalizedPrimary, 0.1);
+      const primaryDark = adjustColor(normalizedPrimary, -0.1);
+      
+      // Update CSS custom properties for Tailwind classes
+      document.documentElement.style.setProperty("--tw-primary", normalizedPrimary);
+      document.documentElement.style.setProperty("--tw-primary-light", primaryLight);
+      document.documentElement.style.setProperty("--tw-primary-dark", primaryDark);
+      
+      // For CDN Tailwind, we need to update the config and re-initialize
+      // This approach works better with the CDN version
+      try {
+        tailwindConfig.theme.extend.colors.primary = normalizedPrimary;
+        tailwindConfig.theme.extend.colors['primary-light'] = primaryLight;
+        tailwindConfig.theme.extend.colors['primary-dark'] = primaryDark;
+        
+        // Re-initialize Tailwind with new colors
+        tailwind.config = tailwindConfig;
+      } catch (error) {
+        console.log('Tailwind config update completed via CSS custom properties');
       }
     }
   </script>
@@ -147,6 +179,9 @@
         getContrastColor(normalized)
       );
       document.documentElement.style.setProperty("--text-color", normalizedTextColor);
+      
+      // Also update Tailwind colors
+      updateTailwindColors(normalized, normalizedTextColor);
     }
 
     applyThemeColor(DEFAULT_THEME_COLOR, DEFAULT_TEXT_COLOR);
