@@ -134,13 +134,13 @@ class ConversationService:
         priority_source = mode_doc.get("priority_source", "sites") if mode_doc else "sites"
         has_files = mode_doc.get("has_files", False) if mode_doc else False
         tags = mode_doc.get("tags", []) if mode_doc else []
-        database_config = mode_doc.get("database") if mode_doc else None
+        province = mode_doc.get("province", "British Columbia") if mode_doc else "British Columbia"
 
         tools: List[Dict] = []
         data_sources: List[Dict[str, Any]] = []
         interest = mode_doc.get("title", "general BCCA information") if mode_doc else "general BCCA information"
         gpt_system_prompt = (
-            "You're a helpful, warm assistant supporting users with information about the British Columbia construction industry. "
+            f"You're a helpful, warm assistant supporting users with information about the {province} construction industry. "
             f"The user is interested in {interest}. {mode_context}. "
         )
         if self.vector_store_id and mode and has_files and mode != "permitsca":
