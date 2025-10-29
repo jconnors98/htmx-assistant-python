@@ -2,6 +2,7 @@ import os
 import re
 import io
 import json
+import secrets
 from functools import wraps
 from flask import Flask, Blueprint, request, send_from_directory
 from markdown import markdown
@@ -43,6 +44,7 @@ modes_collection = db.get_collection("modes")
 documents_collection = db.get_collection("documents")
 prompt_logs_collection = db.get_collection("prompt_logs")
 superadmins_collection = db.get_collection("superadmins")
+reset_tokens_collection = db.get_collection("password_reset_tokens")
 
 conversation_service = ConversationService(
     db,
@@ -51,8 +53,6 @@ conversation_service = ConversationService(
     VECTOR_STORE_ID,
 )
 
-print("Connected to MongoDB at", config("MONGO_URI"))
-
 localDevMode = config("LOCAL_DEV_MODE", default="false").lower()
 
 AWS_ACCESS_KEY_ID = config("AWS_ACCESS_KEY_ID", default=None)
@@ -60,6 +60,7 @@ AWS_SECRET_ACCESS_KEY = config("AWS_SECRET_ACCESS_KEY", default=None)
 COGNITO_REGION = config("COGNITO_REGION", default=None)
 COGNITO_USER_POOL_ID = config("COGNITO_USER_POOL_ID", default=None)
 COGNITO_APP_CLIENT_ID = config("COGNITO_APP_CLIENT_ID", default=None)
+SES_SENDER_EMAIL = config("SES_SENDER_EMAIL", default=None)
 
 DEFAULT_MODE_COLOR = "#82002d"
 DEFAULT_TEXT_COLOR = "#ffffff"
@@ -67,6 +68,12 @@ DEFAULT_TEXT_COLOR = "#ffffff"
 S3_BUCKET = config("S3_BUCKET", default="builders-copilot")
 s3 = boto3.client(
     "s3",
+    aws_access_key_id=AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+    region_name=COGNITO_REGION
+)
+ses = boto3.client(
+    "ses",
     aws_access_key_id=AWS_ACCESS_KEY_ID,
     aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
     region_name=COGNITO_REGION
@@ -108,6 +115,191 @@ def cognito_auth_required(fn):
     return wrapper
 
 
+def _generate_password_reset_email_html(reset_link, token_expiry_minutes=15):
+    """Generate HTML email template for password reset."""
+    html_body = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            body {{
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+                line-height: 1.6;
+                color: #333;
+                background-color: #f5f5f5;
+                margin: 0;
+                padding: 0;
+            }}
+            .container {{
+                max-width: 600px;
+                margin: 40px auto;
+                background-color: #ffffff;
+                border-radius: 12px;
+                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+                overflow: hidden;
+            }}
+            .header {{
+                background: linear-gradient(135deg, #82002d 0%, #a0003f 100%);
+                color: #ffffff;
+                padding: 40px 20px;
+                text-align: center;
+            }}
+            .header h1 {{
+                margin: 0;
+                font-size: 28px;
+                font-weight: 600;
+            }}
+            .content {{
+                padding: 40px 30px;
+            }}
+            .content p {{
+                margin: 0 0 20px 0;
+                font-size: 16px;
+            }}
+            .button {{
+                display: inline-block;
+                background: linear-gradient(135deg, #82002d 0%, #a0003f 100%);
+                color: #ffffff !important;
+                text-decoration: none;
+                padding: 16px 32px;
+                border-radius: 8px;
+                font-weight: 600;
+                font-size: 16px;
+                margin: 20px 0;
+                box-shadow: 0 4px 6px rgba(130, 0, 45, 0.2);
+            }}
+            .button:hover {{
+                background: linear-gradient(135deg, #6b0024 0%, #82002d 100%);
+            }}
+            .footer {{
+                background-color: #f8fafc;
+                padding: 30px;
+                text-align: center;
+                font-size: 14px;
+                color: #666;
+                border-top: 1px solid #e2e8f0;
+            }}
+            .expiry-notice {{
+                background-color: #fff8e1;
+                border-left: 4px solid #ffc107;
+                padding: 15px;
+                margin: 20px 0;
+                border-radius: 4px;
+            }}
+            .security-notice {{
+                background-color: #e3f2fd;
+                border-left: 4px solid #2196f3;
+                padding: 15px;
+                margin: 20px 0;
+                border-radius: 4px;
+            }}
+            .link-alternative {{
+                background-color: #f5f5f5;
+                padding: 15px;
+                border-radius: 8px;
+                margin: 20px 0;
+                word-break: break-all;
+                font-size: 12px;
+                color: #666;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>🔐 Password Reset Request</h1>
+            </div>
+            <div class="content">
+                <p>Hello,</p>
+                <p>We received a request to reset your password. Click the button below to create a new password:</p>
+                
+                <center>
+                    <a href="{reset_link}" class="button">Reset Your Password</a>
+                </center>
+                
+                <div class="expiry-notice">
+                    <strong>⏰ Important:</strong> This link will expire in {token_expiry_minutes} minutes for security reasons.
+                </div>
+                
+                <div class="security-notice">
+                    <strong>🛡️ Security Note:</strong> If you didn't request this password reset, you can safely ignore this email. Your account remains secure.
+                </div>
+                
+                <p style="margin-top: 30px; font-size: 14px; color: #666;">
+                    If the button above doesn't work, copy and paste this link into your browser:
+                </p>
+                <div class="link-alternative">
+                    {reset_link}
+                </div>
+            </div>
+            <div class="footer">
+                <p>This is an automated message, please do not reply to this email.</p>
+                <p>&copy; {datetime.now().year} Builder's Copilot. All rights reserved.</p>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    return html_body
+
+
+def _generate_password_reset_email_text(reset_link, token_expiry_minutes=15):
+    """Generate plain text email for password reset."""
+    text_body = f"""
+Password Reset Request
+
+We received a request to reset your password.
+
+Click the link below to create a new password:
+{reset_link}
+
+This link will expire in {token_expiry_minutes} minutes for security reasons.
+
+If you didn't request this password reset, you can safely ignore this email. Your account remains secure.
+
+---
+This is an automated message, please do not reply to this email.
+© {datetime.now().year} Builder's Copilot. All rights reserved.
+    """
+    return text_body
+
+
+def _send_password_reset_email(to_email, reset_link, token_expiry_minutes=15):
+    """Send password reset email via AWS SES."""
+    if not SES_SENDER_EMAIL:
+        raise ValueError("SES_SENDER_EMAIL not configured")
+    
+    html_body = _generate_password_reset_email_html(reset_link, token_expiry_minutes)
+    text_body = _generate_password_reset_email_text(reset_link, token_expiry_minutes)
+    
+    response = ses.send_email(
+        Source=SES_SENDER_EMAIL,
+        Destination={
+            'ToAddresses': [to_email]
+        },
+        Message={
+            'Subject': {
+                'Data': 'Password Reset Request',
+                'Charset': 'UTF-8'
+            },
+            'Body': {
+                'Text': {
+                    'Data': text_body,
+                    'Charset': 'UTF-8'
+                },
+                'Html': {
+                    'Data': html_body,
+                    'Charset': 'UTF-8'
+                }
+            }
+        }
+    )
+    
+    return response
+
+
 routes = Blueprint("routes", __name__, static_folder='public', static_url_path='')
 
 @routes.after_request
@@ -116,6 +308,13 @@ def add_security_headers(response):
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["Content-Security-Policy"] = "frame-ancestors *"
     return response
+
+# @auth_bp.after_request
+# def add_security_headers_auth(response):
+#     response.headers["X-Content-Type-Options"] = "nosniff"
+#     response.headers["Referrer-Policy"] = "no-referrer"
+#     response.headers["Content-Security-Policy"] = "frame-ancestors *"
+#     return response
 
 @routes.post("/upload-files")
 def upload_files():
@@ -428,6 +627,174 @@ def admin_login():
         "access_token": auth.get("AccessToken"),
         "refresh_token": auth.get("RefreshToken"),
     }
+
+@routes.get("/admin/reset")
+def reset_password_page():
+    # Check if there's a token parameter - if so, show the token-based reset page
+    token = request.args.get("token")
+    if token:
+        return send_from_directory(routes.static_folder, "reset_password.html")
+    # Otherwise, show the forgot password page
+    return send_from_directory(routes.static_folder, "forgot_password.html")
+
+
+@routes.post("/admin/reset/initiate")
+def admin_forgot_password_initiate():
+    """Initiate password reset by generating a token and sending reset link via SES."""
+    data = request.get_json() or {}
+    username = data.get("username")
+    if not username:
+        return {"error": "Username is required"}, 400
+    if not (COGNITO_REGION and COGNITO_APP_CLIENT_ID and COGNITO_USER_POOL_ID):
+        print("Cognito not configured")
+        return {"error": "Cognito not configured"}, 500
+    if not SES_SENDER_EMAIL:
+        print("SES not configured")
+        return {"error": "SES not configured"}, 500
+    
+    cognito = boto3.client("cognito-idp", region_name=COGNITO_REGION)
+    
+    try:
+        # Check if user exists in Cognito and get their email
+        try:
+            user_response = cognito.admin_get_user(
+                UserPoolId=COGNITO_USER_POOL_ID,
+                Username=username
+            )
+            # Extract email from user attributes
+            email = None
+            for attr in user_response.get('UserAttributes', []):
+                if attr['Name'] == 'email':
+                    email = attr['Value']
+                    break
+            
+            if not email:
+                print(f"No email found for user: {username}")
+                user_exists = False
+            else:
+                user_exists = True
+        except cognito.exceptions.UserNotFoundException:
+            # User doesn't exist, but we'll still return success (security best practice)
+            user_exists = False
+            print(f"Password reset requested for non-existent user: {username}")
+        
+        if user_exists:
+            # Generate secure token
+            token = secrets.token_urlsafe(32)
+            
+            # Calculate expiration (15 minutes)
+            created_at = datetime.utcnow()
+            expires_at = created_at + timedelta(minutes=15)
+            
+            # Store token in MongoDB
+            reset_tokens_collection.insert_one({
+                'token': token,
+                'email': email,
+                'username': username,
+                'created_at': created_at,
+                'expires_at': expires_at,
+                'used': False
+            })
+            
+            # Create indexes if they don't exist
+            try:
+                reset_tokens_collection.create_index('token', unique=True)
+                reset_tokens_collection.create_index('expires_at', expireAfterSeconds=0)
+            except Exception:  # noqa: BLE001
+                # Indexes might already exist
+                print("Failed to create indexes")
+                pass
+            
+            # Generate reset link
+            base_url = request.host_url.rstrip('/')
+            if localDevMode == "true":
+                reset_link = f"{base_url}/flask/admin/reset?token={token}"
+            else:
+                reset_link = f"{base_url}/admin/reset?token={token}"
+            
+            # Send email via SES
+            try:
+                response = _send_password_reset_email(email, reset_link, token_expiry_minutes=15)
+                print(f"Password reset email sent successfully to {email}")
+                print(f"SES MessageId: {response['MessageId']}")
+            except Exception as e:  # noqa: BLE001
+                print(f"Failed to send password reset email to {email}: {e}")
+                # Still return success to avoid information leakage
+        
+        # Always return success (don't reveal if user exists or not)
+        return {"status": "success"}, 200
+        
+    except Exception as e:  # noqa: BLE001
+        print(f"Password reset initiation failed: {e}")
+        # Still return success to avoid information leakage
+        return {"status": "success"}, 200
+
+
+@routes.post("/admin/reset/token")
+def admin_reset_password_with_token():
+    """Reset password using a token sent via email (Lambda-generated)."""
+    data = request.get_json() or {}
+    token = data.get("token")
+    new_password = data.get("new_password")
+    
+    if not token or not new_password:
+        return {"error": "Token and new password are required"}, 400
+    if not (COGNITO_REGION and COGNITO_APP_CLIENT_ID and COGNITO_USER_POOL_ID):
+        return {"error": "Cognito not configured"}, 500
+    
+    try:
+        # Find and validate token in MongoDB
+        token_doc = reset_tokens_collection.find_one({"token": token, "used": False})
+        
+        if not token_doc:
+            return {"error": "Invalid or expired reset token"}, 400
+        
+        # Check if token has expired
+        if datetime.utcnow() > token_doc["expires_at"]:
+            return {"error": "Reset token has expired. Please request a new one."}, 400
+        
+        # Get user email from token
+        user_email = token_doc.get("email")
+        print("user_email", user_email)
+        username = token_doc.get("username")
+        print("username", username)
+        
+        if not user_email or not username:
+            return {"error": "Invalid token data"}, 400
+        
+        # Use Cognito admin API to set the new password
+        cognito = boto3.client("cognito-idp", region_name=COGNITO_REGION)
+        
+        try:
+            # Set password permanently (user is verified)
+            cognito.admin_set_user_password(
+                UserPoolId=COGNITO_USER_POOL_ID,
+                Username=username,
+                Password=new_password,
+                Permanent=True
+            )
+            print("cognito admin_set_user_password successful")
+        except cognito.exceptions.InvalidPasswordException as e:
+            error_message = str(e)
+            return {"error": f"Invalid password: {error_message}"}, 400
+        except cognito.exceptions.UserNotFoundException:
+            return {"error": "User not found"}, 404
+        except Exception as e:  # noqa: BLE001
+            print(f"Cognito admin_set_user_password failed: {e}")
+            return {"error": "Failed to reset password. Please try again."}, 500
+        
+        # Mark token as used
+        reset_tokens_collection.update_one(
+            {"_id": token_doc["_id"]},
+            {"$set": {"used": True, "used_at": datetime.utcnow()}}
+        )
+        
+        print(f"Password reset successful for user: {user_email}")
+        return {"status": "success", "message": "Password reset successful"}, 200
+        
+    except Exception as e:  # noqa: BLE001
+        print(f"Token-based password reset failed: {e}")
+        return {"error": "Password reset failed. Please try again."}, 500
 
 
 @routes.post("/api/refresh-token")
@@ -986,4 +1353,5 @@ else:
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "3000"))
+    print(f"Starting server on port {port}")
     app.run(port=port)
