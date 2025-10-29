@@ -609,7 +609,7 @@ def admin_login():
         return {"error": "Username and password required"}, 400
     if not (COGNITO_REGION and COGNITO_APP_CLIENT_ID):
         return {"error": "Cognito not configured"}, 500
-    cognito = boto3.client("cognito-idp", region_name=COGNITO_REGION)
+    cognito = boto3.client("cognito-idp", region_name=COGNITO_REGION, aws_access_key_id=AWS_ACCESS_KEY_ID, aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
     try:
         resp = cognito.initiate_auth(
             AuthFlow="USER_PASSWORD_AUTH",
@@ -617,11 +617,14 @@ def admin_login():
             ClientId=COGNITO_APP_CLIENT_ID,
         )
     except cognito.exceptions.NotAuthorizedException:
+        cognito.close()
         return {"error": "Invalid credentials"}, 401
     except Exception as e:  # noqa: BLE001
         print("cognito login failed", e)
+        cognito.close()
         return {"error": "Login failed"}, 500
     auth = resp.get("AuthenticationResult", {})
+    cognito.close()
     return {
         "id_token": auth.get("IdToken"),
         "access_token": auth.get("AccessToken"),
@@ -652,7 +655,7 @@ def admin_forgot_password_initiate():
         print("SES not configured")
         return {"error": "SES not configured"}, 500
     
-    cognito = boto3.client("cognito-idp", region_name=COGNITO_REGION)
+    cognito = boto3.client("cognito-idp", region_name=COGNITO_REGION, aws_access_key_id=AWS_ACCESS_KEY_ID, aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
     
     try:
         # Check if user exists in Cognito and get their email
@@ -722,10 +725,12 @@ def admin_forgot_password_initiate():
                 # Still return success to avoid information leakage
         
         # Always return success (don't reveal if user exists or not)
+        cognito.close()
         return {"status": "success"}, 200
         
     except Exception as e:  # noqa: BLE001
         print(f"Password reset initiation failed: {e}")
+        cognito.close()
         # Still return success to avoid information leakage
         return {"status": "success"}, 200
 
@@ -763,7 +768,7 @@ def admin_reset_password_with_token():
             return {"error": "Invalid token data"}, 400
         
         # Use Cognito admin API to set the new password
-        cognito = boto3.client("cognito-idp", region_name=COGNITO_REGION)
+        cognito = boto3.client("cognito-idp", region_name=COGNITO_REGION, aws_access_key_id=AWS_ACCESS_KEY_ID, aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
         
         try:
             # Set password permanently (user is verified)
@@ -775,14 +780,18 @@ def admin_reset_password_with_token():
             )
             print("cognito admin_set_user_password successful")
         except cognito.exceptions.InvalidPasswordException as e:
+            cognito.close()
             error_message = str(e)
             return {"error": f"Invalid password: {error_message}"}, 400
         except cognito.exceptions.UserNotFoundException:
+            cognito.close()
             return {"error": "User not found"}, 404
         except Exception as e:  # noqa: BLE001
+            cognito.close()
             print(f"Cognito admin_set_user_password failed: {e}")
             return {"error": "Failed to reset password. Please try again."}, 500
         
+        cognito.close()
         # Mark token as used
         reset_tokens_collection.update_one(
             {"_id": token_doc["_id"]},
@@ -807,7 +816,7 @@ def refresh_token():
     if not (COGNITO_REGION and COGNITO_APP_CLIENT_ID):
         return {"error": "Cognito not configured"}, 500
     
-    cognito = boto3.client("cognito-idp", region_name=COGNITO_REGION)
+    cognito = boto3.client("cognito-idp", region_name=COGNITO_REGION, aws_access_key_id=AWS_ACCESS_KEY_ID, aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
     try:
         resp = cognito.initiate_auth(
             AuthFlow="REFRESH_TOKEN_AUTH",
@@ -815,12 +824,15 @@ def refresh_token():
             ClientId=COGNITO_APP_CLIENT_ID,
         )
     except cognito.exceptions.NotAuthorizedException:
+        cognito.close()
         return {"error": "Invalid refresh token"}, 401
     except Exception as e:  # noqa: BLE001
+        cognito.close()
         print("cognito refresh failed", e)
         return {"error": "Token refresh failed"}, 500
     
     auth = resp.get("AuthenticationResult", {})
+    cognito.close()
     return {
         "id_token": auth.get("IdToken"),
         "access_token": auth.get("AccessToken"),
