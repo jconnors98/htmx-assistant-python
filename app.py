@@ -710,10 +710,7 @@ def admin_forgot_password_initiate():
             
             # Generate reset link
             base_url = request.host_url.rstrip('/')
-            if localDevMode == "true":
-                reset_link = f"{base_url}/flask/admin/reset?token={token}"
-            else:
-                reset_link = f"{base_url}/admin/reset?token={token}"
+            reset_link = f"{base_url}/flask/admin/reset?token={token}"
             
             # Send email via SES
             try:
