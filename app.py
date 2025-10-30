@@ -1262,6 +1262,101 @@ def get_user_info():
     }
 
 
+@routes.get("/admin/superadmin/overview")
+@cognito_auth_required
+def superadmin_overview():
+    """Get overview of all admin users and their modes - superadmin only."""
+    if not request.user.get("is_super_admin"):
+        return {"error": "Unauthorized - superadmin only"}, 403
+    
+    try:
+        # Get all modes with user_id field
+        all_modes = list(modes_collection.find({"user_id": {"$exists": True}}))
+        
+        # Group modes by user_id
+        user_modes_map = {}
+        for mode in all_modes:
+            user_id = mode.get("user_id")
+            if user_id:
+                if user_id not in user_modes_map:
+                    user_modes_map[user_id] = []
+                user_modes_map[user_id].append({
+                    "_id": str(mode["_id"]),
+                    "name": mode.get("name", "Untitled"),
+                    "title": mode.get("title", mode.get("name", "Untitled")),
+                    "description": mode.get("description", "")
+                })
+        
+        # Resolve user_ids to usernames using Cognito
+        cognito = boto3.client(
+            "cognito-idp",
+            region_name=COGNITO_REGION,
+            aws_access_key_id=AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=AWS_SECRET_ACCESS_KEY
+        )
+        
+        admin_users = []
+        for user_id, modes in user_modes_map.items():
+            username = None
+            email = None
+            
+            try:
+                # Get user details from Cognito using list_users with filter
+                user_response = cognito.list_users(
+                    UserPoolId=COGNITO_USER_POOL_ID,
+                    Filter=f'sub = "{user_id}"'
+                )
+                
+                # list_users returns a list, get the first user if found
+                users = user_response.get("Users", [])
+                if users:
+                    user_data = users[0]
+                    
+                    # Extract username (Username field)
+                    username = user_data.get("Username", user_id)
+                    
+                    # Extract email from attributes
+                    for attr in user_data.get("Attributes", []):
+                        if attr["Name"] == "email":
+                            email = attr["Value"]
+                            break
+                else:
+                    print(f"User not found in Cognito: {user_id}")
+                    username = f"Unknown ({user_id[:8]}...)"
+                        
+            except Exception as e:
+                print(f"Error fetching user from Cognito: {e}")
+                username = f"Error ({user_id[:8]}...)"
+            
+            admin_users.append({
+                "user_id": user_id,
+                "username": username or user_id,
+                "email": email,
+                "mode_count": len(modes),
+                "modes": sorted(modes, key=lambda x: x["name"].lower())
+            })
+        
+        cognito.close()
+        
+        # Sort by mode count (descending) then username
+        admin_users.sort(key=lambda x: (-x["mode_count"], x["username"].lower()))
+        
+        return {
+            "total_admins": len(admin_users),
+            "total_modes": sum(user["mode_count"] for user in admin_users),
+            "admin_users": admin_users
+        }
+        
+    except Exception as e:
+        print(f"Error in superadmin_overview: {e}")
+        return {"error": "Failed to fetch admin overview"}, 500
+
+
+@routes.get("/admin/superadmin")
+def superadmin_overview_page():
+    return send_from_directory(routes.static_folder, "admin_superadmin_overview.html")
+
+
 @routes.get("/admin/documents")
 @cognito_auth_required
 def list_documents_admin():

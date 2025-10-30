@@ -63,6 +63,12 @@
           </div>
         </div>
         <div class="flex gap-3">
+          <button id="view-superadmin" class="hidden bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white px-6 py-3 rounded-xl font-medium shadow-medium hover:shadow-strong transition-all duration-200 transform hover:-translate-y-0.5 flex items-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path>
+            </svg>
+            Admin Users
+          </button>
           <button id="view-analytics" class="bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white px-6 py-3 rounded-xl font-medium shadow-medium hover:shadow-strong transition-all duration-200 transform hover:-translate-y-0.5 flex items-center gap-2">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
@@ -122,8 +128,18 @@
         if (response.ok) {
           const userInfo = await response.json();
           const viewAnalyticsBtn = document.getElementById('view-analytics');
-          if (!userInfo.is_super_admin && viewAnalyticsBtn) {
-            viewAnalyticsBtn.style.display = 'none';
+          const viewSuperadminBtn = document.getElementById('view-superadmin');
+          
+          if (!userInfo.is_super_admin) {
+            if (viewAnalyticsBtn) {
+              viewAnalyticsBtn.style.display = 'none';
+            }
+          } else {
+            // Show superadmin button for superadmins
+            if (viewSuperadminBtn) {
+              viewSuperadminBtn.classList.remove('hidden');
+              viewSuperadminBtn.style.display = 'flex';
+            }
           }
         }
       } catch (err) {
@@ -136,6 +152,9 @@
     };
     document.getElementById('view-analytics').onclick = () => {
       window.location.href = '/flask/admin/analytics';
+    };
+    document.getElementById('view-superadmin').onclick = () => {
+      window.location.href = '/flask/admin/superadmin';
     };
 
     // Check user permissions on page load
