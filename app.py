@@ -1084,37 +1084,55 @@ def admin_analytics_summary():
         )
     ]
 
-    recent_prompts = []
-    for doc in prompt_logs_collection.find(match).sort("created_at", -1).limit(20):
-        created_at = doc.get("created_at")
-        location = doc.get("location") or {}
-        mode_id = doc.get("mode")
+    # Get recent conversations (grouped by conversation_id)
+    recent_conversations = []
+    conversation_aggregation = prompt_logs_collection.aggregate([
+        {"$match": match},
+        {"$group": {
+            "_id": "$conversation_id",
+            "last_updated": {"$max": "$created_at"},
+            "first_message": {"$min": "$created_at"},
+            "message_count": {"$sum": 1},
+            "modes": {"$addToSet": "$mode"},
+            "first_prompt": {"$first": "$prompt"}
+        }},
+        {"$sort": {"last_updated": -1}},
+        {"$limit": 20}
+    ])
+    
+    for conv in conversation_aggregation:
+        conversation_id = conv.get("_id")
+        if not conversation_id:
+            continue
         
-        # Convert mode ID to mode title
-        mode_title = "Unknown"
-        if mode_id:
-            try:
-                mode_doc = modes_collection.find_one({"_id": ObjectId(mode_id)})
-                mode_title = mode_doc.get("title") or mode_doc.get("name") if mode_doc else "Unknown"
-            except Exception as e:
-                mode_title = "Unknown"
-                print(f"Error converting mode ID to title: {e}")
-        else:
-            print("Mode ID is None")
+        last_updated = conv.get("last_updated")
+        first_message = conv.get("first_message")
+        message_count = conv.get("message_count", 0)
+        mode_ids = conv.get("modes", [])
+        first_prompt = conv.get("first_prompt", "")
         
-        recent_prompts.append(
-            {
-                "prompt": doc.get("prompt", ""),
-                "response": doc.get("response", ""),
-                "mode": mode_title,
-                "created_at": _isoformat_with_z(created_at),
-                "location": {
-                    "city": location.get("city"),
-                    "region": location.get("region"),
-                    "country": location.get("country"),
-                },
-            }
-        )
+        # Convert mode IDs to mode titles
+        mode_titles = []
+        for mode_id in mode_ids:
+            if mode_id:
+                try:
+                    mode_doc = modes_collection.find_one({"_id": ObjectId(mode_id)})
+                    mode_title = mode_doc.get("title") or mode_doc.get("name") if mode_doc else "Unknown"
+                    mode_titles.append(mode_title)
+                except Exception as e:
+                    print(f"Error converting mode ID to title: {e}")
+        
+        # Get a preview of the first prompt (truncate if too long)
+        preview = first_prompt[:150] + "..." if len(first_prompt) > 150 else first_prompt
+        
+        recent_conversations.append({
+            "conversation_id": conversation_id,
+            "last_updated": _isoformat_with_z(last_updated),
+            "first_message": _isoformat_with_z(first_message),
+            "message_count": message_count,
+            "modes": mode_titles,
+            "preview": preview
+        })
 
     # Convert available mode IDs to mode titles and return both
     available_mode_ids = [m for m in prompt_logs_collection.distinct("mode") if m]
@@ -1156,7 +1174,7 @@ def admin_analytics_summary():
         "top_locations": top_locations,
         "top_cities": top_cities,
         "hourly_counts": hourly_counts,
-        "recent_prompts": recent_prompts,
+        "recent_conversations": recent_conversations,
         "available_modes": available_modes,
         "global_date_range": global_date_range,
     }
@@ -1199,6 +1217,40 @@ def admin_analytics_search():
     except Exception as e:
         print(f"Error processing natural language query: {e}")
         return {"error": "Unable to process your question. Please try rephrasing it."}, 500
+
+
+@routes.get("/admin/analytics/conversations/<conversation_id>/prompts")
+@cognito_auth_required
+def admin_analytics_conversation_prompts(conversation_id):
+    """Get all prompt logs for a specific conversation, ordered oldest first."""
+    try:
+        # Find all prompt_logs matching this conversation_id
+        prompts = []
+        for doc in prompt_logs_collection.find({"conversation_id": conversation_id}).sort("created_at", 1):
+            created_at = doc.get("created_at")
+            mode_id = doc.get("mode")
+            
+            # Convert mode ID to mode title
+            mode_title = "Unknown"
+            if mode_id:
+                try:
+                    mode_doc = modes_collection.find_one({"_id": ObjectId(mode_id)})
+                    mode_title = mode_doc.get("title") or mode_doc.get("name") if mode_doc else "Unknown"
+                except Exception as e:
+                    mode_title = "Unknown"
+                    print(f"Error converting mode ID to title: {e}")
+            
+            prompts.append({
+                "prompt": doc.get("prompt", ""),
+                "response": doc.get("response", ""),
+                "mode": mode_title,
+                "created_at": created_at.isoformat() + "Z" if created_at else None,
+            })
+        
+        return {"prompts": prompts}
+    except Exception as e:
+        print(f"Error fetching conversation prompts: {e}")
+        return {"error": "Failed to fetch conversation prompts"}, 500
 
 
 @routes.get("/admin/user")

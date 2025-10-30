@@ -51,7 +51,7 @@
       <div class="flex flex-col gap-4">
         <div>
           <h2 class="text-lg font-semibold text-[#82002d] mb-2">Ask Questions About Your Data</h2>
-          <p class="text-sm text-gray-600">Ask natural language questions about your analytics data. For example: "What are the most popular modes?" or "How many users are from Canada?"</p>
+          <p class="text-sm text-gray-600">Ask natural language questions about your analytics data. For example: "What is the most common question asked?"</p>
         </div>
         <div class="flex gap-3">
           <input 
@@ -162,10 +162,10 @@
 
       <section class="bg-white border border-[#82002d]/10 shadow rounded-lg p-6">
         <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-          <h2 class="text-lg font-semibold text-[#82002d]">Recent prompts</h2>
-          <span class="text-xs text-gray-500">Latest 20 entries matching filters</span>
+          <h2 class="text-lg font-semibold text-[#82002d]">Recent conversations</h2>
+          <span class="text-xs text-gray-500">Latest 20 conversations matching filters</span>
         </div>
-        <div id="recent-prompts" class="mt-4 grid gap-3"></div>
+        <div id="recent-conversations" class="mt-4 grid gap-3"></div>
       </section>
     </div>
   </div>
@@ -193,7 +193,7 @@
     const topCitiesContainer = document.getElementById('top-cities');
     const dailyBreakdown = document.getElementById('daily-breakdown');
     const hourlyBreakdown = document.getElementById('hourly-breakdown');
-    const recentPromptsContainer = document.getElementById('recent-prompts');
+    const recentConversationsContainer = document.getElementById('recent-conversations');
     const topModesSection = document.getElementById('top-modes-section');
     const modeContext = document.getElementById('mode-context');
     
@@ -542,83 +542,198 @@
       nlSearchContent.appendChild(errorDiv);
     }
 
-    function renderRecentPrompts(prompts) {
-      recentPromptsContainer.innerHTML = '';
-      if (!prompts || !prompts.length) {
+    function renderRecentConversations(conversations) {
+      recentConversationsContainer.innerHTML = '';
+      if (!conversations || !conversations.length) {
         const message = document.createElement('p');
         message.className = 'text-sm text-gray-500';
-        message.textContent = 'No prompts match these filters yet.';
-        recentPromptsContainer.appendChild(message);
+        message.textContent = 'No conversations match these filters yet.';
+        recentConversationsContainer.appendChild(message);
         return;
       }
-      prompts.forEach((entry) => {
+      
+      conversations.forEach((conversation) => {
         const card = document.createElement('article');
-        card.className = 'p-4 border border-gray-200 rounded-lg bg-white shadow-sm';
+        card.className = 'border border-gray-200 rounded-lg bg-white shadow-sm overflow-hidden';
+        card.dataset.conversationId = conversation.conversation_id;
 
+        // Conversation header (always visible)
         const header = document.createElement('div');
-        header.className = 'flex flex-wrap items-center justify-between gap-2 text-xs text-gray-600';
-        const modeBadge = document.createElement('span');
-        modeBadge.className = 'px-2 py-1 bg-[#82002d]/10 text-[#82002d] rounded-full font-semibold uppercase tracking-wide';
-        modeBadge.textContent = entry.mode || 'Unknown';
+        header.className = 'p-4 cursor-pointer hover:bg-gray-50 transition-colors';
+        header.onclick = () => toggleConversation(conversation.conversation_id);
+
+        const headerTop = document.createElement('div');
+        headerTop.className = 'flex flex-wrap items-center justify-between gap-2';
+        
+        const leftSection = document.createElement('div');
+        leftSection.className = 'flex items-center gap-2 flex-wrap';
+        
+        // Mode badges
+        if (conversation.modes && conversation.modes.length) {
+          conversation.modes.forEach((mode) => {
+            const modeBadge = document.createElement('span');
+            modeBadge.className = 'px-2 py-1 bg-[#82002d]/10 text-[#82002d] rounded-full font-semibold uppercase tracking-wide text-xs';
+            modeBadge.textContent = mode || 'Unknown';
+            leftSection.appendChild(modeBadge);
+          });
+        }
+        
+        // Message count badge
+        const countBadge = document.createElement('span');
+        countBadge.className = 'px-2 py-1 bg-gray-100 text-gray-700 rounded-full text-xs font-medium';
+        countBadge.textContent = `${conversation.message_count} message${conversation.message_count !== 1 ? 's' : ''}`;
+        leftSection.appendChild(countBadge);
+        
         const timeStamp = document.createElement('span');
-        timeStamp.textContent = formatDateTime(entry.created_at);
-        header.appendChild(modeBadge);
-        header.appendChild(timeStamp);
+        timeStamp.className = 'text-xs text-gray-600';
+        timeStamp.textContent = `Last: ${formatDateTime(conversation.last_updated)}`;
+        
+        headerTop.appendChild(leftSection);
+        headerTop.appendChild(timeStamp);
+        header.appendChild(headerTop);
+
+        // Preview text
+        if (conversation.preview) {
+          const preview = document.createElement('p');
+          preview.className = 'mt-2 text-sm text-gray-700 line-clamp-2';
+          preview.textContent = conversation.preview;
+          header.appendChild(preview);
+        }
+
+        // Expand indicator
+        const expandIcon = document.createElement('div');
+        expandIcon.className = 'mt-2 flex items-center gap-1 text-xs text-[#82002d] font-medium';
+        expandIcon.innerHTML = '<span class="expand-text">Click to expand conversation</span> <span class="expand-arrow">▼</span>';
+        header.appendChild(expandIcon);
+
         card.appendChild(header);
 
-        // Add prompt if available
-        if (entry.prompt) {
-          const promptBody = document.createElement('div');
-          promptBody.className = 'mt-3';
-          const promptLabel = document.createElement('p');
-          promptLabel.className = 'text-xs font-semibold text-gray-600 uppercase tracking-wide';
-          promptLabel.textContent = 'User Prompt:';
-          const promptText = document.createElement('p');
-          promptText.className = 'mt-1 text-sm text-gray-800 whitespace-pre-wrap leading-relaxed';
-          promptText.textContent = entry.prompt;
-          promptBody.appendChild(promptLabel);
-          promptBody.appendChild(promptText);
-          card.appendChild(promptBody);
-        }
+        // Conversation messages container (hidden by default)
+        const messagesContainer = document.createElement('div');
+        messagesContainer.className = 'hidden border-t border-gray-200 bg-gray-50';
+        messagesContainer.id = `conversation-messages-${conversation.conversation_id}`;
+        card.appendChild(messagesContainer);
 
-        // Add response if available
-        if (entry.response) {
-          const responseBody = document.createElement('div');
-          responseBody.className = 'mt-3';
-          const responseLabel = document.createElement('p');
-          responseLabel.className = 'text-xs font-semibold text-gray-600 uppercase tracking-wide';
-          responseLabel.textContent = 'AI Response:';
-          const responseText = document.createElement('p');
-          responseText.className = 'mt-1 text-sm text-gray-800 whitespace-pre-wrap leading-relaxed';
-          responseText.textContent = entry.response;
-          responseBody.appendChild(responseLabel);
-          responseBody.appendChild(responseText);
-          card.appendChild(responseBody);
-        }
-
-        // Show message if neither prompt nor response available
-        if (!entry.prompt && !entry.response) {
-          const body = document.createElement('p');
-          body.className = 'mt-3 text-sm text-gray-800 whitespace-pre-wrap leading-relaxed';
-          body.textContent = '(No content available)';
-          card.appendChild(body);
-        }
-
-        const locationParts = [];
-        if (entry.location) {
-          if (entry.location.city) locationParts.push(entry.location.city);
-          if (entry.location.region) locationParts.push(entry.location.region);
-          if (entry.location.country) locationParts.push(entry.location.country);
-        }
-        if (locationParts.length) {
-          const locationEl = document.createElement('p');
-          locationEl.className = 'mt-2 text-xs text-gray-500';
-          locationEl.textContent = `Location: ${locationParts.join(', ')}`;
-          card.appendChild(locationEl);
-        }
-
-        recentPromptsContainer.appendChild(card);
+        recentConversationsContainer.appendChild(card);
       });
+    }
+
+    async function toggleConversation(conversationId) {
+      const messagesContainer = document.getElementById(`conversation-messages-${conversationId}`);
+      const card = document.querySelector(`[data-conversation-id="${conversationId}"]`);
+      const expandIcon = card.querySelector('.expand-arrow');
+      const expandText = card.querySelector('.expand-text');
+      
+      if (messagesContainer.classList.contains('hidden')) {
+        // Expand: load messages if not already loaded
+        if (!messagesContainer.dataset.loaded) {
+          messagesContainer.innerHTML = '<div class="p-4 text-center text-sm text-gray-500">Loading messages...</div>';
+          
+          try {
+            const response = await fetch(`/flask/admin/analytics/conversations/${conversationId}/prompts`, {
+              headers: { Authorization: `Bearer ${idToken}` },
+            });
+            
+            if (response.status === 401) {
+              localStorage.removeItem('idToken');
+              window.location.href = '/flask/admin/login';
+              return;
+            }
+            
+            if (!response.ok) {
+              throw new Error('Failed to load conversation');
+            }
+            
+            const data = await response.json();
+            renderConversationMessages(messagesContainer, data.prompts);
+            messagesContainer.dataset.loaded = 'true';
+          } catch (error) {
+            console.error('Error loading conversation:', error);
+            messagesContainer.innerHTML = '<div class="p-4 text-center text-sm text-red-600">Failed to load conversation messages.</div>';
+          }
+        }
+        
+        messagesContainer.classList.remove('hidden');
+        expandIcon.textContent = '▲';
+        expandText.textContent = 'Click to collapse conversation';
+      } else {
+        // Collapse
+        messagesContainer.classList.add('hidden');
+        expandIcon.textContent = '▼';
+        expandText.textContent = 'Click to expand conversation';
+      }
+    }
+
+    function renderConversationMessages(container, prompts) {
+      container.innerHTML = '';
+      
+      if (!prompts || !prompts.length) {
+        container.innerHTML = '<div class="p-4 text-center text-sm text-gray-500">No messages found in this conversation.</div>';
+        return;
+      }
+      
+      const messagesWrapper = document.createElement('div');
+      messagesWrapper.className = 'p-4 space-y-4';
+      
+      prompts.forEach((message) => {
+        // User prompt
+        if (message.prompt) {
+          const promptDiv = document.createElement('div');
+          promptDiv.className = 'bg-white p-3 rounded-lg border border-gray-200';
+          
+          const promptLabel = document.createElement('div');
+          promptLabel.className = 'flex items-center justify-between mb-2';
+          
+          const labelText = document.createElement('span');
+          labelText.className = 'text-xs font-semibold text-gray-600 uppercase tracking-wide';
+          labelText.textContent = 'User Prompt';
+          
+          const timestamp = document.createElement('span');
+          timestamp.className = 'text-xs text-gray-500';
+          timestamp.textContent = formatDateTime(message.created_at);
+          
+          promptLabel.appendChild(labelText);
+          promptLabel.appendChild(timestamp);
+          
+          const promptText = document.createElement('p');
+          promptText.className = 'text-sm text-gray-800 whitespace-pre-wrap leading-relaxed';
+          promptText.textContent = message.prompt;
+          
+          promptDiv.appendChild(promptLabel);
+          promptDiv.appendChild(promptText);
+          messagesWrapper.appendChild(promptDiv);
+        }
+        
+        // AI response
+        if (message.response) {
+          const responseDiv = document.createElement('div');
+          responseDiv.className = 'bg-white p-3 rounded-lg border border-[#82002d]/20';
+          
+          const responseLabel = document.createElement('div');
+          responseLabel.className = 'flex items-center justify-between mb-2';
+          
+          const labelText = document.createElement('span');
+          labelText.className = 'text-xs font-semibold text-[#82002d] uppercase tracking-wide';
+          labelText.textContent = 'AI Response';
+          
+          const timestamp = document.createElement('span');
+          timestamp.className = 'text-xs text-gray-500';
+          timestamp.textContent = formatDateTime(message.created_at);
+          
+          responseLabel.appendChild(labelText);
+          responseLabel.appendChild(timestamp);
+          
+          const responseText = document.createElement('p');
+          responseText.className = 'text-sm text-gray-800 whitespace-pre-wrap leading-relaxed';
+          responseText.textContent = message.response;
+          
+          responseDiv.appendChild(responseLabel);
+          responseDiv.appendChild(responseText);
+          messagesWrapper.appendChild(responseDiv);
+        }
+      });
+      
+      container.appendChild(messagesWrapper);
     }
 
     async function loadAnalytics(filters = {}) {
@@ -747,7 +862,7 @@
         hourlyBreakdown,
         (data.hourly_counts || []).map((item) => ({ label: formatHourLabel(item.hour), count: item.count || 0 })),
       );
-      renderRecentPrompts(data.recent_prompts || []);
+      renderRecentConversations(data.recent_conversations || []);
 
       analyticsContent.classList.remove('hidden');
       emptyState.classList.add('hidden');
