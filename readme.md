@@ -4,6 +4,62 @@ This application can be embedded on other sites. Pass a `mode` query parameter
 when loading the widget and the assistant will fetch prompts for that mode from
 MongoDB.
 
+## Embeddable Chat Widget
+
+The application includes a modern, collapsible chat widget that can be embedded on any website or platform.
+
+### Widget Features
+
+- **Compact Start**: Begins as a single search bar, expands into full chat on first interaction
+- **Fully Responsive**: Automatically adapts to mobile and desktop devices
+- **File Upload Support**: Attach files when supported by the mode
+- **Theme Customization**: Automatically matches your brand colors from mode configuration
+- **Minimizable**: Users can collapse back to search bar at any time
+- **Easy Integration**: Multiple embedding options (direct link, iframe, JavaScript)
+
+### Quick Start
+
+#### Option 1: JavaScript Widget Loader (Recommended)
+```html
+<script 
+  src="https://your-domain.com/widget-loader.js" 
+  data-mode="YOUR_MODE_ID" 
+  data-theme="#82002d"
+  data-position="bottom-right"
+></script>
+```
+
+#### Option 2: IFrame Embed
+```html
+<iframe 
+  src="https://your-domain.com/chat-widget.html?mode=YOUR_MODE_ID" 
+  style="position: fixed; bottom: 20px; right: 20px; width: 420px; height: 600px; border: none; z-index: 9999;"
+  allow="clipboard-write"
+></iframe>
+```
+
+#### Option 3: Direct Link
+```
+https://your-domain.com/chat-widget.html?mode=YOUR_MODE_ID
+```
+
+### Widget Files
+
+- **`public/chat-widget.html`** - Standalone embeddable chat widget
+- **`public/widget-loader.js`** - JavaScript loader for easy embedding
+- **`public/widget-demo.html`** - Complete documentation and examples
+- **`public/index.html`** - Full-page assistant interface
+
+### Configuration
+
+The widget automatically pulls configuration from your mode settings:
+- Primary and text colors
+- Mode title and intro text
+- File upload capabilities
+- Custom prompts
+
+For detailed embedding instructions and platform-specific examples, see `/widget-demo.html`.
+
 ## Environment
 
 Set the following variables:

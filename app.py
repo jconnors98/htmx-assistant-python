@@ -1092,7 +1092,7 @@ def admin_analytics_summary():
             "_id": "$conversation_id",
             "last_updated": {"$max": "$created_at"},
             "first_message": {"$min": "$created_at"},
-            "message_count": {"$sum": 1},
+            "message_count": {"$sum": {"$cond": [{"$ifNull": ["$prompt", False]}, 1, 0]}},
             "modes": {"$addToSet": "$mode"},
             "first_prompt": {"$first": "$prompt"}
         }},

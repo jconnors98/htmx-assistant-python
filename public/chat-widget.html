@@ -1,0 +1,1083 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Chat Widget</title>
+  <script src="https://unpkg.com/htmx.org@1.9.5"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* Widget Container Styles */
+    .widget-container {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      z-index: 9999;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+    
+    /* Collapsed State - Search Bar Only */
+    .widget-collapsed {
+      width: 380px;
+      max-width: calc(100vw - 40px);
+    }
+    
+    /* Expanded State - Full Chat */
+    .widget-expanded {
+      width: 420px;
+      max-width: calc(100vw - 40px);
+      height: 600px;
+      max-height: calc(100vh - 100px);
+      display: flex;
+      flex-direction: column;
+    }
+    
+    /* Search Bar */
+    .search-bar {
+      background: white;
+      border-radius: 24px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+      padding: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border: 2px solid var(--theme-color, #82002d);
+      transition: all 0.3s ease;
+      outline: none;
+    }
+    
+    .search-bar:focus-within {
+      box-shadow: 0 12px 32px rgba(0,0,0,0.16);
+      transform: translateY(-2px);
+    }
+    
+    .search-bar *:focus {
+      outline: none;
+    }
+    
+    /* Chat Window */
+    .chat-window {
+      background: white;
+      border-radius: 20px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      animation: slideUp 0.3s ease-out;
+      height: 100%;
+      width: 100%;
+    }
+    
+    @keyframes slideUp {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    
+    /* Chat Header */
+    .chat-header {
+      background: linear-gradient(135deg, var(--theme-color, #82002d), var(--theme-color-hover, #6b0024));
+      color: white;
+      padding: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      flex-shrink: 0;
+    }
+    
+    /* Chat Messages */
+    .chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      background: #f8fafc;
+      min-height: 0;
+    }
+    
+    .message {
+      margin-bottom: 12px;
+      display: flex;
+      gap: 8px;
+      animation: fadeIn 0.3s ease-out;
+    }
+    
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    
+    .message.user {
+      justify-content: flex-end;
+    }
+    
+    .message-bubble {
+      max-width: 75%;
+      padding: 10px 14px;
+      border-radius: 16px;
+      word-wrap: break-word;
+      line-height: 1.5;
+    }
+    
+    .message.user .message-bubble {
+      background: var(--theme-color, #82002d);
+      color: white;
+      border-bottom-right-radius: 4px;
+    }
+    
+    .message.assistant .message-bubble {
+      background: white;
+      color: #1f2937;
+      border-bottom-left-radius: 4px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    }
+    
+    /* Format assistant messages */
+    .message.assistant .message-bubble p {
+      margin: 0 0 8px 0;
+    }
+    
+    .message.assistant .message-bubble p:last-child {
+      margin-bottom: 0;
+    }
+    
+    .message.assistant .message-bubble ul,
+    .message.assistant .message-bubble ol {
+      margin: 8px 0;
+      padding-left: 20px;
+    }
+    
+    .message.assistant .message-bubble code {
+      background: #f3f4f6;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.9em;
+    }
+    
+    .message.assistant .message-bubble pre {
+      background: #1f2937;
+      color: #f3f4f6;
+      padding: 12px;
+      border-radius: 8px;
+      overflow-x: auto;
+      margin: 8px 0;
+    }
+    
+    .message.assistant .message-bubble pre code {
+      background: none;
+      color: inherit;
+      padding: 0;
+    }
+    
+    /* Thinking Animation */
+    .thinking-dots {
+      display: flex;
+      gap: 4px;
+      padding: 12px;
+    }
+    
+    .thinking-dots span {
+      width: 8px;
+      height: 8px;
+      background: #9ca3af;
+      border-radius: 50%;
+      animation: pulse 1.4s infinite;
+    }
+    
+    .thinking-dots span:nth-child(2) {
+      animation-delay: 0.2s;
+    }
+    
+    .thinking-dots span:nth-child(3) {
+      animation-delay: 0.4s;
+    }
+    
+    @keyframes pulse {
+      0%, 60%, 100% { opacity: 0.3; }
+      30% { opacity: 1; }
+    }
+    
+    /* Input Area */
+    .input-area {
+      border-top: 1px solid #e5e7eb;
+      padding: 12px;
+      background: white;
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+      flex-shrink: 0;
+      position: relative;
+    }
+    
+    .widget-input {
+      flex: 1;
+      border: 1px solid #e5e7eb;
+      border-radius: 20px;
+      padding: 10px 16px;
+      outline: none !important;
+      font-size: 14px;
+      resize: none;
+      max-height: 100px;
+      transition: border-color 0.2s;
+      font-family: inherit;
+    }
+    
+    .widget-input:focus {
+      border-color: var(--theme-color, #82002d);
+      outline: none !important;
+    }
+    
+    /* Buttons */
+    .widget-btn {
+      border: none;
+      background: var(--theme-color, #82002d);
+      color: white;
+      padding: 10px 16px;
+      border-radius: 20px;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 14px;
+      font-weight: 500;
+    }
+    
+    .widget-btn:hover:not(:disabled) {
+      background: var(--theme-color-hover, #6b0024);
+      transform: scale(1.05);
+    }
+    
+    .widget-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+    
+    .icon-btn {
+      background: transparent;
+      color: #6b7280;
+      padding: 8px;
+      border-radius: 50%;
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    
+    .icon-btn:hover:not(:disabled) {
+      background: #f3f4f6;
+      color: var(--theme-color, #82002d);
+    }
+    
+    /* Minimize Button */
+    .minimize-btn {
+      background: rgba(255,255,255,0.2);
+      border-radius: 6px;
+      padding: 4px 8px;
+      cursor: pointer;
+      transition: background 0.2s;
+      border: none;
+      color: white;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+    }
+    
+    .minimize-btn:hover {
+      background: rgba(255,255,255,0.3);
+    }
+    
+    /* Clear Button */
+    .clear-btn {
+      background: rgba(255,255,255,0.2);
+      border-radius: 6px;
+      padding: 6px 10px;
+      cursor: pointer;
+      transition: background 0.2s;
+      border: none;
+      color: white;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      margin-left: 8px;
+      margin-right: 8px;
+    }
+    
+    .clear-btn:hover {
+      background: rgba(255,255,255,0.3);
+    }
+    
+    /* File Preview */
+    .file-preview-container {
+      padding: 8px 12px;
+      background: #f3f4f6;
+      border-radius: 12px;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+    }
+    
+    .file-preview-container .file-name {
+      flex: 1;
+      color: #374151;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    
+    .file-preview-container .file-remove {
+      background: none;
+      border: none;
+      color: #ef4444;
+      cursor: pointer;
+      padding: 4px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+    }
+    
+    .file-preview-container .file-remove:hover {
+      background: #fee2e2;
+    }
+    
+    /* Upload Progress */
+    .upload-progress {
+      padding: 8px 12px;
+      background: #eff6ff;
+      border-radius: 12px;
+      margin-bottom: 8px;
+    }
+    
+    .progress-bar {
+      height: 4px;
+      background: #dbeafe;
+      border-radius: 2px;
+      overflow: hidden;
+      margin-top: 4px;
+    }
+    
+    .progress-fill {
+      height: 100%;
+      background: var(--theme-color, #82002d);
+      transition: width 0.3s ease;
+    }
+    
+    .progress-text {
+      font-size: 11px;
+      color: #3b82f6;
+      margin-top: 2px;
+    }
+    
+    /* Expand Button */
+    .expand-btn {
+      position: absolute;
+      top: -50px;
+      right: 0;
+      width: 48px;
+      height: 48px;
+      background: var(--theme-color, #82002d);
+      border: none;
+      border-radius: 50%;
+      color: white;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.3s ease;
+      font-size: 24px;
+      font-weight: bold;
+    }
+    
+    .expand-btn:hover {
+      background: var(--theme-color-hover, #6b0024);
+      transform: scale(1.1);
+    }
+    
+    .expand-btn svg {
+      width: 24px;
+      height: 24px;
+    }
+    
+    /* Hidden State */
+    .hidden {
+      display: none !important;
+    }
+    
+    /* Empty State */
+    .empty-state {
+      text-align: center;
+      padding: 40px 20px;
+      color: #9ca3af;
+    }
+    
+    .empty-state-icon {
+      font-size: 48px;
+      margin-bottom: 12px;
+    }
+    
+    .empty-state-text {
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    
+    /* Mobile Responsive */
+    @media (max-width: 480px) {
+      .widget-container {
+        bottom: 0;
+        right: 0;
+        left: 0;
+      }
+      
+      .widget-collapsed {
+        width: calc(100% - 24px);
+        max-width: calc(100% - 24px);
+        margin: 0 12px 12px;
+      }
+      
+      .widget-expanded {
+        width: 100%;
+        max-width: 100%;
+        height: 100vh;
+        max-height: 100vh;
+        border-radius: 0;
+      }
+      
+      .chat-window {
+        border-radius: 0;
+      }
+    }
+    
+    /* Scrollbar Styling */
+    .chat-messages::-webkit-scrollbar {
+      width: 6px;
+    }
+    
+    .chat-messages::-webkit-scrollbar-track {
+      background: #f1f5f9;
+    }
+    
+    .chat-messages::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 3px;
+    }
+    
+    .chat-messages::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8;
+    }
+  </style>
+</head>
+<body>
+  <div id="chat-widget" class="widget-container">
+    <!-- Collapsed State: Search Bar -->
+    <div id="collapsed-view" class="widget-collapsed" style="position: relative;">
+      <!-- Expand Button (shown after first expansion/minimize) -->
+      <button id="expand-btn" class="expand-btn hidden" title="Expand chat">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"></path>
+        </svg>
+      </button>
+      
+      <div class="search-bar">
+        <button id="attach-btn-collapsed" class="icon-btn" title="Attach files" style="display: none;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5c0-1.38 1.12-2.5 2.5-2.5s2.5 1.12 2.5 2.5v10.5c0 .55-.45 1-1 1s-1-.45-1-1V6H10v9.5c0 1.38 1.12 2.5 2.5 2.5s2.5-1.12 2.5-2.5V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z"/>
+          </svg>
+        </button>
+        
+        <input 
+          type="text" 
+          id="search-input"
+          class="widget-input" 
+          placeholder="Ask me anything..."
+          style="border: none; border-radius: 0;"
+          disabled
+        />
+        
+        <button id="send-btn-collapsed" class="widget-btn" disabled>
+          <span>Send</span>
+          <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6"></path>
+          </svg>
+        </button>
+      </div>
+    </div>
+    
+    <!-- Expanded State: Full Chat Window -->
+    <div id="expanded-view" class="widget-expanded hidden">
+      <div class="chat-window">
+        <!-- Header -->
+        <div class="chat-header">
+          <div style="flex: 1;">
+            <h3 id="widget-title" style="margin: 0; font-size: 16px; font-weight: 600;">Assistant</h3>
+            <p id="widget-subtitle" style="margin: 4px 0 0 0; font-size: 12px; opacity: 0.9;">How can I help you?</p>
+          </div>
+          <button id="clear-btn" class="clear-btn" title="Clear chat">
+            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+            </svg>
+            <span>Clear</span>
+          </button>
+          <button id="minimize-btn" class="minimize-btn" title="Minimize">
+            <svg width="16" height="16" fill="white" viewBox="0 0 24 24">
+              <path d="M19 13H5v-2h14v2z"/>
+            </svg>
+          </button>
+        </div>
+        
+        <!-- Messages -->
+        <div id="chat-messages" class="chat-messages">
+          <!-- Empty state -->
+          <div id="empty-state" class="empty-state">
+            <div class="empty-state-icon">💬</div>
+            <div class="empty-state-text">
+              <strong>Start a conversation</strong><br />
+              Type a message below to get started
+            </div>
+          </div>
+        </div>
+        
+        <!-- Input Area -->
+        <div class="input-area">
+          <!-- File previews -->
+          <div id="file-previews" style="position: absolute; bottom: 100%; left: 12px; right: 12px; margin-bottom: 8px;"></div>
+          
+          <button id="attach-btn-expanded" class="icon-btn" title="Attach files" style="display: none;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5c0-1.38 1.12-2.5 2.5-2.5s2.5 1.12 2.5 2.5v10.5c0 .55-.45 1-1 1s-1-.45-1-1V6H10v9.5c0 1.38 1.12 2.5 2.5 2.5s2.5-1.12 2.5-2.5V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z"/>
+            </svg>
+          </button>
+          
+          <textarea 
+            id="message-input" 
+            class="widget-input" 
+            placeholder="Type your message..."
+            rows="1"
+            disabled
+          ></textarea>
+          
+          <button id="send-btn-expanded" class="widget-btn" disabled>
+            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Hidden file input -->
+    <input type="file" id="file-input" style="display: none;" accept="*/*" multiple />
+  </div>
+
+  <script>
+    // Configuration
+    const urlParams = new URLSearchParams(window.location.search);
+    const mode = urlParams.get("mode");
+    const API_BASE = '/flask';
+    
+    // State
+    let isExpanded = false;
+    let hasBeenExpandedOnce = false; // Track if user has expanded at least once
+    let conversationId = '';
+    let responseId = '';
+    let allowFileUpload = false;
+    let themeColor = '#82002d';
+    let selectedFiles = [];
+    let uploadedFileIds = [];
+    let isUploading = false;
+    
+    // Elements
+    const collapsedView = document.getElementById('collapsed-view');
+    const expandedView = document.getElementById('expanded-view');
+    const searchInput = document.getElementById('search-input');
+    const messageInput = document.getElementById('message-input');
+    const chatMessages = document.getElementById('chat-messages');
+    const sendBtnCollapsed = document.getElementById('send-btn-collapsed');
+    const sendBtnExpanded = document.getElementById('send-btn-expanded');
+    const attachBtnCollapsed = document.getElementById('attach-btn-collapsed');
+    const attachBtnExpanded = document.getElementById('attach-btn-expanded');
+    const minimizeBtn = document.getElementById('minimize-btn');
+    const clearBtn = document.getElementById('clear-btn');
+    const expandBtn = document.getElementById('expand-btn');
+    const fileInput = document.getElementById('file-input');
+    const filePreviews = document.getElementById('file-previews');
+    const emptyState = document.getElementById('empty-state');
+    
+    // Initialize
+    async function init() {
+      if (!mode) {
+        searchInput.placeholder = "Mode is required in URL (add ?mode=your-mode-id)";
+        searchInput.disabled = false;
+        return;
+      }
+      
+      try {
+        const res = await fetch(`${API_BASE}/modes/${encodeURIComponent(mode)}`);
+        if (res.ok) {
+          const data = await res.json();
+          
+          // Set title and theme
+          document.getElementById('widget-title').textContent = data.title || 'Assistant';
+          document.getElementById('widget-subtitle').textContent = data.intro || 'How can I help you?';
+          document.title = data.title || 'Chat Widget';
+          
+          themeColor = data.color || '#82002d';
+          applyTheme(themeColor, data.text_color);
+          
+          // Show file upload buttons if allowed
+          allowFileUpload = data.allow_file_upload;
+          if (allowFileUpload) {
+            attachBtnCollapsed.style.display = 'flex';
+            attachBtnExpanded.style.display = 'flex';
+          }
+          
+          // Enable inputs
+          searchInput.disabled = false;
+          messageInput.disabled = false;
+          sendBtnCollapsed.disabled = false;
+          sendBtnExpanded.disabled = false;
+          searchInput.placeholder = data.intro || "Ask me anything...";
+          searchInput.focus();
+        } else {
+          searchInput.placeholder = "Failed to load mode settings";
+          searchInput.disabled = false;
+        }
+      } catch (err) {
+        console.error('Failed to load mode settings', err);
+        searchInput.placeholder = "Failed to load mode settings";
+        searchInput.disabled = false;
+      }
+    }
+    
+    // Apply theme colors
+    function applyTheme(color, textColor) {
+      const normalizedColor = color.startsWith('#') ? color : `#${color}`;
+      document.documentElement.style.setProperty('--theme-color', normalizedColor);
+      const darkerColor = adjustColor(normalizedColor, -0.1);
+      document.documentElement.style.setProperty('--theme-color-hover', darkerColor);
+    }
+    
+    function adjustColor(hex, factor) {
+      const normalized = hex.startsWith('#') ? hex.substring(1) : hex;
+      const num = parseInt(normalized, 16);
+      const clamp = (value) => Math.max(0, Math.min(255, value));
+      const r = clamp(((num >> 16) & 0xff) + Math.round(255 * factor));
+      const g = clamp(((num >> 8) & 0xff) + Math.round(255 * factor));
+      const b = clamp((num & 0xff) + Math.round(255 * factor));
+      return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+    }
+    
+    // Expand widget
+    function expandWidget() {
+      isExpanded = true;
+      hasBeenExpandedOnce = true;
+      collapsedView.classList.add('hidden');
+      expandedView.classList.remove('hidden');
+      
+      // Hide the expand button when expanded
+      if (expandBtn) {
+        expandBtn.classList.add('hidden');
+      }
+      
+      messageInput.focus();
+    }
+    
+    // Collapse widget
+    function collapseWidget() {
+      isExpanded = false;
+      expandedView.classList.add('hidden');
+      collapsedView.classList.remove('hidden');
+      
+      // Show the expand button after first collapse (user now knows they can expand)
+      if (hasBeenExpandedOnce && expandBtn) {
+        expandBtn.classList.remove('hidden');
+      }
+      
+      searchInput.focus();
+    }
+    
+    // Clear chat
+    function clearChat() {
+      // Clear messages
+      chatMessages.innerHTML = '';
+      
+      // Show empty state
+      const emptyStateEl = document.createElement('div');
+      emptyStateEl.id = 'empty-state';
+      emptyStateEl.className = 'empty-state';
+      emptyStateEl.innerHTML = `
+        <div class="empty-state-icon">💬</div>
+        <div class="empty-state-text">
+          <strong>Start a conversation</strong><br />
+          Type a message below to get started
+        </div>
+      `;
+      chatMessages.appendChild(emptyStateEl);
+      
+      // Clear conversation
+      if (conversationId) {
+        fetch(`${API_BASE}/clear-conversation`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: `conversation_id=${encodeURIComponent(conversationId)}`
+        }).catch(error => {
+          console.error('Failed to clear conversation:', error);
+        });
+      }
+      
+      // Reset state
+      conversationId = '';
+      responseId = '';
+      clearFiles();
+    }
+    
+    // Send message
+    async function sendMessage(text) {
+      if (!text.trim()) return;
+      if (isUploading) {
+        alert('Please wait for file upload to complete');
+        return;
+      }
+      
+      // Expand if not expanded
+      if (!isExpanded) {
+        expandWidget();
+      }
+      
+      // Remove empty state if present
+      const emptyStateEl = document.getElementById('empty-state');
+      if (emptyStateEl) {
+        emptyStateEl.remove();
+      }
+      
+      // Upload files first if needed
+      if (selectedFiles.length > 0 && uploadedFileIds.length === 0) {
+        try {
+          await uploadFiles();
+        } catch (error) {
+          console.error('Upload failed:', error);
+          alert('File upload failed. Please try again.');
+          return;
+        }
+      }
+      
+      // Add user message
+      addMessage(text, 'user');
+      
+      // Show thinking indicator
+      const thinkingId = addThinkingIndicator();
+      
+      // Clear input
+      if (isExpanded) {
+        messageInput.value = '';
+        messageInput.style.height = 'auto';
+      } else {
+        searchInput.value = '';
+      }
+      
+      // Send to API
+      try {
+        const formData = new URLSearchParams();
+        formData.append('message', text);
+        formData.append('mode', mode);
+        formData.append('conversation_id', conversationId);
+        formData.append('response_id', responseId);
+        
+        // Add uploaded file IDs
+        if (uploadedFileIds.length > 0) {
+          uploadedFileIds.forEach(fileId => {
+            formData.append('uploaded_files', fileId);
+          });
+        }
+        
+        const response = await fetch(`${API_BASE}/ask`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: formData.toString()
+        });
+        
+        if (response.ok) {
+          const html = await response.text();
+          
+          // Parse response to extract conversation IDs and message
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(html, 'text/html');
+          
+          // Update conversation IDs
+          const convIdInput = doc.querySelector('input[name="conversation_id"]');
+          const respIdInput = doc.querySelector('input[name="response_id"]');
+          if (convIdInput) conversationId = convIdInput.value;
+          if (respIdInput) responseId = respIdInput.value;
+          
+          // Extract assistant message
+          const bubble = doc.querySelector('.bubble');
+          if (bubble) {
+            removeThinkingIndicator(thinkingId);
+            addMessage(bubble.innerHTML, 'assistant');
+          } else {
+            removeThinkingIndicator(thinkingId);
+            addMessage('No response received.', 'assistant');
+          }
+        } else {
+          removeThinkingIndicator(thinkingId);
+          addMessage('Sorry, there was an error processing your request.', 'assistant');
+        }
+      } catch (err) {
+        console.error('Failed to send message', err);
+        removeThinkingIndicator(thinkingId);
+        addMessage('Sorry, there was an error processing your request.', 'assistant');
+      } finally {
+        // Clear files after sending
+        clearFiles();
+      }
+    }
+    
+    // Add message to chat
+    function addMessage(text, type) {
+      const messageDiv = document.createElement('div');
+      messageDiv.className = `message ${type}`;
+      
+      const bubble = document.createElement('div');
+      bubble.className = 'message-bubble';
+      bubble.innerHTML = text;
+      
+      messageDiv.appendChild(bubble);
+      chatMessages.appendChild(messageDiv);
+      
+      // Scroll behavior based on message type
+      if (type === 'assistant') {
+        // Scroll to the top of the AI response
+        setTimeout(() => {
+          const messageTop = messageDiv.offsetTop - chatMessages.offsetTop;
+          chatMessages.scrollTop = messageTop;
+        }, 10);
+      } else {
+        // For user messages, scroll to bottom
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+      }
+    }
+    
+    // Add thinking indicator
+    function addThinkingIndicator() {
+      const id = 'thinking-' + Date.now();
+      const messageDiv = document.createElement('div');
+      messageDiv.className = 'message assistant';
+      messageDiv.id = id;
+      
+      const bubble = document.createElement('div');
+      bubble.className = 'message-bubble';
+      
+      const thinking = document.createElement('div');
+      thinking.className = 'thinking-dots';
+      thinking.innerHTML = '<span></span><span></span><span></span>';
+      
+      bubble.appendChild(thinking);
+      messageDiv.appendChild(bubble);
+      chatMessages.appendChild(messageDiv);
+      
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+      
+      return id;
+    }
+    
+    // Remove thinking indicator
+    function removeThinkingIndicator(id) {
+      const el = document.getElementById(id);
+      if (el) el.remove();
+    }
+    
+    // File handling
+    function handleFileSelect(e) {
+      const files = Array.from(e.target.files || []);
+      if (files.length === 0) return;
+      
+      selectedFiles = files;
+      displayFilePreviews();
+    }
+    
+    function displayFilePreviews() {
+      filePreviews.innerHTML = '';
+      
+      if (selectedFiles.length === 0) return;
+      
+      selectedFiles.forEach((file, index) => {
+        const preview = document.createElement('div');
+        preview.className = 'file-preview-container';
+        
+        const fileName = file.name.length > 30 ? file.name.substring(0, 30) + '...' : file.name;
+        
+        preview.innerHTML = `
+          <span class="file-name">📎 ${fileName}</span>
+          <button class="file-remove" onclick="removeFile(${index})" type="button">
+            <svg width="12" height="12" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+            </svg>
+          </button>
+        `;
+        
+        filePreviews.appendChild(preview);
+      });
+    }
+    
+    function removeFile(index) {
+      selectedFiles.splice(index, 1);
+      displayFilePreviews();
+      if (selectedFiles.length === 0) {
+        fileInput.value = '';
+      }
+    }
+    
+    function clearFiles() {
+      selectedFiles = [];
+      uploadedFileIds = [];
+      fileInput.value = '';
+      filePreviews.innerHTML = '';
+    }
+    
+    // Upload files
+    function uploadFiles() {
+      return new Promise((resolve, reject) => {
+        if (selectedFiles.length === 0) {
+          resolve();
+          return;
+        }
+        
+        isUploading = true;
+        
+        // Show progress
+        const progressEl = document.createElement('div');
+        progressEl.className = 'upload-progress';
+        progressEl.id = 'upload-progress';
+        progressEl.innerHTML = `
+          <div class="progress-text">Uploading files...</div>
+          <div class="progress-bar">
+            <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
+          </div>
+        `;
+        filePreviews.appendChild(progressEl);
+        
+        const formData = new FormData();
+        selectedFiles.forEach(file => {
+          formData.append('files', file);
+        });
+        
+        const xhr = new XMLHttpRequest();
+        
+        xhr.upload.addEventListener('progress', (e) => {
+          if (e.lengthComputable) {
+            const percentComplete = (e.loaded / e.total) * 100;
+            const progressFill = document.getElementById('progress-fill');
+            if (progressFill) {
+              progressFill.style.width = percentComplete + '%';
+            }
+          }
+        });
+        
+        xhr.addEventListener('load', () => {
+          const progressEl = document.getElementById('upload-progress');
+          if (progressEl) progressEl.remove();
+          
+          if (xhr.status === 200) {
+            try {
+              const response = JSON.parse(xhr.responseText);
+              uploadedFileIds = response.file_ids || [];
+              isUploading = false;
+              resolve();
+            } catch (e) {
+              isUploading = false;
+              reject(new Error('Invalid response from server'));
+            }
+          } else {
+            isUploading = false;
+            reject(new Error(`Upload failed with status: ${xhr.status}`));
+          }
+        });
+        
+        xhr.addEventListener('error', () => {
+          const progressEl = document.getElementById('upload-progress');
+          if (progressEl) progressEl.remove();
+          isUploading = false;
+          reject(new Error('Upload failed'));
+        });
+        
+        xhr.open('POST', `${API_BASE}/upload-files`);
+        xhr.send(formData);
+      });
+    }
+    
+    // Event Listeners
+    searchInput.addEventListener('input', (e) => {
+      sendBtnCollapsed.disabled = !e.target.value.trim();
+    });
+    
+    messageInput.addEventListener('input', (e) => {
+      sendBtnExpanded.disabled = !e.target.value.trim();
+      
+      // Auto-resize textarea
+      e.target.style.height = 'auto';
+      e.target.style.height = Math.min(e.target.scrollHeight, 100) + 'px';
+    });
+    
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        if (searchInput.value.trim()) {
+          sendMessage(searchInput.value);
+        }
+      }
+    });
+    
+    messageInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        if (messageInput.value.trim()) {
+          sendMessage(messageInput.value);
+        }
+      }
+    });
+    
+    sendBtnCollapsed.addEventListener('click', () => {
+      if (searchInput.value.trim()) {
+        sendMessage(searchInput.value);
+      }
+    });
+    
+    sendBtnExpanded.addEventListener('click', () => {
+      if (messageInput.value.trim()) {
+        sendMessage(messageInput.value);
+      }
+    });
+    
+    minimizeBtn.addEventListener('click', collapseWidget);
+    clearBtn.addEventListener('click', clearChat);
+    expandBtn.addEventListener('click', expandWidget);
+    
+    // File upload
+    attachBtnCollapsed.addEventListener('click', () => fileInput.click());
+    attachBtnExpanded.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', handleFileSelect);
+    
+    // Make removeFile function global
+    window.removeFile = removeFile;
+    
+    // Initialize on load
+    document.addEventListener('DOMContentLoaded', init);
+  </script>
+</body>
+</html>
+

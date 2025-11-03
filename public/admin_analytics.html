@@ -581,7 +581,7 @@
         // Message count badge
         const countBadge = document.createElement('span');
         countBadge.className = 'px-2 py-1 bg-gray-100 text-gray-700 rounded-full text-xs font-medium';
-        countBadge.textContent = `${conversation.message_count} message${conversation.message_count !== 1 ? 's' : ''}`;
+        countBadge.textContent = `${conversation.message_count} user prompt${conversation.message_count !== 1 ? 's' : ''}`;
         leftSection.appendChild(countBadge);
         
         const timeStamp = document.createElement('span');
