@@ -2,7 +2,7 @@
  * Chat Widget Loader
  * 
  * Embed this widget on any website using:
- * <script src="https://your-domain.com/widget-loader.js" 
+ * <script src="https://bcca.ai/flask/widget-loader.js" 
  *         data-mode="your-mode-id" 
  *         data-theme="#82002d"
  *         data-position="bottom-right"></script>
@@ -66,7 +66,7 @@
       height: 100%;
       border: none;
       border-radius: 24px;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+      box-shadow: none;
       background: transparent;
     `;
     iframe.allow = 'clipboard-write';
