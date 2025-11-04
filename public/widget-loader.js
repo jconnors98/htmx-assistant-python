@@ -22,7 +22,7 @@
     mode: widgetScript.getAttribute('data-mode') || '',
     theme: widgetScript.getAttribute('data-theme') || '#82002d',
     position: widgetScript.getAttribute('data-position') || 'bottom-right', // bottom-right, bottom-left, top-right, top-left
-    baseUrl: widgetScript.getAttribute('data-base-url') || window.location.origin
+    baseUrl: widgetScript.getAttribute('data-base-url') || 'https://bcca.ai/flask'
   };
   
   // Validate required config
