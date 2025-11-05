@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chat Widget - Embedding Guide</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    pre {
+      background: #1f2937;
+      color: #f3f4f6;
+      padding: 20px;
+      border-radius: 8px;
+      overflow-x: auto;
+      margin: 16px 0;
+    }
+    
+    code {
+      font-family: 'Courier New', monospace;
+      font-size: 14px;
+    }
+    
+    .feature-card {
+      background: white;
+      border-radius: 12px;
+      padding: 24px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      margin-bottom: 16px;
+    }
+    
+    .badge {
+      display: inline-block;
+      background: #82002d;
+      color: white;
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 600;
+      margin-right: 8px;
+    }
+    
+    .badge.secondary {
+      background: #3b82f6;
+    }
+  </style>
+</head>
+<body class="bg-gray-50">
+  <div class="max-w-5xl mx-auto px-4 py-12">
+    <!-- Header -->
+    <div class="text-center mb-8">
+      <h1 class="text-4xl font-bold text-gray-900 mb-4">📱 Embeddable Chat Widget</h1>
+      <p class="text-xl text-gray-600">Integrate AI-powered chat into any website or platform</p>
+    </div>
+
+    <!-- Live Demo Notice -->
+    <div class="bg-gradient-to-r from-green-50 to-blue-50 border-2 border-green-300 rounded-lg p-6 mb-8">
+      <div class="flex items-start">
+        <div class="flex-shrink-0">
+          <span class="text-3xl">🎯</span>
+        </div>
+        <div class="ml-4">
+          <h2 class="text-xl font-bold text-gray-900 mb-2">Live Demos Included!</h2>
+          <p class="text-gray-700">
+            This page includes <strong>working examples</strong> of all integration methods. 
+            Scroll down to see each method in action, including:
+          </p>
+          <ul class="mt-2 text-sm text-gray-600 space-y-1">
+            <li>✓ Direct link you can open in a new tab</li>
+            <li>✓ Live compact widget iframe embed</li>
+            <li>✓ Live full-page interface iframe embed</li>
+            <li>✓ JavaScript loader active on this page (bottom-right corner)</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Key Features -->
+    <div class="feature-card mb-8">
+      <h2 class="text-2xl font-bold text-gray-900 mb-4">✨ Key Features</h2>
+      <ul class="space-y-2 text-gray-700">
+        <li class="flex items-start">
+          <span class="text-green-500 mr-2">✓</span>
+          <span><strong>Compact Start:</strong> Begins as a single search bar, expands into full chat on interaction</span>
+        </li>
+        <li class="flex items-start">
+          <span class="text-green-500 mr-2">✓</span>
+          <span><strong>Fully Responsive:</strong> Works seamlessly on mobile and desktop devices</span>
+        </li>
+        <li class="flex items-start">
+          <span class="text-green-500 mr-2">✓</span>
+          <span><strong>File Upload Support:</strong> Attach files if supported by the mode</span>
+        </li>
+        <li class="flex items-start">
+          <span class="text-green-500 mr-2">✓</span>
+          <span><strong>Theme Customization:</strong> Matches your brand colors automatically</span>
+        </li>
+        <li class="flex items-start">
+          <span class="text-green-500 mr-2">✓</span>
+          <span><strong>Easy Integration:</strong> Multiple embedding options (iframe, JavaScript)</span>
+        </li>
+        <li class="flex items-start">
+          <span class="text-green-500 mr-2">✓</span>
+          <span><strong>Minimizable:</strong> Users can collapse back to search bar</span>
+        </li>
+      </ul>
+    </div>
+
+    <!-- Method 1: Direct Link -->
+    <div class="feature-card">
+      <div class="mb-4">
+        <span class="badge">METHOD 1</span>
+        <h2 class="text-2xl font-bold text-gray-900 inline">Direct Link</h2>
+      </div>
+      <p class="text-gray-600 mb-4">Share a direct link to the widget for standalone use:</p>
+      
+      <pre><code>https://bcca.ai/flask/chat-widget.html?mode=YOUR_MODE_ID</code></pre>
+      
+      <p class="text-sm text-gray-500 mt-2">
+        <strong>Example:</strong> 
+        <a href="https://bcca.ai/flask/chat-widget.html?mode=demo" class="text-blue-600 hover:underline" target="_blank">
+          https://bcca.ai/flask/chat-widget.html?mode=demo
+        </a>
+      </p>
+
+      <!-- Live Demo -->
+      <div class="mt-6 p-4 bg-green-50 border border-green-200 rounded-lg">
+        <h3 class="font-semibold text-gray-900 mb-3">🚀 Try It Now:</h3>
+        <a href="https://bcca.ai/flask/chat-widget.html?mode=demo" target="_blank" 
+           class="inline-block bg-green-600 hover:bg-green-700 text-white font-semibold px-6 py-3 rounded-lg transition-colors">
+          Open Widget in New Tab →
+        </a>
+        <p class="text-sm text-gray-600 mt-2">Click to see the widget in standalone mode</p>
+      </div>
+    </div>
+
+    <!-- Method 2: IFrame Embed -->
+    <div class="feature-card">
+      <div class="mb-4">
+        <span class="badge">METHOD 2</span>
+        <h2 class="text-2xl font-bold text-gray-900 inline">IFrame Embed</h2>
+      </div>
+      <p class="text-gray-600 mb-4">Embed as an iframe - works on most platforms:</p>
+      
+      <pre><code>&lt;!-- Fixed Position Widget --&gt;
+&lt;iframe 
+  src="https://bcca.ai/flask/chat-widget.html?mode=YOUR_MODE_ID" 
+  style="position: fixed; 
+         bottom: 20px; 
+         right: 20px; 
+         width: 420px; 
+         height: 600px; 
+         border: none; 
+         z-index: 9999;"
+  allow="clipboard-write"
+&gt;&lt;/iframe&gt;</code></pre>
+
+      <div class="bg-blue-50 border-l-4 border-blue-500 p-4 mt-4">
+        <p class="text-sm text-blue-900">
+          <strong>💡 Pro Tip:</strong> Adjust position (bottom, right, left, top) to place the widget where you want it.
+        </p>
+      </div>
+
+      <!-- Live Demo -->
+      <div class="mt-6 p-4 bg-green-50 border border-green-200 rounded-lg">
+        <h3 class="font-semibold text-gray-900 mb-3">🚀 Try It Now:</h3>
+        <p class="text-sm text-gray-600 mb-4">Here's a live iframe embed (scaled down for demo):</p>
+        <div class="bg-gray-100 p-4 rounded-lg" style="height: 650px; position: relative;">
+          <iframe 
+            src="https://bcca.ai/flask/chat-widget.html?mode=demo" 
+            style="position: absolute; 
+                   bottom: 20px; 
+                   right: 20px; 
+                   width: 420px; 
+                   height: 600px; 
+                   border: none; 
+                   box-shadow: none;
+                   border-radius: 8px;"
+            allow="clipboard-write"
+          ></iframe>
+        </div>
+        <p class="text-sm text-gray-600 mt-2">The widget above is embedded via iframe, just like it would appear on your site</p>
+      </div>
+    </div>
+
+    <!-- Method 2B: Full Page IFrame Embed -->
+    <div class="feature-card">
+      <div class="mb-4">
+        <span class="badge">METHOD 2B</span>
+        <h2 class="text-2xl font-bold text-gray-900 inline">Full-Page IFrame Embed</h2>
+      </div>
+      <p class="text-gray-600 mb-4">Embed the full chat interface (index.html) instead of the compact widget:</p>
+      
+      <pre><code>&lt;!-- Full-screen or custom-sized chat interface --&gt;
+&lt;iframe 
+  src="https://bcca.ai/flask/?mode=YOUR_MODE_ID" 
+  style="width: 100%; 
+         height: 600px; 
+         border: 1px solid #e5e7eb; 
+         border-radius: 8px;"
+  allow="clipboard-write"
+&gt;&lt;/iframe&gt;</code></pre>
+
+      <div class="bg-yellow-50 border-l-4 border-yellow-500 p-4 mt-4 mb-4">
+        <p class="text-sm text-yellow-900 mb-2">
+          <strong>⚖️ When to Use Each Option:</strong>
+        </p>
+        <ul class="text-sm text-yellow-800 space-y-1 ml-4">
+          <li><strong>chat-widget.html (Method 2):</strong> Use for floating widgets that start compact and expand on interaction. Best for adding chat to existing pages without disrupting content.</li>
+          <li><strong>index.html (Method 2B):</strong> Use when you want the full chat interface always visible, like a dedicated support page or embedded help section. Shows the complete interface immediately.</li>
+        </ul>
+      </div>
+
+      <h3 class="text-lg font-semibold text-gray-900 mt-6 mb-3">Common Use Cases:</h3>
+      <ul class="space-y-2 text-gray-700 text-sm">
+        <li class="flex items-start">
+          <span class="text-purple-500 mr-2">→</span>
+          <span><strong>Dedicated Support Pages:</strong> Embed on a "/support" or "/help" page for full-screen assistance</span>
+        </li>
+        <li class="flex items-start">
+          <span class="text-purple-500 mr-2">→</span>
+          <span><strong>Portal Dashboards:</strong> Include as a section within user dashboards or admin panels</span>
+        </li>
+        <li class="flex items-start">
+          <span class="text-purple-500 mr-2">→</span>
+          <span><strong>Mobile Apps:</strong> Embed in WebView components for native app integration</span>
+        </li>
+        <li class="flex items-start">
+          <span class="text-purple-500 mr-2">→</span>
+          <span><strong>Knowledge Base:</strong> Add to documentation pages for contextual help</span>
+        </li>
+      </ul>
+
+      <h3 class="text-lg font-semibold text-gray-900 mt-6 mb-3">Layout Examples:</h3>
+      
+      <div class="space-y-4">
+        <!-- Full Width Example -->
+        <div>
+          <h4 class="font-semibold text-gray-800 mb-2">Full Width Container:</h4>
+          <pre><code>&lt;!-- Takes full width of parent container --&gt;
+&lt;iframe 
+  src="https://bcca.ai/flask/?mode=YOUR_MODE_ID" 
+  style="width: 100%; 
+         height: 700px; 
+         border: none;"
+  allow="clipboard-write"
+&gt;&lt;/iframe&gt;</code></pre>
+        </div>
+
+        <!-- Sidebar Example -->
+        <div>
+          <h4 class="font-semibold text-gray-800 mb-2">Sidebar Layout:</h4>
+          <pre><code>&lt;!-- Fixed sidebar on the right --&gt;
+&lt;iframe 
+  src="https://bcca.ai/flask/?mode=YOUR_MODE_ID" 
+  style="position: fixed;
+         right: 0;
+         top: 0;
+         width: 400px;
+         height: 100vh;
+         border-left: 1px solid #e5e7eb;
+         z-index: 1000;"
+  allow="clipboard-write"
+&gt;&lt;/iframe&gt;</code></pre>
+        </div>
+
+        <!-- Modal/Popup Style -->
+        <div>
+          <h4 class="font-semibold text-gray-800 mb-2">Centered Modal Style:</h4>
+          <pre><code>&lt;!-- Centered overlay --&gt;
+&lt;div style="position: fixed; 
+            inset: 0; 
+            background: rgba(0,0,0,0.5); 
+            display: flex; 
+            align-items: center; 
+            justify-content: center;
+            z-index: 9999;"&gt;
+  &lt;iframe 
+    src="https://bcca.ai/flask/?mode=YOUR_MODE_ID" 
+    style="width: 90%;
+           max-width: 900px;
+           height: 80vh;
+           border: none;
+           border-radius: 12px;
+           box-shadow: 0 20px 60px rgba(0,0,0,0.3);"
+    allow="clipboard-write"
+  &gt;&lt;/iframe&gt;
+&lt;/div&gt;</code></pre>
+        </div>
+      </div>
+
+      <!-- Live Demo -->
+      <div class="mt-6 p-4 bg-green-50 border border-green-200 rounded-lg">
+        <h3 class="font-semibold text-gray-900 mb-3">🚀 Try It Now:</h3>
+        <p class="text-sm text-gray-600 mb-4">Here's the full interface embedded:</p>
+        <div class="bg-white p-2 rounded-lg border-2 border-gray-200">
+          <iframe 
+            src="https://bcca.ai/flask/?mode=demo" 
+            style="width: 100%; 
+                   height: 600px; 
+                   border: none;
+                   border-radius: 4px;"
+            allow="clipboard-write"
+          ></iframe>
+        </div>
+        <p class="text-sm text-gray-600 mt-2">
+          This is the full chat interface (index.html) embedded directly - notice it shows the complete UI immediately, unlike the compact widget.
+        </p>
+      </div>
+    </div>
+
+    <!-- Method 3: JavaScript Widget Loader -->
+    <div class="feature-card">
+      <div class="mb-4">
+        <span class="badge secondary">METHOD 3</span>
+        <span class="badge secondary">RECOMMENDED</span>
+        <h2 class="text-2xl font-bold text-gray-900 inline">JavaScript Widget Loader</h2>
+      </div>
+      <p class="text-gray-600 mb-4">The easiest way to embed - just add one script tag:</p>
+      
+      <pre><code>&lt;!-- Add this anywhere in your HTML, preferably before &lt;/body&gt; --&gt;
+&lt;script 
+  src="https://bcca.ai/flask/widget-loader.js" 
+  data-mode="YOUR_MODE_ID" 
+  data-theme="#82002d"
+  data-position="bottom-right"
+  data-base-url="https://bcca.ai/flask"
+&gt;&lt;/script&gt;</code></pre>
+
+      <h3 class="text-lg font-semibold text-gray-900 mt-6 mb-3">Configuration Options:</h3>
+      <table class="w-full text-sm">
+        <thead class="bg-gray-100">
+          <tr>
+            <th class="text-left p-3 font-semibold">Attribute</th>
+            <th class="text-left p-3 font-semibold">Required</th>
+            <th class="text-left p-3 font-semibold">Description</th>
+            <th class="text-left p-3 font-semibold">Default</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-200">
+          <tr>
+            <td class="p-3"><code>data-mode</code></td>
+            <td class="p-3"><span class="text-red-600 font-semibold">Yes</span></td>
+            <td class="p-3">Your assistant mode ID</td>
+            <td class="p-3 text-gray-400">-</td>
+          </tr>
+          <tr>
+            <td class="p-3"><code>data-theme</code></td>
+            <td class="p-3">No</td>
+            <td class="p-3">Primary color (hex format)</td>
+            <td class="p-3"><code>#82002d</code></td>
+          </tr>
+          <tr>
+            <td class="p-3"><code>data-position</code></td>
+            <td class="p-3">No</td>
+            <td class="p-3">Widget position on screen</td>
+            <td class="p-3"><code>bottom-right</code></td>
+          </tr>
+          <tr>
+            <td class="p-3"><code>data-base-url</code></td>
+            <td class="p-3">No</td>
+            <td class="p-3">API base URL (for custom domains)</td>
+            <td class="p-3">Current origin</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3 class="text-lg font-semibold text-gray-900 mt-6 mb-3">Position Options:</h3>
+      <ul class="grid grid-cols-2 gap-3 text-sm">
+        <li class="flex items-center">
+          <span class="w-3 h-3 bg-blue-500 rounded-full mr-2"></span>
+          <code>bottom-right</code> (default)
+        </li>
+        <li class="flex items-center">
+          <span class="w-3 h-3 bg-blue-500 rounded-full mr-2"></span>
+          <code>bottom-left</code>
+        </li>
+        <li class="flex items-center">
+          <span class="w-3 h-3 bg-blue-500 rounded-full mr-2"></span>
+          <code>top-right</code>
+        </li>
+        <li class="flex items-center">
+          <span class="w-3 h-3 bg-blue-500 rounded-full mr-2"></span>
+          <code>top-left</code>
+        </li>
+      </ul>
+
+      <!-- Live Demo -->
+      <div class="mt-6 p-4 bg-green-50 border border-green-200 rounded-lg">
+        <h3 class="font-semibold text-gray-900 mb-3">🚀 Try It Now:</h3>
+        <p class="text-sm text-gray-600 mb-3">
+          <strong>The JavaScript widget loader is active on this page!</strong><br>
+          Look for the chat widget in the bottom-right corner of your screen. It's loaded using the exact code shown above.
+        </p>
+        <div class="bg-white p-3 rounded border border-green-300">
+          <p class="text-xs text-gray-600 font-mono">
+            &lt;script src="https://bcca.ai/flask/widget-loader.js" data-mode="demo" data-theme="#82002d" data-position="bottom-right" data-base-url="https://bcca.ai/flask"&gt;&lt;/script&gt;
+          </p>
+        </div>
+        <p class="text-xs text-gray-500 mt-2">
+          ✓ This is the recommended method - it's clean, simple, and works everywhere
+        </p>
+      </div>
+    </div>
+
+    <!-- Platform-Specific Examples -->
+    <div class="feature-card">
+      <h2 class="text-2xl font-bold text-gray-900 mb-4">🌐 Platform-Specific Examples</h2>
+      
+      <div class="space-y-6">
+        <!-- WordPress -->
+        <div>
+          <h3 class="text-lg font-semibold text-gray-900 mb-2">WordPress</h3>
+          <p class="text-sm text-gray-600 mb-2">Add to your theme's footer.php or use a custom HTML widget:</p>
+          <pre><code>&lt;script 
+  src="https://bcca.ai/flask/widget-loader.js" 
+  data-mode="support" 
+  data-theme="#82002d"
+&gt;&lt;/script&gt;</code></pre>
+        </div>
+
+        <!-- Shopify -->
+        <div>
+          <h3 class="text-lg font-semibold text-gray-900 mb-2">Shopify</h3>
+          <p class="text-sm text-gray-600 mb-2">Add to theme.liquid before the closing &lt;/body&gt; tag:</p>
+          <pre><code>&lt;script 
+  src="https://bcca.ai/flask/widget-loader.js" 
+  data-mode="shopping-assistant" 
+  data-position="bottom-right"
+&gt;&lt;/script&gt;</code></pre>
+        </div>
+
+        <!-- Wix -->
+        <div>
+          <h3 class="text-lg font-semibold text-gray-900 mb-2">Wix</h3>
+          <p class="text-sm text-gray-600 mb-2">Use the "Custom Code" feature (Settings → Custom Code):</p>
+          <pre><code>&lt;script 
+  src="https://bcca.ai/flask/widget-loader.js" 
+  data-mode="help-desk"
+&gt;&lt;/script&gt;</code></pre>
+        </div>
+
+        <!-- Squarespace -->
+        <div>
+          <h3 class="text-lg font-semibold text-gray-900 mb-2">Squarespace</h3>
+          <p class="text-sm text-gray-600 mb-2">Add via Settings → Advanced → Code Injection (Footer):</p>
+          <pre><code>&lt;script 
+  src="https://bcca.ai/flask/widget-loader.js" 
+  data-mode="customer-service"
+&gt;&lt;/script&gt;</code></pre>
+        </div>
+
+        <!-- React/Next.js -->
+        <div>
+          <h3 class="text-lg font-semibold text-gray-900 mb-2">React / Next.js</h3>
+          <p class="text-sm text-gray-600 mb-2">Add to your _app.js or layout component:</p>
+          <pre><code>useEffect(() => {
+  const script = document.createElement('script');
+  script.src = 'https://bcca.ai/flask/widget-loader.js';
+  script.setAttribute('data-mode', 'support');
+  script.setAttribute('data-theme', '#82002d');
+  script.setAttribute('data-base-url', 'https://bcca.ai/flask');
+  document.body.appendChild(script);
+  
+  return () => {
+    document.body.removeChild(script);
+  };
+}, []);</code></pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- Customization -->
+    <div class="feature-card">
+      <h2 class="text-2xl font-bold text-gray-900 mb-4">🎨 Customization</h2>
+      <p class="text-gray-600 mb-4">The widget automatically inherits styles from your mode configuration:</p>
+      
+      <ul class="space-y-2 text-gray-700">
+        <li class="flex items-start">
+          <span class="text-blue-500 mr-2">•</span>
+          <span><strong>Brand Colors:</strong> Set in your mode's color configuration</span>
+        </li>
+        <li class="flex items-start">
+          <span class="text-blue-500 mr-2">•</span>
+          <span><strong>Title & Subtitle:</strong> Pulled from mode title and intro text</span>
+        </li>
+        <li class="flex items-start">
+          <span class="text-blue-500 mr-2">•</span>
+          <span><strong>File Upload:</strong> Enabled/disabled based on mode settings</span>
+        </li>
+        <li class="flex items-start">
+          <span class="text-blue-500 mr-2">•</span>
+          <span><strong>Welcome Message:</strong> Uses your mode's intro text</span>
+        </li>
+      </ul>
+    </div>
+
+    <!-- Technical Details -->
+    <div class="feature-card">
+      <h2 class="text-2xl font-bold text-gray-900 mb-4">⚙️ Technical Details</h2>
+      
+      <div class="space-y-4">
+        <div>
+          <h3 class="text-lg font-semibold text-gray-900 mb-2">Browser Compatibility</h3>
+          <p class="text-gray-600">Works on all modern browsers (Chrome, Firefox, Safari, Edge)</p>
+        </div>
+        
+        <div>
+          <h3 class="text-lg font-semibold text-gray-900 mb-2">Mobile Responsive</h3>
+          <p class="text-gray-600">Automatically adapts to mobile screens (full screen on devices under 480px width)</p>
+        </div>
+        
+        <div>
+          <h3 class="text-lg font-semibold text-gray-900 mb-2">Performance</h3>
+          <p class="text-gray-600">Lightweight (~15KB), loads asynchronously, no impact on page load speed</p>
+        </div>
+        
+        <div>
+          <h3 class="text-lg font-semibold text-gray-900 mb-2">Security</h3>
+          <p class="text-gray-600">Runs in isolated iframe context, respects CORS policies</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Support -->
+    <div class="text-center mt-12 text-gray-600">
+      <p>Need help? Contact your system administrator or check the main documentation.</p>
+    </div>
+  </div>
+
+  <!-- JavaScript Widget Loader - Live Demo (Method 3) -->
+  <script 
+    src="https://bcca.ai/flask/widget-loader.js" 
+    data-mode="demo" 
+    data-theme="#82002d"
+    data-position="bottom-right"
+    data-base-url="https://bcca.ai/flask"
+  ></script>
+</body>
+</html>
+
