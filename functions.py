@@ -411,11 +411,14 @@ def _search_permits_tool(query_text, limit=10):
 def _get_analytics_data_for_query(pipeline, match, prompt_logs_collection, modes_collection):
     """Get relevant analytics data for AI processing."""
     
+    # Create a filter for user prompts only (excludes AI responses)
+    prompt_match = {**match, "prompt": {"$exists": True}}
+    
     # Get basic counts
-    total_prompts = prompt_logs_collection.count_documents({**match, "prompt": {"$exists": True}})
+    total_prompts = prompt_logs_collection.count_documents(prompt_match)
     total_responses = prompt_logs_collection.count_documents({**match, "response": {"$exists": True}})
-    unique_conversations = len([cid for cid in prompt_logs_collection.distinct("conversation_id", match) if cid])
-    unique_users = len([ip for ip in prompt_logs_collection.distinct("ip_hash", match) if ip])
+    unique_conversations = len([cid for cid in prompt_logs_collection.distinct("conversation_id", prompt_match) if cid])
+    unique_users = len([ip for ip in prompt_logs_collection.distinct("ip_hash", prompt_match) if ip])
     
     # Get top modes
     mode_counts = [

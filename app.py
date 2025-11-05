@@ -4,7 +4,7 @@ import io
 import json
 import secrets
 from functools import wraps
-from flask import Flask, Blueprint, request, send_from_directory
+from flask import Flask, Blueprint, request, send_from_directory, Response
 from markdown import markdown
 import bleach
 from decouple import config
@@ -957,7 +957,13 @@ def admin_analytics_summary():
     if search:
         match["prompt"] = {"$regex": re.escape(search), "$options": "i"}
 
-    pipeline = [{"$match": match}] if match else []
+    # Create a separate match filter for user prompts only (excludes AI responses)
+    prompt_match = {**match, "prompt": {"$exists": True}}
+    if search:
+        # If search is specified, it already includes the prompt filter with regex
+        prompt_match["prompt"] = {"$regex": re.escape(search), "$options": "i"}
+    
+    pipeline = [{"$match": prompt_match}]
 
     def _isoformat_with_z(dt):
         if not dt:
@@ -967,14 +973,14 @@ def admin_analytics_summary():
             return iso_value
         return f"{iso_value}Z"
 
-    total_prompts = prompt_logs_collection.count_documents({**match, "prompt": {"$exists": True}})
+    total_prompts = prompt_logs_collection.count_documents(prompt_match)
     total_responses = prompt_logs_collection.count_documents({**match, "response": {"$exists": True}})
     conversation_ids = [
-        cid for cid in prompt_logs_collection.distinct("conversation_id", match) if cid
+        cid for cid in prompt_logs_collection.distinct("conversation_id", prompt_match) if cid
     ]
     unique_conversations = len(conversation_ids)
     ip_hashes = [
-        ip for ip in prompt_logs_collection.distinct("ip_hash", match) if ip
+        ip for ip in prompt_logs_collection.distinct("ip_hash", prompt_match) if ip
     ]
     unique_users = len(ip_hashes)
 
@@ -1087,12 +1093,12 @@ def admin_analytics_summary():
     # Get recent conversations (grouped by conversation_id)
     recent_conversations = []
     conversation_aggregation = prompt_logs_collection.aggregate([
-        {"$match": match},
+        {"$match": prompt_match},
         {"$group": {
             "_id": "$conversation_id",
             "last_updated": {"$max": "$created_at"},
             "first_message": {"$min": "$created_at"},
-            "message_count": {"$sum": {"$cond": [{"$ifNull": ["$prompt", False]}, 1, 0]}},
+            "message_count": {"$sum": 1},  # Already filtered to prompts only
             "modes": {"$addToSet": "$mode"},
             "first_prompt": {"$first": "$prompt"}
         }},
@@ -1208,11 +1214,17 @@ def admin_analytics_search():
     if search:
         match["prompt"] = {"$regex": re.escape(search), "$options": "i"}
 
-    pipeline = [{"$match": match}] if match else []
+    # Create a filter for user prompts only (excludes AI responses)
+    prompt_match = {**match, "prompt": {"$exists": True}}
+    if search:
+        # If search is specified, it already includes the prompt filter with regex
+        prompt_match["prompt"] = {"$regex": re.escape(search), "$options": "i"}
+    
+    pipeline = [{"$match": prompt_match}]
 
     try:
         # Use AI to interpret the query and generate appropriate analytics
-        result = _process_natural_language_query(query, pipeline, match, client, prompt_logs_collection, modes_collection)
+        result = _process_natural_language_query(query, pipeline, prompt_match, client, prompt_logs_collection, modes_collection)
         return result
     except Exception as e:
         print(f"Error processing natural language query: {e}")
@@ -1495,6 +1507,39 @@ def delete_document(doc_id):
     
     return {"status": "deleted"}
 
+
+@routes.get("/admin/documents/<doc_id>/download")
+@cognito_auth_required
+def download_document(doc_id):
+    query = {"_id": ObjectId(doc_id)}
+    if not request.user.get("is_super_admin"):
+        query["user_id"] = request.user["sub"]
+    doc = documents_collection.find_one(query)
+    if not doc:
+        return {"error": "Not found"}, 404
+    
+    s3_key = doc.get("s3_key")
+    if not s3_key:
+        return {"error": "No file associated with this document"}, 404
+    
+    try:
+        # Get the file from S3
+        response = s3.get_object(Bucket=S3_BUCKET, Key=s3_key)
+        
+        # Extract filename from s3_key (format: mode/tag/filename)
+        filename = s3_key.split('/')[-1]
+        
+        # Return the file as a downloadable response
+        return Response(
+            response['Body'].read(),
+            mimetype=response['ContentType'],
+            headers={
+                'Content-Disposition': f'attachment; filename="{filename}"'
+            }
+        )
+    except Exception as e:
+        print("s3 download failed", e)
+        return {"error": "Failed to download file"}, 500
 
 
 @routes.route("/")
