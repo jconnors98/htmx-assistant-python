@@ -6,8 +6,11 @@ Uses Playwright for dynamic content handling (accordions, tabs, etc.)
 import io
 import os
 import re
+import sys
 import time
+import tempfile
 import xml.etree.ElementTree as ET
+from contextlib import contextmanager, nullcontext
 from datetime import datetime
 from typing import Dict, List, Optional, Set, Tuple
 from urllib.parse import urljoin, urlparse, urlunparse
@@ -51,6 +54,55 @@ class ScrapingService:
         except Exception:
             pass  # Indexes may already exist
         
+    def _stderr_supports_fileno(self) -> bool:
+        """Check if sys.stderr exposes a working fileno (required by Playwright)."""
+        stderr = sys.stderr
+        if not hasattr(stderr, "fileno"):
+            return False
+        try:
+            stderr.fileno()
+            return True
+        except (OSError, ValueError):
+            return False
+    
+    @contextmanager
+    def _playwright_stderr_fallback(self):
+        """
+        Provide a real file-backed stderr when running under environments (mod_wsgi)
+        where the default log object lacks a file descriptor.
+        """
+        original_stderr = sys.stderr
+        log_path = os.getenv(
+            "PLAYWRIGHT_STDERR_FALLBACK_PATH",
+            os.path.join(tempfile.gettempdir(), "playwright-stderr.log")
+        )
+        try:
+            os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        except Exception:
+            # Directory may already exist or creation may fail (e.g., /tmp); ignore
+            pass
+        
+        fallback_file = open(log_path, "a", buffering=1)
+        sys.stderr = fallback_file
+        try:
+            yield
+        finally:
+            sys.stderr = original_stderr
+            fallback_file.close()
+    
+    def _playwright_stderr_guard(self):
+        """
+        Return a context manager that ensures Playwright can access a stderr fileno.
+        """
+        if self._stderr_supports_fileno():
+            return nullcontext()
+        return self._playwright_stderr_fallback()
+    
+    def _start_playwright(self):
+        """Start Playwright with stderr fallback handling."""
+        with self._playwright_stderr_guard():
+            return sync_playwright().start()
+        
     def scrape_url(
         self, 
         url: str, 
@@ -90,7 +142,7 @@ class ScrapingService:
                 page = context.new_page()
                 should_close_browser = False
             else:
-                p = sync_playwright().start()
+                p = self._start_playwright()
                 browser = p.chromium.launch(headless=True)
                 context = browser.new_context(
                     user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -1167,7 +1219,7 @@ class ScrapingService:
                 page = context.new_page()
                 should_close_browser = False
             else:
-                p = sync_playwright().start()
+                p = self._start_playwright()
                 browser = p.chromium.launch(headless=True)
                 context = browser.new_context(
                     user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -1313,7 +1365,7 @@ class ScrapingService:
                 page = context.new_page()
                 should_close_browser = False
             else:
-                p = sync_playwright().start()
+                p = self._start_playwright()
                 browser = p.chromium.launch(headless=True)
                 context = browser.new_context(
                     user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -2286,7 +2338,7 @@ class ScrapingService:
                 # Create a single browser instance for all pages in this site (significant performance boost)
                 print(f"Creating browser instance for scraping {len(urls_to_scrape)} pages...")
                 from playwright.sync_api import sync_playwright
-                p = sync_playwright().start()
+                p = self._start_playwright()
                 browser = p.chromium.launch(headless=True)
                 
                 scraped_count = 0
@@ -2616,7 +2668,7 @@ class ScrapingService:
         # Create a single browser instance for all verifications (significant performance boost)
         print(f"Creating browser instance for verifying {len(pending_content)} pages...")
         from playwright.sync_api import sync_playwright
-        p = sync_playwright().start()
+        p = self._start_playwright()
         browser = p.chromium.launch(headless=True)
         
         try:
