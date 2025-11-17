@@ -19,6 +19,8 @@ from datetime import datetime, timedelta
 import hashlib
 import threading
 from conversation_service import ConversationService
+from scraping_service import ScrapingService
+from scrape_scheduler import ScrapeScheduler
 from functions import (
     _get_priority_source, _get_jwks, _is_super_admin, _async_log_prompt,
     _parse_date, _normalize_color, _normalize_text_color, _process_natural_language_query,
@@ -45,12 +47,26 @@ documents_collection = db.get_collection("documents")
 prompt_logs_collection = db.get_collection("prompt_logs")
 superadmins_collection = db.get_collection("superadmins")
 reset_tokens_collection = db.get_collection("password_reset_tokens")
+scraped_content_collection = db.get_collection("scraped_content")
+scraping_jobs_collection = db.get_collection("scraping_jobs")
 
 conversation_service = ConversationService(
     db,
     modes_collection,
     client,
     VECTOR_STORE_ID,
+)
+
+scraping_service = ScrapingService(
+    client,
+    db,
+    VECTOR_STORE_ID,
+)
+
+scrape_scheduler = ScrapeScheduler(
+    scraping_service,
+    modes_collection,
+    scraping_jobs_collection,
 )
 
 localDevMode = config("LOCAL_DEV_MODE", default="false").lower()
@@ -539,6 +555,9 @@ def create_mode():
         "allow_other_sites": data.get("allow_other_sites", True),
         "allow_file_upload": data.get("allow_file_upload", False),
         "has_files": False,
+        "scrape_sites": data.get("scrape_sites", []),
+        "scrape_frequency": data.get("scrape_frequency", "manual"),
+        "has_scraped_content": False,
         "color": _normalize_color(data.get("color")),
         "text_color": _normalize_text_color(data.get("text_color")),
     }
@@ -576,6 +595,9 @@ def update_mode(mode_id):
         "allow_other_sites": data.get("allow_other_sites", doc.get("allow_other_sites", True)),
         "allow_file_upload": data.get("allow_file_upload", doc.get("allow_file_upload", False)),
         "has_files": doc.get("has_files", False),
+        "scrape_sites": data.get("scrape_sites", doc.get("scrape_sites", [])),
+        "scrape_frequency": data.get("scrape_frequency", doc.get("scrape_frequency", "manual")),
+        "has_scraped_content": doc.get("has_scraped_content", False),
         "color": _normalize_color(data.get("color", doc.get("color", DEFAULT_MODE_COLOR))),
         "text_color": _normalize_text_color(data.get("text_color", doc.get("text_color", DEFAULT_TEXT_COLOR))),
     }
@@ -593,6 +615,60 @@ def update_mode(mode_id):
     doc["color"] = _normalize_color(doc.get("color"), DEFAULT_MODE_COLOR)
     doc["text_color"] = _normalize_text_color(doc.get("text_color"), DEFAULT_TEXT_COLOR)
     return doc
+
+
+@routes.delete("/admin/modes/<mode_id>")
+@cognito_auth_required
+def delete_mode(mode_id):
+    query = {"_id": ObjectId(mode_id)}
+    if not request.user.get("is_super_admin"):
+        query["user_id"] = request.user["sub"]
+    doc = modes_collection.find_one(query)
+    if not doc:
+        return {"error": "Not found"}, 404
+    
+    mode_name = doc.get("name")
+    
+    # Delete all associated documents
+    if mode_name:
+        doc_query = {"mode": mode_name}
+        if not request.user.get("is_super_admin"):
+            doc_query["user_id"] = request.user["sub"]
+        
+        # Find and delete all documents for this mode
+        documents = list(documents_collection.find(doc_query))
+        for document in documents:
+            # Delete from S3
+            key = document.get("s3_key")
+            if key:
+                try:
+                    s3.delete_object(Bucket=S3_BUCKET, Key=key)
+                except Exception as e:  # noqa: BLE001
+                    print("s3 delete failed", e)
+            
+            # Delete from OpenAI
+            if document.get("openai_file_id"):
+                try:
+                    client.files.delete(document["openai_file_id"])
+                except Exception as e:  # noqa: BLE001
+                    print("openai file delete failed", e)
+                
+                # Delete from vector store
+                if VECTOR_STORE_ID:
+                    try:
+                        client.vector_stores.files.delete(
+                            vector_store_id=VECTOR_STORE_ID, file_id=document["openai_file_id"]
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        print("vector store delete failed", e)
+        
+        # Delete all documents from database
+        documents_collection.delete_many(doc_query)
+    
+    # Delete the mode
+    modes_collection.delete_one({"_id": doc["_id"]})
+    
+    return {"success": True, "message": "Mode and all associated documents deleted"}, 200
 
 
 @routes.get("/admin/login")
@@ -1542,6 +1618,729 @@ def download_document(doc_id):
         return {"error": "Failed to download file"}, 500
 
 
+@routes.post("/admin/scrape/trigger/<mode_id>")
+@cognito_auth_required
+def trigger_scrape(mode_id):
+    """Manually trigger scraping for a specific mode (runs in background)."""
+    query = {"_id": ObjectId(mode_id)}
+    if not request.user.get("is_super_admin"):
+        query["user_id"] = request.user["sub"]
+    
+    mode_doc = modes_collection.find_one(query)
+    if not mode_doc:
+        return {"error": "Mode not found"}, 404
+    
+    mode_name = mode_doc.get("name")
+    scrape_sites = mode_doc.get("scrape_sites", [])
+    
+    if not scrape_sites:
+        return {"error": "No sites configured for scraping"}, 400
+    
+    try:
+        # Trigger background scrape (non-blocking)
+        job_id = scrape_scheduler.trigger_background_scrape(
+            mode_name=mode_name,
+            user_id=request.user["sub"],
+            mode_id=str(mode_doc["_id"]),
+            scrape_sites=scrape_sites
+        )
+        
+        # Return immediately with job ID
+        return {
+            "status": "queued",
+            "job_id": str(job_id),
+            "mode_name": mode_name,
+            "message": "Scraping started in background. Depending on the size of the site(s), this may take several minutes to complete.",
+            "total_sites": len(scrape_sites)
+        }, 202  # 202 Accepted
+        
+    except Exception as e:
+        print(f"Error triggering scrape: {e}")
+        return {"error": "Failed to trigger scraping", "details": str(e)}, 500
+
+
+@routes.get("/admin/scrape/status/<mode_id>")
+@cognito_auth_required
+def get_scrape_status(mode_id):
+    """Get scraping status and history for a mode."""
+    query = {"_id": ObjectId(mode_id)}
+    if not request.user.get("is_super_admin"):
+        query["user_id"] = request.user["sub"]
+    
+    mode_doc = modes_collection.find_one(query)
+    if not mode_doc:
+        return {"error": "Mode not found"}, 404
+    
+    mode_name = mode_doc.get("name")
+    
+    # Get scraped content for this mode (updated for new schema with modes array)
+    content_docs = list(scraped_content_collection.find({"modes": mode_name}))
+    
+    scraped_content = []
+    for doc in content_docs:
+        scraped_content.append({
+            "_id": str(doc["_id"]),
+            "url": doc.get("original_url") or doc.get("url"),  # Support both old and new schema
+            "title": doc.get("title", "Untitled"),
+            "status": doc.get("status"),
+            "scraped_at": doc.get("scraped_at").isoformat() if doc.get("scraped_at") else None,
+            "error_message": doc.get("error_message"),
+            "word_count": doc.get("metadata", {}).get("word_count", 0)
+        })
+    
+    return {
+        "mode": mode_name,
+        "last_scraped_at": mode_doc.get("last_scraped_at").isoformat() if mode_doc.get("last_scraped_at") else None,
+        "has_scraped_content": mode_doc.get("has_scraped_content", False),
+        "scrape_frequency": mode_doc.get("scrape_frequency", "manual"),
+        "configured_sites": mode_doc.get("scrape_sites", []),
+        "scraped_content": scraped_content
+    }
+
+
+@routes.get("/admin/scrape/sites/<mode_id>")
+@cognito_auth_required
+def get_scraped_sites(mode_id):
+    """Get all scraped sites (grouped by domain) for a mode."""
+    try:
+        query = {"_id": ObjectId(mode_id)}
+        if not request.user.get("is_super_admin"):
+            query["user_id"] = request.user["sub"]
+        
+        mode_doc = modes_collection.find_one(query)
+        if not mode_doc:
+            return {"error": "Mode not found"}, 404
+        
+        mode_name = mode_doc.get("name")
+        
+        # Aggregate content by base_domain
+        pipeline = [
+            {"$match": {"modes": mode_name, "status": "active"}},
+            {"$group": {
+                "_id": "$base_domain",
+                "total_pages": {"$sum": 1},
+                "total_words": {"$sum": "$metadata.word_count"},
+                "last_scraped": {"$max": "$scraped_at"},
+                "sample_url": {"$first": "$original_url"}
+            }},
+            {"$sort": {"last_scraped": -1}}
+        ]
+        
+        sites = list(scraped_content_collection.aggregate(pipeline))
+        
+        return {
+            "sites": [{
+                "domain": site["_id"],
+                "total_pages": site["total_pages"],
+                "total_words": site["total_words"],
+                "last_scraped": site["last_scraped"].isoformat() if site.get("last_scraped") else None,
+                "sample_url": site.get("sample_url")
+            } for site in sites]
+        }
+    except Exception as e:
+        print(f"Error getting scraped sites: {e}")
+        return {"error": "Failed to get scraped sites", "details": str(e)}, 500
+
+
+@routes.delete("/admin/scrape/site/<mode_id>/<domain>")
+@cognito_auth_required
+def delete_site_content(mode_id, domain):
+    """Delete all scraped content from a specific site for a mode (runs in background)."""
+    try:
+        query = {"_id": ObjectId(mode_id)}
+        if not request.user.get("is_super_admin"):
+            query["user_id"] = request.user["sub"]
+        
+        mode_doc = modes_collection.find_one(query)
+        if not mode_doc:
+            return {"error": "Mode not found"}, 404
+        
+        mode_name = mode_doc.get("name")
+        
+        # Find all content for this domain and mode
+        content_docs = list(scraped_content_collection.find({
+            "base_domain": domain,
+            "modes": mode_name
+        }))
+        
+        if not content_docs:
+            return {"error": "No content found for this site"}, 404
+        
+        # Count what will be deleted/unlinked (for immediate response)
+        deleted_count = 0
+        unlinked_count = 0
+        content_ids = []
+        
+        for doc in content_docs:
+            modes_list = doc.get("modes", [])
+            content_ids.append(doc["_id"])
+            
+            if len(modes_list) > 1:
+                unlinked_count += 1
+            else:
+                deleted_count += 1
+        
+        # Start background deletion thread
+        def delete_in_background():
+            """Perform actual deletion in background thread."""
+            try:
+                print(f"Background deletion started for {domain} in mode {mode_name}")
+                
+                for doc_id in content_ids:
+                    doc = scraped_content_collection.find_one({"_id": doc_id})
+                    if not doc:
+                        continue
+                    
+                    modes_list = doc.get("modes", [])
+                    
+                    # If used by multiple modes, just unlink
+                    if len(modes_list) > 1:
+                        scraped_content_collection.update_one(
+                            {"_id": doc_id},
+                            {"$pull": {"modes": mode_name}}
+                        )
+                    else:
+                        # Delete from OpenAI vector store
+                        openai_file_id = doc.get("openai_file_id")
+                        if openai_file_id and VECTOR_STORE_ID:
+                            try:
+                                client.files.delete(openai_file_id)
+                                client.vector_stores.files.delete(
+                                    vector_store_id=VECTOR_STORE_ID,
+                                    file_id=openai_file_id
+                                )
+                            except Exception as e:
+                                print(f"Error deleting file {openai_file_id} from OpenAI: {e}")
+                        
+                        # Delete from MongoDB
+                        scraped_content_collection.delete_one({"_id": doc_id})
+                
+                # Update mode's has_scraped_content flag if no content remains
+                remaining_count = scraped_content_collection.count_documents({
+                    "modes": mode_name,
+                    "status": "active"
+                })
+                
+                if remaining_count == 0:
+                    modes_collection.update_one(
+                        {"name": mode_name},
+                        {"$set": {"has_scraped_content": False}}
+                    )
+                
+                print(f"Background deletion completed for {domain} in mode {mode_name}")
+                
+            except Exception as e:
+                print(f"Error in background deletion: {e}")
+        
+        # Start the background thread
+        thread = threading.Thread(
+            target=delete_in_background,
+            daemon=True,
+            name=f"DeleteSite-{domain}"
+        )
+        thread.start()
+        
+        # Return immediately with counts
+        return {
+            "status": "deleting",
+            "deleted": deleted_count,
+            "unlinked": unlinked_count,
+            "total": deleted_count + unlinked_count,
+            "message": "Deletion started in background. This may take a few minutes for large sites."
+        }, 202  # 202 Accepted
+        
+    except Exception as e:
+        print(f"Error starting site content deletion: {e}")
+        return {"error": "Failed to start deletion", "details": str(e)}, 500
+
+
+@routes.get("/admin/scrape/discovered-files/<mode_id>")
+@cognito_auth_required
+def get_discovered_files(mode_id):
+    """Get all discovered downloadable files for a mode."""
+    try:
+        query = {"_id": ObjectId(mode_id)}
+        if not request.user.get("is_super_admin"):
+            query["user_id"] = request.user["sub"]
+        
+        mode_doc = modes_collection.find_one(query)
+        if not mode_doc:
+            return {"error": "Mode not found"}, 404
+        
+        mode_name = mode_doc.get("name")
+        
+        # Get discovered files collection
+        discovered_files_collection = db.get_collection("discovered_files")
+        
+        # Find all discovered files for this mode
+        files = list(discovered_files_collection.find({
+            "mode": mode_name,
+            "status": "discovered"
+        }).sort("discovered_at", -1))
+        
+        # Convert ObjectId to string
+        for file in files:
+            file["_id"] = str(file["_id"])
+            if "discovered_at" in file:
+                file["discovered_at"] = file["discovered_at"].isoformat()
+        
+        return {
+            "files": files,
+            "total": len(files)
+        }, 200
+        
+    except Exception as e:
+        print(f"Error fetching discovered files: {e}")
+        return {"error": "Failed to fetch discovered files", "details": str(e)}, 500
+
+
+@routes.post("/admin/scrape/add-file/<mode_id>")
+@cognito_auth_required
+def add_discovered_file(mode_id):
+    """Download and add a discovered file to the mode's documents."""
+    try:
+        query = {"_id": ObjectId(mode_id)}
+        if not request.user.get("is_super_admin"):
+            query["user_id"] = request.user["sub"]
+        
+        mode_doc = modes_collection.find_one(query)
+        if not mode_doc:
+            return {"error": "Mode not found"}, 404
+        
+        mode_name = mode_doc.get("name")
+        data = request.get_json()
+        file_id = data.get("file_id")
+        tag = data.get("tag", "").strip()
+        
+        if not file_id:
+            return {"error": "file_id is required"}, 400
+        
+        # Get the discovered file record
+        discovered_files_collection = db.get_collection("discovered_files")
+        file_doc = discovered_files_collection.find_one({"_id": ObjectId(file_id)})
+        
+        if not file_doc:
+            return {"error": "File not found"}, 404
+        
+        if file_doc.get("mode") != mode_name:
+            return {"error": "File does not belong to this mode"}, 403
+        
+        # Check if already added
+        if file_doc.get("status") == "added":
+            return {"error": "File already added to mode documents"}, 400
+        
+        file_url = file_doc.get("file_url")
+        filename = file_doc.get("filename")
+        
+        # Download the file from URL
+        print(f"Downloading file from {file_url}...")
+        response = requests.get(file_url, timeout=60)
+        response.raise_for_status()
+        file_data = response.content
+        
+        # Determine content type
+        content_type = response.headers.get('Content-Type', 'application/octet-stream')
+        
+        # Upload to S3
+        s3_key = f"{mode_name}/{tag or 'untagged'}/{filename}"
+        s3.put_object(
+            Bucket=S3_BUCKET,
+            Key=s3_key,
+            Body=file_data,
+            ContentType=content_type,
+            Metadata={}
+        )
+        print(f"Uploaded to S3: {s3_key}")
+        
+        # Upload to OpenAI
+        file_stream = io.BytesIO(file_data)
+        openai_file = client.files.create(file=(filename, file_stream), purpose="assistants")
+        openai_file_id = openai_file.id
+        print(f"Uploaded to OpenAI: {openai_file_id}")
+        
+        # Add to vector store
+        if VECTOR_STORE_ID:
+            try:
+                vs_meta = {"mode": mode_name}
+                if tag:
+                    vs_meta["tag"] = tag
+                client.vector_stores.files.create(
+                    vector_store_id=VECTOR_STORE_ID,
+                    file_id=openai_file_id,
+                    attributes=vs_meta
+                )
+                print(f"Added to vector store: {VECTOR_STORE_ID}")
+            except Exception as e:
+                print(f"Vector store add failed: {e}")
+        
+        # Save to MongoDB documents collection
+        doc = {
+            "user_id": mode_doc.get("user_id"),
+            "mode": mode_name,
+            "content": "",
+            "tag": tag,
+            "s3_key": s3_key,
+            "openai_file_id": openai_file_id,
+            "always_include": False,
+            "source": "discovered",
+            "source_url": file_url,
+            "filename": filename
+        }
+        result = documents_collection.insert_one(doc)
+        print(f"Saved to MongoDB documents collection")
+        
+        # Update the discovered file status
+        discovered_files_collection.update_one(
+            {"_id": ObjectId(file_id)},
+            {
+                "$set": {
+                    "status": "added",
+                    "added_at": datetime.utcnow(),
+                    "document_id": str(result.inserted_id)
+                }
+            }
+        )
+        
+        # Update mode's has_files flag
+        modes_collection.update_one(
+            {"name": mode_name},
+            {"$set": {"has_files": True}}
+        )
+        
+        return {
+            "success": True,
+            "message": "File successfully added to mode documents",
+            "document_id": str(result.inserted_id),
+            "openai_file_id": openai_file_id
+        }, 200
+        
+    except requests.exceptions.RequestException as e:
+        print(f"Error downloading file: {e}")
+        return {"error": "Failed to download file", "details": str(e)}, 500
+    except Exception as e:
+        print(f"Error adding discovered file: {e}")
+        return {"error": "Failed to add file", "details": str(e)}, 500
+
+
+@routes.delete("/admin/scrape/discovered-file/<file_id>")
+@cognito_auth_required
+def delete_discovered_file(file_id):
+    """Delete a discovered file from the list."""
+    try:
+        # Get the discovered file
+        discovered_files_collection = db.get_collection("discovered_files")
+        file_doc = discovered_files_collection.find_one({"_id": ObjectId(file_id)})
+        
+        if not file_doc:
+            return {"error": "File not found"}, 404
+        
+        mode_name = file_doc.get("mode")
+        
+        # Verify user has access to this mode
+        if not request.user.get("is_super_admin"):
+            mode_query = {"name": mode_name, "user_id": request.user["sub"]}
+            mode_doc = modes_collection.find_one(mode_query)
+            if not mode_doc:
+                return {"error": "Access denied"}, 403
+        
+        # Delete the discovered file record
+        discovered_files_collection.delete_one({"_id": ObjectId(file_id)})
+        
+        print(f"Deleted discovered file: {file_doc.get('filename')} from mode {mode_name}")
+        
+        return {
+            "success": True,
+            "message": "File removed from discovered list"
+        }, 200
+        
+    except Exception as e:
+        print(f"Error deleting discovered file: {e}")
+        return {"error": "Failed to delete file", "details": str(e)}, 500
+
+
+@routes.get("/admin/scraped-content")
+@cognito_auth_required
+def list_scraped_content():
+    """List all scraped content, optionally filtered by mode."""
+    mode = request.args.get("mode", "").strip()
+    
+    query = {}
+    if not request.user.get("is_super_admin"):
+        query["user_id"] = request.user["sub"]
+    
+    if mode:
+        query["modes"] = mode  # Updated for new schema with modes array
+    
+    content_docs = list(scraped_content_collection.find(query))
+    
+    scraped_content = []
+    for doc in content_docs:
+        # Get modes list (support both old and new schema)
+        modes_list = doc.get("modes", [])
+        if not modes_list and doc.get("mode"):
+            modes_list = [doc.get("mode")]
+        
+        scraped_content.append({
+            "_id": str(doc["_id"]),
+            "mode": doc.get("mode") or (modes_list[0] if modes_list else None),  # Backward compat
+            "modes": modes_list,  # New field with all modes
+            "url": doc.get("original_url") or doc.get("url"),  # Support both schemas
+            "title": doc.get("title", "Untitled"),
+            "status": doc.get("status"),
+            "scraped_at": doc.get("scraped_at").isoformat() if doc.get("scraped_at") else None,
+            "error_message": doc.get("error_message"),
+            "word_count": doc.get("metadata", {}).get("word_count", 0)
+        })
+    
+    return {"scraped_content": scraped_content}
+
+
+@routes.delete("/admin/scraped-content/<content_id>")
+@cognito_auth_required
+def delete_scraped_content(content_id):
+    """Delete scraped content (runs in background)."""
+    query = {"_id": ObjectId(content_id)}
+    if not request.user.get("is_super_admin"):
+        query["user_id"] = request.user["sub"]
+    
+    doc = scraped_content_collection.find_one(query)
+    if not doc:
+        return {"error": "Content not found"}, 404
+    
+    # Start background deletion
+    def delete_in_background():
+        try:
+            scraping_service.delete_scraped_content(content_id)
+            print(f"Background deletion completed for content {content_id}")
+        except Exception as e:
+            print(f"Error in background content deletion: {e}")
+    
+    thread = threading.Thread(
+        target=delete_in_background,
+        daemon=True,
+        name=f"DeleteContent-{content_id}"
+    )
+    thread.start()
+    
+    return {
+        "status": "deleting",
+        "message": "Deletion started in background"
+    }, 202  # 202 Accepted
+
+
+@routes.post("/admin/scrape/refresh/<content_id>")
+@cognito_auth_required
+def refresh_scraped_content(content_id):
+    """Re-scrape a specific URL."""
+    query = {"_id": ObjectId(content_id)}
+    if not request.user.get("is_super_admin"):
+        query["user_id"] = request.user["sub"]
+    
+    doc = scraped_content_collection.find_one(query)
+    if not doc:
+        return {"error": "Content not found"}, 404
+    
+    # Support both old and new schema
+    url = doc.get("original_url") or doc.get("url")
+    modes_list = doc.get("modes", [])
+    mode = modes_list[0] if modes_list else doc.get("mode")
+    user_id = doc.get("user_id")
+    
+    if not url or not mode:
+        return {"error": "Invalid content document"}, 400
+    
+    try:
+        # Scrape the URL
+        content, title, error = scraping_service.scrape_url(url)
+        
+        if error:
+            # Update with error
+            scraped_content_collection.update_one(
+                {"_id": ObjectId(content_id)},
+                {
+                    "$set": {
+                        "status": "failed",
+                        "error_message": error,
+                        "scraped_at": datetime.utcnow()
+                    }
+                }
+            )
+            return {"error": error}, 400
+        
+        # Upload to vector store
+        scraped_at = datetime.utcnow()
+        
+        # Delete old file if exists
+        old_file_id = doc.get("openai_file_id")
+        if old_file_id and VECTOR_STORE_ID:
+            try:
+                client.files.delete(old_file_id)
+                client.vector_stores.files.delete(
+                    vector_store_id=VECTOR_STORE_ID,
+                    file_id=old_file_id
+                )
+            except Exception as e:
+                print(f"Error deleting old file: {e}")
+        
+        openai_file_id = scraping_service.upload_to_vector_store(
+            content, mode, url, title, scraped_at
+        )
+        
+        # Update document
+        scraped_content_collection.update_one(
+            {"_id": ObjectId(content_id)},
+            {
+                "$set": {
+                    "title": title,
+                    "content": content,
+                    "scraped_at": scraped_at,
+                    "openai_file_id": openai_file_id,
+                    "status": "active",
+                    "error_message": None,
+                    "metadata": {
+                        "word_count": len(content.split()),
+                        "char_count": len(content)
+                    }
+                }
+            }
+        )
+        
+        return {
+            "status": "success",
+            "title": title,
+            "word_count": len(content.split())
+        }, 200
+        
+    except Exception as e:
+        print(f"Error refreshing content: {e}")
+        return {"error": "Failed to refresh content", "details": str(e)}, 500
+
+
+@routes.get("/admin/scrape/job/<job_id>")
+@cognito_auth_required
+def get_scrape_job_status(job_id):
+    """Get the status of a specific scraping job."""
+    try:
+        query = {"_id": ObjectId(job_id)}
+        if not request.user.get("is_super_admin"):
+            query["user_id"] = request.user["sub"]
+        
+        job = scraping_jobs_collection.find_one(query)
+        if not job:
+            return {"error": "Job not found"}, 404
+        
+        return {
+            "_id": str(job["_id"]),
+            "mode_id": job.get("mode_id"),
+            "mode_name": job["mode_name"],
+            "status": job["status"],
+            "progress": job.get("progress", {}),
+            "result": job.get("result"),
+            "error": job.get("error"),
+            "created_at": job["created_at"].isoformat() if job.get("created_at") else None,
+            "started_at": job["started_at"].isoformat() if job.get("started_at") else None,
+            "completed_at": job["completed_at"].isoformat() if job.get("completed_at") else None
+        }
+    except Exception as e:
+        print(f"Error getting job status: {e}")
+        return {"error": "Failed to get job status", "details": str(e)}, 500
+
+
+@routes.get("/admin/scrape/jobs")
+@cognito_auth_required
+def list_scrape_jobs():
+    """List all scraping jobs for the user (recent first)."""
+    try:
+        mode_name = request.args.get("mode", "").strip()
+        
+        query = {}
+        if not request.user.get("is_super_admin"):
+            query["user_id"] = request.user["sub"]
+        
+        if mode_name:
+            query["mode_name"] = mode_name
+        
+        # Get recent jobs (last 50)
+        jobs = list(scraping_jobs_collection.find(query).sort("created_at", -1).limit(50))
+        
+        return {
+            "jobs": [{
+                "_id": str(job["_id"]),
+                "mode_id": job.get("mode_id"),
+                "mode_name": job["mode_name"],
+                "status": job["status"],
+                "progress": job.get("progress", {}),
+                "error": job.get("error"),
+                "created_at": job["created_at"].isoformat() if job.get("created_at") else None,
+                "started_at": job["started_at"].isoformat() if job.get("started_at") else None,
+                "completed_at": job["completed_at"].isoformat() if job.get("completed_at") else None
+            } for job in jobs]
+        }
+    except Exception as e:
+        print(f"Error listing jobs: {e}")
+        return {"error": "Failed to list jobs", "details": str(e)}, 500
+
+
+@routes.get("/admin/scrape/active-jobs/<mode_id>")
+@cognito_auth_required
+def get_active_scrape_jobs(mode_id):
+    """Get all active (in_progress or queued) scraping jobs for a specific mode."""
+    try:
+        # Get the mode to verify access
+        mode_query = {"_id": ObjectId(mode_id)}
+        if not request.user.get("is_super_admin"):
+            mode_query["user_id"] = request.user["sub"]
+        
+        mode = modes_collection.find_one(mode_query)
+        if not mode:
+            return {"error": "Mode not found"}, 404
+        
+        # Find all active jobs for this mode
+        query = {
+            "mode_id": mode_id,
+            "status": {"$in": ["queued", "in_progress"]}
+        }
+        if not request.user.get("is_super_admin"):
+            query["user_id"] = request.user["sub"]
+        
+        jobs = list(scraping_jobs_collection.find(query).sort("created_at", -1))
+        
+        return {
+            "jobs": [{
+                "_id": str(job["_id"]),
+                "mode_id": job.get("mode_id"),
+                "mode_name": job["mode_name"],
+                "status": job["status"],
+                "progress": job.get("progress", {}),
+                "created_at": job["created_at"].isoformat() if job.get("created_at") else None,
+                "started_at": job["started_at"].isoformat() if job.get("started_at") else None
+            } for job in jobs]
+        }
+    except Exception as e:
+        print(f"Error getting active jobs: {e}")
+        return {"error": "Failed to get active jobs", "details": str(e)}, 500
+
+
+@routes.delete("/admin/scrape/job/<job_id>")
+@cognito_auth_required
+def delete_scrape_job(job_id):
+    """Delete a scraping job record (does not stop running jobs)."""
+    try:
+        query = {"_id": ObjectId(job_id)}
+        if not request.user.get("is_super_admin"):
+            query["user_id"] = request.user["sub"]
+        
+        result = scraping_jobs_collection.delete_one(query)
+        
+        if result.deleted_count == 0:
+            return {"error": "Job not found"}, 404
+        
+        return {"status": "deleted"}, 200
+    except Exception as e:
+        print(f"Error deleting job: {e}")
+        return {"error": "Failed to delete job", "details": str(e)}, 500
+
+
 @routes.route("/")
 def index():
     return send_from_directory(routes.static_folder, "index.html")
@@ -1553,6 +2352,14 @@ else:
     app.register_blueprint(routes)
 
 if __name__ == "__main__":
+    # Start the scrape scheduler
+    scrape_scheduler.start()
+    
     port = int(os.getenv("PORT", "3000"))
     print(f"Starting server on port {port}")
-    app.run(port=port)
+    
+    try:
+        app.run(port=port)
+    finally:
+        # Stop the scheduler on shutdown
+        scrape_scheduler.stop()

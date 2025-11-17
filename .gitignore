@@ -1,2 +1,5 @@
 .env
 *.pyc
+public/widget-example.html
+/documentation
+/scraped_files

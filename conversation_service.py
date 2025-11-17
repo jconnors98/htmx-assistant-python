@@ -133,6 +133,7 @@ class ConversationService:
         allow_other_sites = mode_doc.get("allow_other_sites", True) if mode_doc else True
         priority_source = mode_doc.get("priority_source", "sites") if mode_doc else "sites"
         has_files = mode_doc.get("has_files", False) if mode_doc else False
+        has_scraped_content = mode_doc.get("has_scraped_content", False) if mode_doc else False
         tags = mode_doc.get("tags", []) if mode_doc else []
         province = mode_doc.get("province", "British Columbia") if mode_doc else "British Columbia"
 
@@ -143,7 +144,7 @@ class ConversationService:
             f"You're a helpful, warm assistant supporting users with information about the {province} construction industry. "
             f"The user is interested in {interest}. {mode_context}. "
         )
-        if self.vector_store_id and mode and has_files and mode != "permitsca":
+        if self.vector_store_id and mode and (has_files or has_scraped_content) and mode != "permitsca":
             file_search_tool: Dict = {
                 "type": "file_search",
                 "vector_store_ids": [self.vector_store_id],
@@ -177,31 +178,56 @@ class ConversationService:
                 }
             tools.append(file_search_tool)
 
-            gpt_system_prompt += "You have access to a vector store containing relevant documents. "
-            if priority_source == "files":
-                if mode_preferred_sites:
+            # Build priority instructions based on what content is available
+            if has_scraped_content and has_files:
+                gpt_system_prompt += "You have access to a vector store containing both scraped website content and uploaded documents. "
+            elif has_scraped_content:
+                gpt_system_prompt += "You have access to a vector store containing scraped website content from configured sites. "
+            elif has_files:
+                gpt_system_prompt += "You have access to a vector store containing relevant uploaded documents. "
+            
+            # Priority logic for scraped content
+            if has_scraped_content:
+                if priority_source == "files":
                     gpt_system_prompt += (
-                        "Always begin by reviewing the files in the vector store. If you cannot find a complete answer there, then search the preferred websites in order of priority. "
+                        "Always begin by consulting the scraped content and uploaded files in the vector store. "
+                        "If you cannot find a complete answer there, then perform live web searches. "
+                    )
+                elif priority_source == "sites":
+                    gpt_system_prompt += (
+                        "Always begin by consulting the scraped content in the vector store (which contains up-to-date information from configured sites). "
+                        "Only perform live web searches if the scraped content doesn't fully answer the question. "
                     )
                 else:
                     gpt_system_prompt += (
-                        "Always begin by reviewing the files in the vector store. If you still need more information, expand your search to reputable internet sources. "
+                        "Consult the scraped content and vector store first, then use live web searches if needed. "
                     )
-            elif priority_source == "sites" and mode_preferred_sites:
-                gpt_system_prompt += (
-                    "Always begin by searching the preferred websites listed below, in order. If those sites do not provide the answer, then review the files in the vector store. " 
-                )
-            else:
-                gpt_system_prompt += (
-                    "When answering, use both the vector store and the internet. "
-                )
+            elif has_files:
+                # Original file-only logic
+                if priority_source == "files":
+                    if mode_preferred_sites:
+                        gpt_system_prompt += (
+                            "Always begin by reviewing the files in the vector store. If you cannot find a complete answer there, then search the preferred websites in order of priority. "
+                        )
+                    else:
+                        gpt_system_prompt += (
+                            "Always begin by reviewing the files in the vector store. If you still need more information, expand your search to reputable internet sources. "
+                        )
+                elif priority_source == "sites" and mode_preferred_sites:
+                    gpt_system_prompt += (
+                        "Always begin by searching the preferred websites listed below, in order. If those sites do not provide the answer, then review the files in the vector store. " 
+                    )
+                else:
+                    gpt_system_prompt += (
+                        "When answering, use both the vector store and the internet. "
+                    )
             
             if mode_preferred_sites:
                 gpt_system_prompt += (
                     "When searching the internet, search the following websites, listed in order of highest priority first, using the asterisk as a match-all character: "
                     f"{', '.join(mode_preferred_sites)} "
                 )
-            gpt_system_prompt += "Do not specify the source / file name of uploaded files. "
+            gpt_system_prompt += "Do not specify the source / file name of uploaded files, or mention them in your response. "
             tools.append({"type": "web_search"})
 
         elif mode == "permitsca":
