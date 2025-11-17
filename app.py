@@ -81,6 +81,9 @@ SES_SENDER_EMAIL = config("SES_SENDER_EMAIL", default=None)
 DEFAULT_MODE_COLOR = "#82002d"
 DEFAULT_TEXT_COLOR = "#ffffff"
 
+os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/opt/bitnami/playwright-browsers")
+os.environ.setdefault("XDG_CACHE_HOME", "/opt/bitnami/playwright-cache")
+
 S3_BUCKET = config("S3_BUCKET", default="builders-copilot")
 s3 = boto3.client(
     "s3",
