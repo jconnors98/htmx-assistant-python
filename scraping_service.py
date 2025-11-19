@@ -3,21 +3,90 @@ Web scraping service for extracting content from configured websites.
 Uses Playwright for dynamic content handling (accordions, tabs, etc.)
 """
 
+import atexit
 import io
 import os
+import queue
 import re
 import sys
+import threading
 import time
 import tempfile
 import xml.etree.ElementTree as ET
+from collections import deque
 from contextlib import contextmanager, nullcontext
 from datetime import datetime
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urljoin, urlparse, urlunparse
+from decouple import config
 
 import requests
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+
+try:
+    import psutil  # Optional, used for instrumentation
+except ImportError:  # pragma: no cover
+    psutil = None
+
+
+class BrowserPool:
+    """Thread-safe pool for sharing limited Playwright browser instances."""
+
+    def __init__(self, start_playwright_fn, max_browsers: int = 2):
+        self._start_playwright_fn = start_playwright_fn
+        self._max_browsers = max(1, max_browsers)
+        self._lock = threading.Lock()
+        self._available_browsers: "queue.Queue" = queue.Queue()
+        self._playwright = None
+        self._created_browsers = 0
+
+    def _ensure_playwright(self):
+        if not self._playwright:
+            self._playwright = self._start_playwright_fn()
+
+    def acquire(self, timeout: Optional[float] = None):
+        """Acquire a browser, blocking if necessary."""
+        try:
+            browser = self._available_browsers.get_nowait()
+            if browser.is_connected():
+                return browser
+            browser.close()
+        except queue.Empty:
+            pass
+
+        with self._lock:
+            if self._created_browsers < self._max_browsers:
+                self._ensure_playwright()
+                browser = self._playwright.chromium.launch(headless=True)
+                self._created_browsers += 1
+                return browser
+
+        browser = self._available_browsers.get(timeout=timeout)
+        return browser
+
+    def release(self, browser):
+        """Return a browser to the pool."""
+        if browser and browser.is_connected():
+            self._available_browsers.put(browser)
+        else:
+            with self._lock:
+                self._created_browsers = max(0, self._created_browsers - 1)
+
+    def shutdown(self):
+        """Close all browsers and stop Playwright."""
+        while not self._available_browsers.empty():
+            try:
+                browser = self._available_browsers.get_nowait()
+                if browser and browser.is_connected():
+                    browser.close()
+            except queue.Empty:
+                break
+
+        if self._playwright:
+            self._playwright.stop()
+            self._playwright = None
+        self._created_browsers = 0
 
 
 class ScrapingService:
@@ -40,8 +109,30 @@ class ScrapingService:
         self.discovered_files_collection = mongo_db.get_collection("discovered_files")
         self.modes_collection = mongo_db.get_collection("modes")
         self.vector_store_id = vector_store_id
-        self.local_dev_mode = os.getenv("LOCAL_DEV_MODE", "false").lower() == "true"
+        self.local_dev_mode = config("LOCAL_DEV_MODE", default="false").lower() == "true"
         self.verification_scheduler = None  # Will be set by scheduler if needed
+        self._browser_pool_size = int(config("SCRAPER_BROWSER_POOL_SIZE", default="2"))
+        self._browser_pool = BrowserPool(
+            self._start_playwright,
+            max_browsers=self._browser_pool_size
+        )
+        atexit.register(self._browser_pool.shutdown)
+        self._metrics_enabled = config("SCRAPER_ENABLE_METRICS", default="true").lower() == "true"
+        self._sitemap_cache: Dict[str, Dict[str, Any]] = {}
+        self._sitemap_cache_lock = threading.Lock()
+        self._sitemap_cache_ttl = int(config("SCRAPER_SITEMAP_CACHE_SECONDS", default="3600"))
+        self._requests_timeout = int(config("SCRAPER_REQUEST_TIMEOUT_SECONDS", default="15"))
+        self._crawler_politeness_delay = float(config("SCRAPER_CRAWL_DELAY_SECONDS", default="0.3"))
+        self._max_pdf_checks_per_page = int(config("SCRAPER_MAX_PDF_CHECKS_PER_PAGE", default="50"))
+        self._http_session = requests.Session()
+        self._default_headers = {
+            "User-Agent": "Mozilla/5.0 (compatible; HTMXAssistantBot/1.0; +https://htmx-assistant)",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        }
+        self._http_session.headers.update(self._default_headers)
+        self._cached_psutil_process = psutil.Process(os.getpid()) if psutil else None
+        self._metrics_lock = threading.Lock()
+        self._active_job_metrics: Dict[str, Any] = {}
         
         # Create indexes for efficient lookups
         try:
@@ -54,6 +145,74 @@ class ScrapingService:
         except Exception:
             pass  # Indexes may already exist
         
+    def _get_memory_usage_mb(self) -> Optional[float]:
+        if not psutil or not self._cached_psutil_process:
+            return None
+        try:
+            return round(self._cached_psutil_process.memory_info().rss / (1024 * 1024), 2)
+        except Exception:
+            return None
+    
+    @contextmanager
+    def _borrow_browser(self, browser=None):
+        borrowed = None
+        try:
+            if browser:
+                yield browser
+            else:
+                borrowed = self._browser_pool.acquire()
+                yield borrowed
+        finally:
+            if borrowed:
+                self._browser_pool.release(borrowed)
+    
+    def _http_get(self, url: str, **kwargs):
+        timeout = kwargs.pop("timeout", self._requests_timeout)
+        headers = kwargs.pop("headers", None)
+        if headers:
+            merged_headers = {
+                **self._default_headers,
+                **headers
+            }
+        else:
+            merged_headers = self._default_headers
+        return self._http_session.get(url, timeout=timeout, headers=merged_headers, **kwargs)
+    
+    def _init_site_metrics(self) -> Dict[str, Any]:
+        return {
+            "started_at": datetime.utcnow(),
+            "duration_sec": 0.0,
+            "memory_start_mb": self._get_memory_usage_mb(),
+            "memory_end_mb": None,
+            "memory_diff_mb": None,
+            "pages": {
+                "count": 0,
+                "total_time_sec": 0.0,
+                "max_time_sec": 0.0,
+                "avg_time_sec": 0.0
+            }
+        }
+    
+    def _update_page_metrics(self, metrics: Dict[str, Any], duration: float):
+        page_data = metrics["pages"]
+        page_data["count"] += 1
+        page_data["total_time_sec"] += duration
+        if duration > page_data["max_time_sec"]:
+            page_data["max_time_sec"] = duration
+    
+    def _finalize_site_metrics(self, metrics: Dict[str, Any], start_time: float):
+        metrics["duration_sec"] = round(time.perf_counter() - start_time, 3)
+        page_data = metrics["pages"]
+        if page_data["count"]:
+            page_data["avg_time_sec"] = round(
+                page_data["total_time_sec"] / page_data["count"], 3
+            )
+        metrics["memory_end_mb"] = self._get_memory_usage_mb()
+        if metrics["memory_start_mb"] is not None and metrics["memory_end_mb"] is not None:
+            metrics["memory_diff_mb"] = round(
+                metrics["memory_end_mb"] - metrics["memory_start_mb"], 2
+            )
+    
     def _stderr_supports_fileno(self) -> bool:
         """Check if sys.stderr exposes a working fileno (required by Playwright)."""
         stderr = sys.stderr
@@ -72,9 +231,9 @@ class ScrapingService:
         where the default log object lacks a file descriptor.
         """
         original_stderr = sys.stderr
-        log_path = os.getenv(
+        log_path = config(
             "PLAYWRIGHT_STDERR_FALLBACK_PATH",
-            os.path.join(tempfile.gettempdir(), "playwright-stderr.log")
+            default=os.path.join(tempfile.gettempdir(), "playwright-stderr.log")
         )
         try:
             os.makedirs(os.path.dirname(log_path), exist_ok=True)
@@ -129,127 +288,71 @@ class ScrapingService:
             Tuple of (content, title, error_message, html_content, file_links)
         """
         try:
-            # Validate URL
             if not self._is_valid_url(url):
                 return "", "", f"Invalid URL: {url}", None, None
             
-            # Reuse browser if provided, otherwise create new one
-            if playwright_browser:
-                browser = playwright_browser
+            with self._borrow_browser(playwright_browser) as browser:
                 context = browser.new_context(
                     user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                 )
                 page = context.new_page()
-                should_close_browser = False
-            else:
-                p = self._start_playwright()
-                browser = p.chromium.launch(headless=True)
-                context = browser.new_context(
-                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                )
-                page = context.new_page()
-                should_close_browser = True
-            
-            try:
-                # Navigate to URL and wait for content to load
-                # Use 'domcontentloaded' for fast scraping, 'networkidle' for dynamic content
-                wait_until = "networkidle" if load_dynamic_content else "domcontentloaded"
-                page.goto(url, timeout=timeout, wait_until=wait_until)
-                
-                # IMPORTANT: Capture title immediately after navigation, before any interactions
-                # This ensures we get the original page title before any dynamic changes or navigation
-                initial_title = page.title() or "Untitled"
-                
-                pass_number = 1
-                
-                # Hybrid approach for second pass: scrape static first, then add dynamic content
-                if merge_dynamic_content:
-                    pass_number = 2
-                    print(f"PASS {pass_number} - Starting hybrid scrape (static + dynamic merge)")
+                try:
+                    wait_until = "networkidle" if load_dynamic_content else "domcontentloaded"
+                    page.goto(url, timeout=timeout, wait_until=wait_until)
+                    initial_title = page.title() or "Untitled"
+                    pass_number = 1
                     
-                    # Step 1: Get initial static content
-                    page.wait_for_timeout(500)  # Brief wait for basic content
-                    initial_html = page.content()
-                    initial_content = self._extract_clean_text(initial_html, url)
-                    initial_elements = self._get_text_elements(page)
-                    print(f"  Initial content: {len(initial_content)} chars, {len(initial_elements)} elements")
+                    if merge_dynamic_content:
+                        pass_number = 2
+                        print(f"PASS {pass_number} - Starting hybrid scrape (static + dynamic merge)")
+                        page.wait_for_timeout(500)
+                        initial_html = page.content()
+                        initial_content = self._extract_clean_text(initial_html, url)
+                        initial_elements = self._get_text_elements(page)
+                        print(f"  Initial content: {len(initial_content)} chars, {len(initial_elements)} elements")
+                        self._wait_for_dynamic_content(page)
+                        if expand_accordions:
+                            self._expand_dynamic_elements_safe(page, url)
+                        expanded_html = page.content()
+                        expanded_content = self._extract_clean_text(expanded_html, url)
+                        expanded_elements = self._get_text_elements(page)
+                        print(f"  Expanded content: {len(expanded_content)} chars, {len(expanded_elements)} elements")
+                        content = self._merge_content(initial_content, expanded_content, initial_elements, expanded_elements)
+                        html_content = expanded_html
+                        title = initial_title
+                        print(f"  Final merged content: {len(content)} chars")
+                        print(f"PASS {pass_number} TITLE: {title}")
+                    elif load_dynamic_content:
+                        pass_number = 2
+                        self._wait_for_dynamic_content(page)
+                        if expand_accordions:
+                            self._expand_dynamic_elements(page)
+                        html_content = page.content()
+                        content = self._extract_clean_text(html_content, url)
+                        title = initial_title
+                        print(f"PASS {pass_number} TITLE: {title}")
+                    else:
+                        page.wait_for_timeout(500)
+                        html_content = page.content()
+                        content = self._extract_clean_text(html_content, url)
+                        title = initial_title
+                        print(f"PASS {pass_number} TITLE: {title}")
                     
-                    # Step 2: Wait for and expand dynamic content (without navigation)
-                    self._wait_for_dynamic_content(page)
-                    if expand_accordions:
-                        self._expand_dynamic_elements_safe(page, url)
+                    print(f"PASS {pass_number} CONTENT LENGTH: {len(content)} chars")
+                    file_links = None
+                    if extract_files:
+                        file_links = self._extract_file_links(html_content, url, title, playwright_browser=browser)
                     
-                    # Step 3: Get content after expansion
-                    expanded_html = page.content()
-                    expanded_content = self._extract_clean_text(expanded_html, url)
-                    expanded_elements = self._get_text_elements(page)
-                    print(f"  Expanded content: {len(expanded_content)} chars, {len(expanded_elements)} elements")
+                    if not content or len(content.strip()) < 100:
+                        return "", title, "Insufficient content extracted (less than 100 characters)", html_content, file_links
                     
-                    # Step 4: Merge new content into original
-                    content = self._merge_content(initial_content, expanded_content, initial_elements, expanded_elements)
-                    html_content = expanded_html
-                    title = initial_title  # Use the title captured at initial page load
-                    
-                    print(f"  Final merged content: {len(content)} chars")
-                    print(f"PASS {pass_number} TITLE: {title}")
-                    
-                # Original logic for load_dynamic_content (without merge)
-                elif load_dynamic_content:
-                    pass_number = 2
-                    self._wait_for_dynamic_content(page)
-                    
-                    # Expand dynamic content if requested
-                    if expand_accordions:
-                        self._expand_dynamic_elements(page)
-                    
-                    # Get page content
-                    html_content = page.content()
-                    content = self._extract_clean_text(html_content, url)
-                    title = initial_title  # Use the title captured at initial page load
-                    print(f"PASS {pass_number} TITLE: {title}")
-                    
-                else:
-                    # Fast mode: just a brief wait to ensure basic content is loaded
-                    page.wait_for_timeout(500)
-                    html_content = page.content()
-                    content = self._extract_clean_text(html_content, url)
-                    title = initial_title  # Use the title captured at initial page load
-                    print(f"PASS {pass_number} TITLE: {title}")
-                
-                print(f"PASS {pass_number} CONTENT LENGTH: {len(content)} chars")
-                
-                # Extract file links if requested
-                file_links = None
-                if extract_files:
-                    file_links = self._extract_file_links(html_content, url, title, playwright_browser=browser)
-                
-                # Close context but keep browser if reusing
-                context.close()
-                if should_close_browser:
-                    browser.close()
-                    if 'p' in locals():
-                        p.stop()
-                
-                if not content or len(content.strip()) < 100:
-                    return "", title, "Insufficient content extracted (less than 100 characters)", html_content, file_links
-                
-                return content, title, None, html_content, file_links
-                
-            except PlaywrightTimeoutError:
-                context.close()
-                if should_close_browser:
-                    browser.close()
-                    if 'p' in locals():
-                        p.stop()
-                return "", "", f"Timeout loading page: {url}", None, None
-            except Exception as e:
-                context.close()
-                if should_close_browser:
-                    browser.close()
-                    if 'p' in locals():
-                        p.stop()
-                return "", "", f"Error loading page: {str(e)}", None, None
-                    
+                    return content, title, None, html_content, file_links
+                except PlaywrightTimeoutError:
+                    return "", "", f"Timeout loading page: {url}", None, None
+                except Exception as e:
+                    return "", "", f"Error loading page: {str(e)}", None, None
+                finally:
+                    context.close()
         except Exception as e:
             return "", "", f"Browser error: {str(e)}", None, None
     
@@ -308,7 +411,6 @@ class ScrapingService:
             # Step 1: Wait for common loading indicators to disappear
             loading_selectors = ".loading, .spinner, .loader, [class*='loading'], [class*='spinner'], [class*='skeleton'], #loading, [data-loading='true']"
             
-            print(f"SCRAPING: Waiting for loading indicators to disappear")
             try:
                 # Wait for loader to appear and then disappear (max 5 seconds)
                 page.wait_for_selector(loading_selectors, timeout=3000, state="attached")
@@ -343,7 +445,6 @@ class ScrapingService:
             """)
             
             # Step 3: Scroll to bottom to trigger lazy loading
-            print("SCRAPING:Scrolling to bottom to trigger lazy loading")
             page.evaluate("""
                 async () => {
                     const distance = 100;
@@ -362,7 +463,6 @@ class ScrapingService:
             """)
             
             # Step 4: Wait for DOM to stabilize (no new elements being added)
-            print("SCRAPING: Waiting for DOM to stabilize")
             page.evaluate("""
                 () => {
                     return new Promise(resolve => {
@@ -394,11 +494,9 @@ class ScrapingService:
             """)
             
             # Step 5: Final wait to ensure all rendering is complete
-            print("SCRAPING: Waiting for final rendering to complete")
             page.wait_for_timeout(1000)
             
             # Step 6: Wait for images to load (optional, but helps with complete rendering)
-            print("SCRAPING: Waiting for images to load")
             page.evaluate("""
                 () => {
                     return Promise.all(
@@ -443,10 +541,10 @@ class ScrapingService:
             for selector in expandable_selectors:
                 try:
                     elements = page.query_selector_all(selector)
-                    print(f"SCRAPING: Expanding {len(elements)} elements matching '{selector}'")
                     for element in elements:  # Expand ALL elements, no limit
                         try:
                             if element.is_visible():
+                                print(f"SCRAPING: Expanding {element.text_content()}")
                                 element.click(timeout=1000)
                                 page.wait_for_timeout(500)  # Wait for animation
                         except Exception:
@@ -1046,6 +1144,13 @@ class ScrapingService:
         Returns:
             List of URLs found in sitemap
         """
+        base_domain = self._get_base_domain(base_url)
+        now = time.time()
+        with self._sitemap_cache_lock:
+            cache_entry = self._sitemap_cache.get(base_domain)
+            if cache_entry and now - cache_entry["timestamp"] < self._sitemap_cache_ttl:
+                return cache_entry["urls"]
+        
         urls = []
         parsed = urlparse(base_url)
         base = f"{parsed.scheme}://{parsed.netloc}"
@@ -1065,7 +1170,7 @@ class ScrapingService:
             try:
                 if path == '/robots.txt':
                     # Parse robots.txt for sitemap reference
-                    response = requests.get(sitemap_url, timeout=10)
+                    response = self._http_get(sitemap_url)
                     if response.status_code == 200:
                         for line in response.text.split('\n'):
                             if line.lower().startswith('sitemap:'):
@@ -1082,6 +1187,12 @@ class ScrapingService:
             except Exception as e:
                 continue
         
+        with self._sitemap_cache_lock:
+            self._sitemap_cache[base_domain] = {
+                "timestamp": now,
+                "urls": urls
+            }
+        
         return urls
     
     def _parse_sitemap(self, sitemap_url: str) -> List[str]:
@@ -1097,7 +1208,7 @@ class ScrapingService:
         """
         urls = []
         try:
-            response = requests.get(sitemap_url, timeout=10)
+            response = self._http_get(sitemap_url)
             if response.status_code != 200:
                 return urls
             
@@ -1210,30 +1321,17 @@ class ScrapingService:
             Dict with PDF file metadata if found, None otherwise
         """
         try:
-            # Reuse browser if provided, otherwise create new one
-            if playwright_browser:
-                browser = playwright_browser
+            with self._borrow_browser(playwright_browser) as browser:
                 context = browser.new_context(
                     user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                 )
                 page = context.new_page()
-                should_close_browser = False
-            else:
-                p = self._start_playwright()
-                browser = p.chromium.launch(headless=True)
-                context = browser.new_context(
-                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                )
-                page = context.new_page()
-                should_close_browser = True
-            
-            try:
-                # Navigate to viewer page
-                page.goto(viewer_url, timeout=15000, wait_until="domcontentloaded")
-                page.wait_for_timeout(1000)  # Brief wait for viewer to load
-                
-                # Look for download/save buttons and extract PDF URL
-                pdf_url = page.evaluate("""
+                try:
+                    page.goto(viewer_url, timeout=15000, wait_until="domcontentloaded")
+                    page.wait_for_timeout(1000)  # Brief wait for viewer to load
+                    
+                    # Look for download/save buttons and extract PDF URL
+                    pdf_url = page.evaluate("""
                         () => {
                             // Common selectors for download buttons
                             const downloadSelectors = [
@@ -1294,51 +1392,33 @@ class ScrapingService:
                             
                             return null;
                         }
-                """)
-                
-                # Close context but keep browser if reusing
-                context.close()
-                if should_close_browser:
-                    browser.close()
-                    if 'p' in locals():
-                        p.stop()
-                
-                if pdf_url:
-                    # Make URL absolute if relative
-                    absolute_pdf_url = urljoin(viewer_url, pdf_url)
-                    
-                    # Extract filename from URL
-                    parsed = urlparse(absolute_pdf_url)
-                    filename = os.path.basename(parsed.path)
-                    if not filename or not filename.endswith('.pdf'):
-                        filename = "document.pdf"
-                    
-                    print(f"  📄 Extracted PDF from viewer: {filename}")
-                    
-                    return {
-                        'file_url': absolute_pdf_url,
-                        'filename': filename,
-                        'file_type': 'PDF Document',
-                        'file_extension': 'pdf',
-                        'link_text': link_text or filename,
-                        'file_size': None,
-                        'viewer_url': viewer_url,
-                        'extracted_from_viewer': True
-                    }
-                else:
-                    return None
-                    
-            except Exception as e:
-                context.close()
-                if should_close_browser:
-                    browser.close()
-                    if 'p' in locals():
-                        p.stop()
-                print(f"  ⚠ Error extracting PDF from viewer: {e}")
+                    """)
+                finally:
+                    context.close()
+            
+            if not pdf_url:
                 return None
-                    
+            
+            absolute_pdf_url = urljoin(viewer_url, pdf_url)
+            parsed = urlparse(absolute_pdf_url)
+            filename = os.path.basename(parsed.path)
+            if not filename or not filename.endswith('.pdf'):
+                filename = "document.pdf"
+            
+            print(f"  📄 Extracted PDF from viewer: {filename}")
+            
+            return {
+                'file_url': absolute_pdf_url,
+                'filename': filename,
+                'file_type': 'PDF Document',
+                'file_extension': 'pdf',
+                'link_text': link_text or filename,
+                'file_size': None,
+                'viewer_url': viewer_url,
+                'extracted_from_viewer': True
+            }
         except Exception as e:
-            print(f"  ⚠ Browser error while extracting PDF: {e}")
+            print(f"  ⚠ Error extracting PDF from viewer: {e}")
             return None
     
     def _check_for_embedded_pdf_sync(self, page_url: str, link_text: str = "", playwright_browser=None) -> Optional[Dict]:
@@ -1698,6 +1778,7 @@ class ScrapingService:
         pdf_viewer_urls = []  # Track potential PDF viewer URLs to check
         embed_check_urls = []  # Track URLs to check for embedded PDFs
         seen_file_urls = set()  # Track seen file URLs to prevent duplicates
+        remaining_pdf_checks = self._max_pdf_checks_per_page
         
         try:
             soup = BeautifulSoup(html_content, 'html.parser')
@@ -1772,6 +1853,8 @@ class ScrapingService:
                 duplicates_skipped = 0
                 
                 for viewer_url, link_text in pdf_viewer_urls:  # Check ALL viewers, no limit
+                    if remaining_pdf_checks <= 0:
+                        break
                     pdf_info = self._extract_pdf_from_viewer(viewer_url, link_text, playwright_browser=playwright_browser)
                     
                     if pdf_info:
@@ -1793,15 +1876,18 @@ class ScrapingService:
                         
                         # Small delay to be polite
                         time.sleep(0.5)
+                        remaining_pdf_checks -= 1
                 
                 if duplicates_skipped > 0:
                     print(f"  ⏭️  Skipped {duplicates_skipped} duplicate PDF(s) from viewers")
             
             # Process URLs that might have embedded PDFs (check all links for thoroughness)
-            if embed_check_urls:
+            if embed_check_urls and remaining_pdf_checks > 0:
                 duplicates_skipped = 0
                 
                 for embed_url, link_text in embed_check_urls:  # Check ALL links, no limit
+                    if remaining_pdf_checks <= 0:
+                        break
                     embedded_pdf = self._check_for_embedded_pdf(embed_url, link_text, playwright_browser=playwright_browser)
                     
                     if embedded_pdf:
@@ -1823,6 +1909,7 @@ class ScrapingService:
                         
                         # Small delay to be polite
                         time.sleep(0.5)
+                        remaining_pdf_checks -= 1
                 
                 if duplicates_skipped > 0:
                     print(f"  ⏭️  Skipped {duplicates_skipped} duplicate embedded PDF(s)")
@@ -1926,9 +2013,7 @@ class ScrapingService:
                 if depth < max_depth:
                     try:
                         # Use requests for faster link extraction (no need for Playwright here)
-                        response = requests.get(current_url, timeout=10, headers={
-                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                        })
+                        response = self._http_get(current_url)
                         if response.status_code == 200:
                             links = self._extract_links_from_html(response.text, current_url)
                             
@@ -2079,7 +2164,8 @@ class ScrapingService:
         max_retries: int = 2,
         max_pages_per_site: int = 5000,
         max_crawl_depth: int = 3,
-        progress_callback=None
+        progress_callback=None,
+        resume_state: Optional[Dict[str, Any]] = None
     ) -> Dict[str, any]:
         """
         Scrape all configured sites for a mode with full site crawling.
@@ -2093,6 +2179,7 @@ class ScrapingService:
             max_pages_per_site: Maximum pages to discover per site
             max_crawl_depth: Maximum depth for link following
             progress_callback: Optional callback function(progress_dict) called during scraping
+            resume_state: Optional checkpoint data with pending sites/URLs to resume work
             
         Returns:
             Dictionary with scraping results
@@ -2106,23 +2193,108 @@ class ScrapingService:
         if not scrape_sites:
             return {"error": "No sites configured for scraping", "success": False}
         
+        sanitized_sites = [site.strip() for site in scrape_sites if site and site.strip()]
+        if not sanitized_sites:
+            return {"error": "No valid sites configured for scraping", "success": False}
+        
+        resume_payload = resume_state if isinstance(resume_state, dict) else {}
+        pending_from_resume = [
+            site.strip() for site in resume_payload.get("pending_sites", []) if site and site.strip()
+        ] if resume_payload else []
+        pending_sites_queue = deque(pending_from_resume or sanitized_sites)
+        if not pending_sites_queue:
+            return {"error": "No pending sites to process", "success": False}
+        
+        checkpoint_state: Dict[str, Any] = {}
+        
+        def _update_checkpoint(current_site=None, remaining_urls=None, total_urls=None, processed_urls=None, pending_override=None):
+            pending_snapshot = []
+            if pending_override is not None:
+                pending_snapshot = [site for site in pending_override if site]
+            else:
+                if current_site:
+                    pending_snapshot.append(current_site)
+                pending_snapshot.extend([site for site in list(pending_sites_queue) if site])
+            
+            state = {
+                "pending_sites": pending_snapshot,
+                "current_site": current_site,
+                "updated_at": datetime.utcnow().isoformat()
+            }
+            if remaining_urls is not None:
+                state["current_site_remaining_urls"] = list(remaining_urls)
+            else:
+                state.pop("current_site_remaining_urls", None)
+            if total_urls is not None:
+                state["current_site_total_urls"] = total_urls
+            else:
+                state.pop("current_site_total_urls", None)
+            if processed_urls is not None:
+                state["current_site_processed_urls"] = processed_urls
+            else:
+                state.pop("current_site_processed_urls", None)
+            
+            checkpoint_state.clear()
+            checkpoint_state.update(state)
+            return state
+        
+        def _checkpoint_payload():
+            if not checkpoint_state:
+                return None
+            payload = {
+                "pending_sites": list(checkpoint_state.get("pending_sites", [])),
+                "current_site": checkpoint_state.get("current_site"),
+                "updated_at": checkpoint_state.get("updated_at")
+            }
+            if "current_site_remaining_urls" in checkpoint_state:
+                payload["current_site_remaining_urls"] = list(checkpoint_state.get("current_site_remaining_urls") or [])
+            if "current_site_total_urls" in checkpoint_state:
+                payload["current_site_total_urls"] = checkpoint_state.get("current_site_total_urls")
+            if "current_site_processed_urls" in checkpoint_state:
+                payload["current_site_processed_urls"] = checkpoint_state.get("current_site_processed_urls")
+            return payload
+        
+        def _emit_progress(progress_payload: Optional[Dict[str, Any]] = None):
+            if not progress_callback:
+                return
+            payload = progress_payload.copy() if progress_payload else {}
+            checkpoint_payload = _checkpoint_payload()
+            if checkpoint_payload:
+                payload["checkpoint"] = checkpoint_payload
+            progress_callback(payload)
+        
+        _update_checkpoint(current_site=None, pending_override=list(pending_sites_queue))
+        
         results = {
             "success": True,
             "mode": mode_name,
-            "total_sites": len(scrape_sites),
+            "total_sites": len(sanitized_sites),
             "total_pages_scraped": 0,
             "total_pages_reused": 0,
             "total_pages_failed": 0,
             "sites": []
         }
         
-        for site_url in scrape_sites:
-            site_url = site_url.strip()
+        resume_consumed = False
+        
+        while pending_sites_queue:
+            site_url = pending_sites_queue.popleft()
             if not site_url:
                 continue
             
+            site_resume_state = None
+            if not resume_consumed and resume_payload and resume_payload.get("current_site") == site_url:
+                site_resume_state = resume_payload
+                resume_consumed = True
+            
             base_domain = self._get_base_domain(site_url)
             is_single_page = self._is_single_page_url(site_url)
+            site_metrics = self._init_site_metrics() if self._metrics_enabled else None
+            site_timer = time.perf_counter() if self._metrics_enabled else None
+            
+            def _record_page(duration: float = 0.0):
+                if site_metrics:
+                    self._update_page_metrics(site_metrics, duration)
             
             print(f"\n{'='*60}")
             if is_single_page:
@@ -2146,6 +2318,36 @@ class ScrapingService:
                 print(f"Scraping single page: {site_url}")
                 
                 normalized_url = self._normalize_url(site_url)
+                single_remaining = [site_url]
+                total_single_urls = 1
+                processed_single = 0
+                
+                if site_resume_state and site_resume_state.get("current_site_remaining_urls") is not None:
+                    saved_remaining = [
+                        url for url in site_resume_state.get("current_site_remaining_urls", []) if url
+                    ]
+                    if saved_remaining:
+                        single_remaining = saved_remaining
+                    else:
+                        single_remaining = []
+                    total_single_urls = site_resume_state.get("current_site_total_urls") or max(1, len(single_remaining) or 1)
+                    processed_single = site_resume_state.get("current_site_processed_urls") or max(0, total_single_urls - len(single_remaining))
+                
+                if not single_remaining:
+                    _update_checkpoint(current_site=None, pending_override=list(pending_sites_queue))
+                    _emit_progress({})
+                    print("  ✓ Single page already processed, skipping")
+                    site_result["status"] = "completed"
+                    results["sites"].append(site_result)
+                    continue
+                
+                _update_checkpoint(
+                    current_site=site_url,
+                    remaining_urls=single_remaining,
+                    total_urls=total_single_urls,
+                    processed_urls=processed_single
+                )
+                _emit_progress({})
                 
                 # Check if this specific page was already scraped
                 existing = self.scraped_content_collection.find_one({
@@ -2161,17 +2363,19 @@ class ScrapingService:
                     site_result["pages_reused"] = 1
                     results["total_pages_reused"] += 1
                     site_result["status"] = "reused"
+                    _record_page()
                     print(f"  ✓ Reused existing content")
                     
+                    _update_checkpoint(current_site=None, pending_override=list(pending_sites_queue))
+                    
                     # Update progress
-                    if progress_callback:
-                        progress_callback({
-                            "current_site": site_url,
-                            "total_pages": results["total_pages_scraped"] + results["total_pages_reused"],
-                            "scraped_pages": results["total_pages_scraped"],
-                            "reused_pages": results["total_pages_reused"],
-                            "failed_pages": results["total_pages_failed"]
-                        })
+                    _emit_progress({
+                        "current_site": site_url,
+                        "total_pages": results["total_pages_scraped"] + results["total_pages_reused"],
+                        "scraped_pages": results["total_pages_scraped"],
+                        "reused_pages": results["total_pages_reused"],
+                        "failed_pages": results["total_pages_failed"]
+                    })
                 else:
                     # Scrape the single page
                     retry_count = 0
@@ -2179,6 +2383,7 @@ class ScrapingService:
                     error = None
                     
                     while retry_count <= max_retries and not success:
+                        page_start = time.perf_counter()
                         # First pass: Fast scrape without dynamic content (no file discovery)
                         content, title, error, html_content, file_links = self.scrape_url(
                             site_url, 
@@ -2241,17 +2446,19 @@ class ScrapingService:
                         results["total_pages_scraped"] += 1
                         site_result["status"] = "completed"
                         success = True
+                        _record_page(time.perf_counter() - page_start)
                         print(f"  ✓ Successfully scraped ({content_doc['metadata']['word_count']} words)")
                         
+                        _update_checkpoint(current_site=None, pending_override=list(pending_sites_queue))
+                        
                         # Update progress
-                        if progress_callback:
-                            progress_callback({
-                                "current_site": site_url,
-                                "total_pages": results["total_pages_scraped"] + results["total_pages_reused"],
-                                "scraped_pages": results["total_pages_scraped"],
-                                "reused_pages": results["total_pages_reused"],
-                                "failed_pages": results["total_pages_failed"]
-                            })
+                        _emit_progress({
+                            "current_site": site_url,
+                            "total_pages": results["total_pages_scraped"] + results["total_pages_reused"],
+                            "scraped_pages": results["total_pages_scraped"],
+                            "reused_pages": results["total_pages_reused"],
+                            "failed_pages": results["total_pages_failed"]
+                        })
                     
                     if not success:
                         site_result["pages_failed"] = 1
@@ -2259,15 +2466,16 @@ class ScrapingService:
                         site_result["status"] = "failed"
                         print(f"  ✗ Failed: {error}")
                         
+                        _update_checkpoint(current_site=None, pending_override=list(pending_sites_queue))
+                        
                         # Update progress
-                        if progress_callback:
-                            progress_callback({
-                                "current_site": site_url,
-                                "total_pages": results["total_pages_scraped"] + results["total_pages_reused"],
-                                "scraped_pages": results["total_pages_scraped"],
-                                "reused_pages": results["total_pages_reused"],
-                                "failed_pages": results["total_pages_failed"]
-                            })
+                        _emit_progress({
+                            "current_site": site_url,
+                            "total_pages": results["total_pages_scraped"] + results["total_pages_reused"],
+                            "scraped_pages": results["total_pages_scraped"],
+                            "reused_pages": results["total_pages_reused"],
+                            "failed_pages": results["total_pages_failed"]
+                        })
                 
                 results["sites"].append(site_result)
                 continue  # Skip the full site crawl logic below
@@ -2294,49 +2502,75 @@ class ScrapingService:
                         {"$addToSet": {"modes": mode_name}}
                     )
                     reused_count += 1
+                    _record_page()
                 
                 site_result["pages_reused"] = reused_count
                 site_result["status"] = "reused"
                 results["total_pages_reused"] += reused_count
                 
                 print(f"Reused {reused_count} existing pages from {base_domain}")
+                _update_checkpoint(current_site=None, pending_override=list(pending_sites_queue))
                 
                 # Update progress
-                if progress_callback:
-                    progress_callback({
-                        "current_site": base_domain,
-                        "total_pages": results["total_pages_scraped"] + results["total_pages_reused"],
-                        "scraped_pages": results["total_pages_scraped"],
-                        "reused_pages": results["total_pages_reused"],
-                        "failed_pages": results["total_pages_failed"]
-                    })
+                _emit_progress({
+                    "current_site": base_domain,
+                    "total_pages": results["total_pages_scraped"] + results["total_pages_reused"],
+                    "scraped_pages": results["total_pages_scraped"],
+                    "reused_pages": results["total_pages_reused"],
+                    "failed_pages": results["total_pages_failed"]
+                })
                 
             else:
                 # Site not scraped yet - crawl and scrape it
                 print(f"Site {base_domain} not yet scraped. Starting full crawl...")
                 
-                # Step 2: Discover all URLs on the site
-                urls_to_scrape = self._crawl_site(
-                    site_url, 
-                    max_pages=max_pages_per_site,
-                    max_depth=max_crawl_depth
+                # Step 2: Discover URLs or resume remaining queue
+                if site_resume_state and site_resume_state.get("current_site_remaining_urls") is not None:
+                    urls_to_scrape = [
+                        url for url in site_resume_state.get("current_site_remaining_urls", []) if url
+                    ]
+                    total_urls = site_resume_state.get("current_site_total_urls") or len(urls_to_scrape)
+                    pages_processed = site_resume_state.get("current_site_processed_urls") or max(0, total_urls - len(urls_to_scrape))
+                    print(f"Resuming crawl with {len(urls_to_scrape)} remaining URL(s) ({pages_processed}/{total_urls} processed)")
+                else:
+                    urls_to_scrape = self._crawl_site(
+                        site_url, 
+                        max_pages=max_pages_per_site,
+                        max_depth=max_crawl_depth
+                    )
+                    total_urls = len(urls_to_scrape)
+                    pages_processed = 0
+                
+                if not urls_to_scrape:
+                    print("No URLs discovered for site. Skipping.")
+                    _update_checkpoint(current_site=None, pending_override=list(pending_sites_queue))
+                    _emit_progress({})
+                    site_result["status"] = "completed"
+                    results["sites"].append(site_result)
+                    continue
+                
+                _update_checkpoint(
+                    current_site=site_url,
+                    remaining_urls=urls_to_scrape,
+                    total_urls=total_urls,
+                    processed_urls=pages_processed
                 )
                 
-                # Notify about URLs discovered before scraping starts
-                if progress_callback:
-                    progress_callback({
-                        "phase": "discovery_complete",
-                        "current_site": base_domain,
-                        "urls_discovered": len(urls_to_scrape),
-                        "total_pages": results["total_pages_scraped"] + results["total_pages_reused"],
-                        "scraped_pages": results["total_pages_scraped"],
-                        "reused_pages": results["total_pages_reused"],
-                        "failed_pages": results["total_pages_failed"]
-                    })
+                _emit_progress({
+                    "phase": "discovery_complete",
+                    "current_site": base_domain,
+                    "urls_discovered": total_urls,
+                    "total_pages": results["total_pages_scraped"] + results["total_pages_reused"],
+                    "scraped_pages": results["total_pages_scraped"],
+                    "reused_pages": results["total_pages_reused"],
+                    "failed_pages": results["total_pages_failed"]
+                })
+                
+                page_queue = deque(urls_to_scrape)
                 
                 # Step 3: Scrape each discovered URL
                 # Create a single browser instance for all pages in this site (significant performance boost)
-                print(f"Creating browser instance for scraping {len(urls_to_scrape)} pages...")
+                print(f"Creating browser instance for scraping {len(page_queue)} pages...")
                 from playwright.sync_api import sync_playwright
                 p = self._start_playwright()
                 browser = p.chromium.launch(headless=True)
@@ -2346,7 +2580,11 @@ class ScrapingService:
                 processed_urls = set()  # Track URLs processed in this session to prevent duplicates
                 
                 try:
-                    for idx, url in enumerate(urls_to_scrape, 1):
+                    while page_queue:
+                        url = page_queue.popleft()
+                        pages_processed += 1
+                        idx = pages_processed
+                        
                         normalized_url = self._normalize_url(url)
                         
                         # Skip if we've already processed this URL in this session
@@ -2355,7 +2593,7 @@ class ScrapingService:
                             continue
                         
                         processed_urls.add(normalized_url)
-                        print(f"\nScraping page {idx}/{len(urls_to_scrape)}: {url}")
+                        print(f"\nScraping page {idx}/{total_urls}: {url}")
                         
                         # Check if this specific URL was already scraped
                         existing = self.scraped_content_collection.find_one({
@@ -2373,14 +2611,19 @@ class ScrapingService:
                             print(f"  ✓ Reused existing content")
                             
                             # Update progress after reusing page
-                            if progress_callback:
-                                progress_callback({
-                                    "current_site": base_domain,
-                                    "total_pages": results["total_pages_scraped"] + results["total_pages_reused"],
-                                    "scraped_pages": results["total_pages_scraped"],
-                                    "reused_pages": results["total_pages_reused"],
-                                    "failed_pages": results["total_pages_failed"]
-                                })
+                            _update_checkpoint(
+                                current_site=site_url,
+                                remaining_urls=list(page_queue),
+                                total_urls=total_urls,
+                                processed_urls=pages_processed
+                            )
+                            _emit_progress({
+                                "current_site": base_domain,
+                                "total_pages": results["total_pages_scraped"] + results["total_pages_reused"],
+                                "scraped_pages": results["total_pages_scraped"],
+                                "reused_pages": results["total_pages_reused"],
+                                "failed_pages": results["total_pages_failed"]
+                            })
                             continue
                         
                         # Scrape the URL with retries (first pass: fast scrape)
@@ -2388,6 +2631,7 @@ class ScrapingService:
                         success = False
                         
                         while retry_count <= max_retries and not success:
+                            page_start = time.perf_counter()
                             # First pass: Fast scrape without dynamic content (no file discovery)
                             # Pass the reusable browser instance for performance
                             content, title, error, html_content, file_links = self.scrape_url(
@@ -2453,16 +2697,22 @@ class ScrapingService:
                             results["total_pages_scraped"] += 1
                             success = True
                             print(f"  ✓ Successfully scraped ({content_doc['metadata']['word_count']} words)")
+                            _record_page(time.perf_counter() - page_start)
                             
                             # Update progress after each page
-                            if progress_callback:
-                                progress_callback({
-                                    "current_site": base_domain,
-                                    "total_pages": results["total_pages_scraped"] + results["total_pages_reused"],
-                                    "scraped_pages": results["total_pages_scraped"],
-                                    "reused_pages": results["total_pages_reused"],
-                                    "failed_pages": results["total_pages_failed"]
-                                })
+                            _update_checkpoint(
+                                current_site=site_url,
+                                remaining_urls=list(page_queue),
+                                total_urls=total_urls,
+                                processed_urls=pages_processed
+                            )
+                            _emit_progress({
+                                "current_site": base_domain,
+                                "total_pages": results["total_pages_scraped"] + results["total_pages_reused"],
+                                "scraped_pages": results["total_pages_scraped"],
+                                "reused_pages": results["total_pages_reused"],
+                                "failed_pages": results["total_pages_failed"]
+                            })
                             
                             # Rate limiting
                             time.sleep(1)
@@ -2474,14 +2724,21 @@ class ScrapingService:
                             print(f"  ✗ Failed: {error}")
                         
                         # Update progress after failed page
-                        if progress_callback:
-                            progress_callback({
-                                "current_site": base_domain,
-                                "total_pages": results["total_pages_scraped"] + results["total_pages_reused"],
-                                "scraped_pages": results["total_pages_scraped"],
-                                "reused_pages": results["total_pages_reused"],
-                                "failed_pages": results["total_pages_failed"]
-                            })
+                        _update_checkpoint(
+                            current_site=site_url,
+                            remaining_urls=list(page_queue),
+                            total_urls=total_urls,
+                            processed_urls=pages_processed
+                        )
+                        _emit_progress({
+                            "current_site": base_domain,
+                            "total_pages": results["total_pages_scraped"] + results["total_pages_reused"],
+                            "scraped_pages": results["total_pages_scraped"],
+                            "reused_pages": results["total_pages_reused"],
+                            "failed_pages": results["total_pages_failed"]
+                        })
+                        if site_metrics and not success and page_start:
+                            _record_page(time.perf_counter() - page_start)
                 finally:
                     # Always close the browser when done with this site
                     print(f"Closing browser instance...")
@@ -2494,7 +2751,7 @@ class ScrapingService:
                     "base_url": site_url,
                     "first_scraped_at": datetime.utcnow(),
                     "last_scraped_at": datetime.utcnow(),
-                    "total_pages": len(urls_to_scrape),
+                    "total_pages": total_urls,
                     "successful_pages": scraped_count,
                     "failed_pages": failed_count,
                     "modes": [mode_name]
@@ -2503,8 +2760,14 @@ class ScrapingService:
                 site_result["status"] = "completed"
                 print(f"\n✓ Completed scraping {base_domain}")
                 print(f"  Scraped: {scraped_count}, Reused: {site_result['pages_reused']}, Failed: {failed_count}")
+                _update_checkpoint(current_site=None, pending_override=list(pending_sites_queue))
+                _emit_progress({})
             
             results["sites"].append(site_result)
+            
+            if site_metrics and site_timer:
+                self._finalize_site_metrics(site_metrics, site_timer)
+                print(f"[METRICS] Site {base_domain}: {site_metrics}")
         
         # Update mode with scraping timestamp
         total_content = results["total_pages_scraped"] + results["total_pages_reused"]
@@ -2676,6 +2939,9 @@ class ScrapingService:
                 url = doc.get("original_url")
                 normalized_url = doc.get("normalized_url")
                 original_content = doc.get("content", "")
+                base_domain = doc.get("base_domain")
+                doc_modes = doc.get("modes", [])
+                primary_mode = doc_modes[0] if doc_modes else None
                 
                 print(f"\n[{idx}/{len(pending_content)}] Verifying: {url}")
                 
@@ -2803,6 +3069,9 @@ class ScrapingService:
                             "current_page": idx,
                             "total_pages": len(pending_content),
                             "url": url,
+                            "base_domain": base_domain,
+                            "modes": doc_modes,
+                            "primary_mode": primary_mode,
                             "verified_unchanged": results["verified_unchanged"],
                             "verified_updated": results["verified_updated"],
                             "failed": results["failed"]
@@ -2833,6 +3102,9 @@ class ScrapingService:
                             "current_page": idx,
                             "total_pages": len(pending_content),
                             "url": url,
+                            "base_domain": base_domain,
+                            "modes": doc_modes,
+                            "primary_mode": primary_mode,
                             "verified_unchanged": results["verified_unchanged"],
                             "verified_updated": results["verified_updated"],
                             "failed": results["failed"]

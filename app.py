@@ -71,6 +71,10 @@ scrape_scheduler = ScrapeScheduler(
 
 localDevMode = config("LOCAL_DEV_MODE", default="false").lower()
 
+if not localDevMode == "true":
+    os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/opt/bitnami/playwright-browsers")
+    os.environ.setdefault("XDG_CACHE_HOME", "/opt/bitnami/playwright-cache")
+
 AWS_ACCESS_KEY_ID = config("AWS_ACCESS_KEY_ID", default=None)
 AWS_SECRET_ACCESS_KEY = config("AWS_SECRET_ACCESS_KEY", default=None)
 COGNITO_REGION = config("COGNITO_REGION", default=None)
@@ -81,8 +85,7 @@ SES_SENDER_EMAIL = config("SES_SENDER_EMAIL", default=None)
 DEFAULT_MODE_COLOR = "#82002d"
 DEFAULT_TEXT_COLOR = "#ffffff"
 
-os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/opt/bitnami/playwright-browsers")
-os.environ.setdefault("XDG_CACHE_HOME", "/opt/bitnami/playwright-cache")
+
 
 S3_BUCKET = config("S3_BUCKET", default="builders-copilot")
 s3 = boto3.client(

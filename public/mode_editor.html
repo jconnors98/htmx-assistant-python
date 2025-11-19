@@ -413,6 +413,9 @@
                   </svg>
                   <h4 class="text-base font-semibold text-blue-800">Active Scraping Jobs</h4>
                 </div>
+              <div id="scrape-queue-notice" class="hidden mb-4 bg-blue-50 border border-blue-200 text-blue-700 text-xs rounded-lg p-3">
+                Scrape jobs run in small batches to avoid overloading target sites. If a job shows “Waiting to start…”, it’s queued and will begin automatically as soon as a scraper slot opens up.
+              </div>
                 <div id="active-scrape-jobs-list" class="space-y-3">
                   <!-- Jobs will be populated here -->
                 </div>
@@ -1420,14 +1423,22 @@
         
         const container = document.getElementById('active-scrape-jobs-container');
         const list = document.getElementById('active-scrape-jobs-list');
+        const queueNotice = document.getElementById('scrape-queue-notice');
         
         if (jobs.length === 0) {
           container.style.display = 'none';
+          if (queueNotice) {
+            queueNotice.style.display = 'none';
+          }
           return;
         }
         
         container.style.display = 'block';
         list.innerHTML = '';
+        if (queueNotice) {
+          const hasQueued = jobs.some(job => job.status === 'queued');
+          queueNotice.style.display = hasQueued ? 'block' : 'none';
+        }
         
         jobs.forEach(job => {
           const jobDiv = document.createElement('div');
@@ -1447,7 +1458,7 @@
           
           let statusText = '';
           if (job.status === 'queued') {
-            statusText = 'Waiting to start...';
+            statusText = 'Waiting for an available scraper slot…';
           } else if (progress.phase === 'discovery_complete' && progress.urls_discovered) {
             statusText = `Discovered ${progress.urls_discovered} URLs. Starting scraping...`;
           } else if (progress.scraped_pages === 0 && progress.reused_pages === 0 && progress.urls_discovered) {
@@ -1519,6 +1530,7 @@
       const btn = document.getElementById('trigger-scrape-btn');
       const originalHTML = btn.innerHTML;
       btn.disabled = true;
+      btn.innerHTML = '<svg class="w-4 h-4 animate-spin inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Scraping...';
       
       // Trigger the scrape job
       const res = await fetch('/flask/admin/scrape/trigger/' + modeId, {
@@ -1536,9 +1548,9 @@
         const data = await res.json();
         const jobId = data.job_id;
         
-        // Show status message
-        showScrapeJobStatus(jobId, btn, originalHTML);
-        
+        // Immediately refresh the active job list so the new job card appears without waiting for the next interval tick
+        loadActiveScrapingJobs();
+
         // Start polling for job status
         pollScrapeJob(jobId, btn, originalHTML);
       } else {
@@ -1548,41 +1560,6 @@
         btn.innerHTML = originalHTML;
       }
     };
-    
-    function showScrapeJobStatus(jobId, btn, originalHTML) {
-      // Create a status message area
-      const statusDiv = document.getElementById('scrape-job-status') || createScrapeJobStatusDiv();
-      statusDiv.innerHTML = `
-        <div class="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-xl">
-          <div class="flex items-center gap-3">
-            <svg class="w-5 h-5 animate-spin text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            <div class="flex-1">
-              <div class="font-semibold text-blue-800">Scraping in progress...</div>
-              <div class="text-sm text-blue-600">
-                <span id="scrape-job-message">Starting scrape job...</span>
-                <br/>
-                <span class="text-xs text-blue-500">
-                  Depending on the size of the site(s), this may take several minutes. You can continue working; the page will update automatically when complete.
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-      `;
-      
-      btn.innerHTML = '<svg class="w-4 h-4 animate-spin inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Scraping...';
-    }
-    
-    function createScrapeJobStatusDiv() {
-      const statusDiv = document.createElement('div');
-      statusDiv.id = 'scrape-job-status';
-      const scrapeSection = document.getElementById('trigger-scrape-btn').closest('.space-y-4');
-      scrapeSection.appendChild(statusDiv);
-      return statusDiv;
-    }
     
     async function pollScrapeJob(jobId, btn, originalHTML) {
       // Clear any existing polling interval
@@ -1613,42 +1590,13 @@
         const progress = job.progress || {};
         
         if (job.status === 'queued') {
-          updateScrapeJobMessage('Waiting to start...');
+          // No-op; the queued state is shown via the job card.
         } else if (job.status === 'in_progress') {
-          let message = '';
-          
-          // Check if in URL discovery phase
-          if (progress.phase === 'discovery_complete' && progress.urls_discovered) {
-            message = `Discovered ${progress.urls_discovered} URLs to scrape. Starting scraping...`;
-          } else if (progress.scraped_pages === 0 && progress.reused_pages === 0 && progress.urls_discovered) {
-            // Still discovering URLs or preparing to scrape
-            message = `Discovered ${progress.urls_discovered} URLs. Preparing to scrape...`;
-          } else {
-            // Normal scraping in progress
-            // Determine pass based on progress
-            let passInfo = '';
-            if (progress.current_pass === 1) {
-              passInfo = ' <span class="inline-block px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-xs font-semibold ml-2">Initial scrape</span>';
-            } else if (progress.current_pass === 2) {
-              passInfo = ' <span class="inline-block px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full text-xs font-semibold ml-2">Dynamic content scrape</span>';
-            }
-            
-            message = `Scraping: ${progress.scraped_pages || 0} pages scraped, ${progress.reused_pages || 0} reused${progress.failed_pages ? ', ' + progress.failed_pages + ' failed' : ''}${passInfo}`;
-            
-            // Add URLs discovered info if available
-            if (progress.urls_discovered) {
-              message += ` <span class="text-gray-500">(${progress.urls_discovered} URLs discovered)</span>`;
-            }
-          }
-          
-          updateScrapeJobMessage(message);
+          // No-op; progress is reflected in the active jobs list polling.
         } else if (job.status === 'completed') {
           clearInterval(scrapeJobPollInterval);
           const totalPages = (progress.scraped_pages || 0) + (progress.reused_pages || 0);
-          updateScrapeJobStatus(
-            `✓ Scraping complete! ${totalPages} pages available (${progress.scraped_pages || 0} new, ${progress.reused_pages || 0} reused${progress.failed_pages ? ', ' + progress.failed_pages + ' failed' : ''})`,
-            'success'
-          );
+          showMiniToast(`✓ Scraping complete! ${totalPages} pages available.`);
           btn.disabled = false;
           btn.innerHTML = originalHTML;
           loadMode(); // Reload to update last scraped timestamp
@@ -1658,53 +1606,12 @@
           loadActiveScrapingJobs(); // Refresh active jobs list
         } else if (job.status === 'failed') {
           clearInterval(scrapeJobPollInterval);
-          updateScrapeJobStatus('✗ Scraping failed: ' + (job.error || 'Unknown error'), 'error');
+          alert('Scraping failed: ' + (job.error || 'Unknown error'));
           btn.disabled = false;
           btn.innerHTML = originalHTML;
           loadActiveScrapingJobs(); // Refresh active jobs list
         }
       }, 3000); // Poll every 3 seconds
-    }
-    
-    function updateScrapeJobMessage(message) {
-      const msgElement = document.getElementById('scrape-job-message');
-      if (msgElement) {
-        msgElement.innerHTML = message;
-      }
-    }
-    
-    function updateScrapeJobStatus(message, type) {
-      const statusDiv = document.getElementById('scrape-job-status');
-      if (!statusDiv) return;
-      
-      const bgColor = type === 'success' ? 'bg-green-50 border-green-200' : type === 'error' ? 'bg-red-50 border-red-200' : 'bg-blue-50 border-blue-200';
-      const textColor = type === 'success' ? 'text-green-800' : type === 'error' ? 'text-red-800' : 'text-blue-800';
-      const iconColor = type === 'success' ? 'text-green-600' : type === 'error' ? 'text-red-600' : 'text-blue-600';
-      const icon = type === 'success' ? 
-        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>' :
-        type === 'error' ?
-        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>' :
-        '<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>';
-      
-      statusDiv.innerHTML = `
-        <div class="mt-4 p-4 ${bgColor} border rounded-xl">
-          <div class="flex items-center gap-3">
-            <svg class="w-5 h-5 ${iconColor}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              ${icon}
-            </svg>
-            <div class="${textColor} font-medium">${message}</div>
-          </div>
-        </div>
-      `;
-      
-      // Auto-hide success/error messages after 10 seconds
-      if (type === 'success' || type === 'error') {
-        setTimeout(() => {
-          if (statusDiv) {
-            statusDiv.innerHTML = '';
-          }
-        }, 10000);
-      }
     }
 
     document.getElementById('upload').onclick = async () => {
