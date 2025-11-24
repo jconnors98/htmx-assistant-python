@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Background scheduler for automated website scraping.
 Uses APScheduler to run daily/weekly scraping tasks.
@@ -6,6 +8,7 @@ Uses APScheduler to run daily/weekly scraping tasks.
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from bson import ObjectId
@@ -15,15 +18,18 @@ from decouple import config
 class ScrapeScheduler:
     """Scheduler for automated scraping of configured websites."""
 
-    def __init__(self, scraping_service, modes_collection, jobs_collection=None):
-        """
-        Initialize the scrape scheduler.
-        
-        Args:
-            scraping_service: ScrapingService instance
-            modes_collection: MongoDB modes collection
-            jobs_collection: MongoDB scraping_jobs collection (optional, for background jobs)
-        """
+    def __init__(
+        self,
+        modes_collection,
+        jobs_collection=None,
+        *,
+        scraper_client,
+        scraping_service=None,
+        execution_mode: str | None = None,
+    ):
+        if scraper_client is None:
+            raise ValueError("scraper_client is required for ScrapeScheduler")
+        self.scraper_client = scraper_client
         self.scraping_service = scraping_service
         self.modes_collection = modes_collection
         self.jobs_collection = jobs_collection
@@ -33,12 +39,16 @@ class ScrapeScheduler:
         self.max_verification_jobs = max(1, int(config("VERIFICATION_MAX_CONCURRENT_JOBS", default="1")))
         self._job_semaphores = {
             "scrape": threading.BoundedSemaphore(self.max_concurrent_jobs),
-            "verification": threading.BoundedSemaphore(self.max_verification_jobs)
+            "verification": threading.BoundedSemaphore(self.max_verification_jobs),
         }
-        self.environment = "dev" if getattr(self.scraping_service, "local_dev_mode", False) else "prod"
-        
-        # Link scheduler back to scraping service for automatic verification triggers
-        self.scraping_service.verification_scheduler = self
+
+        if scraping_service:
+            self.environment = "dev" if getattr(scraping_service, "local_dev_mode", False) else "prod"
+            self.scraping_service.verification_scheduler = self
+        else:
+            self.environment = config("SCRAPER_ENVIRONMENT", default="prod")
+
+        self.execution_mode = (execution_mode or ("local" if scraping_service else "remote")).lower()
     
     def start(self):
         """Start the scheduler."""
@@ -106,13 +116,11 @@ class ScrapeScheduler:
                     print(f"Skipping {mode_name} - scraped recently")
                     continue
                 
-                print(f"Running daily scrape for mode: {mode_name}")
-                
+                print(f"Queueing daily scrape for mode: {mode_name}")
                 try:
-                    result = self.scraping_service.scrape_mode_sites(mode_name, user_id)
-                    print(f"Scrape result for {mode_name}: {result}")
+                    self._enqueue_mode_scrape(mode_doc, trigger_label="daily")
                 except Exception as e:
-                    print(f"Error scraping mode {mode_name}: {e}")
+                    print(f"Error queueing scrape for mode {mode_name}: {e}")
         
         except Exception as e:
             print(f"Error in daily scrape job: {e}")
@@ -141,13 +149,12 @@ class ScrapeScheduler:
                     print(f"Skipping {mode_name} - scraped recently")
                     continue
                 
-                print(f"Running weekly scrape for mode: {mode_name}")
+                print(f"Queueing weekly scrape for mode: {mode_name}")
                 
                 try:
-                    result = self.scraping_service.scrape_mode_sites(mode_name, user_id)
-                    print(f"Scrape result for {mode_name}: {result}")
+                    self._enqueue_mode_scrape(mode_doc, trigger_label="weekly")
                 except Exception as e:
-                    print(f"Error scraping mode {mode_name}: {e}")
+                    print(f"Error queueing weekly scrape for mode {mode_name}: {e}")
         
         except Exception as e:
             print(f"Error in weekly scrape job: {e}")
@@ -157,8 +164,13 @@ class ScrapeScheduler:
         print(f"Running content verification at {datetime.utcnow()}")
         
         try:
+            if self.scraper_client.is_remote or not self.scraping_service:
+                job_id = self.scraper_client.queue_verification(batch_size=20)
+                print(f"Queued remote verification job {job_id}")
+                return
+
             # Get statistics first
-            stats = self.scraping_service.get_verification_statistics()
+            stats = self.scraper_client.get_verification_statistics()
             pending_count = stats.get("pending_verification", 0)
             
             if pending_count == 0:
@@ -187,8 +199,73 @@ class ScrapeScheduler:
             Scraping results
         """
         print(f"Triggering immediate scrape for mode: {mode_name}")
-        return self.scraping_service.scrape_mode_sites(mode_name, user_id)
+        if self.scraper_client.is_remote:
+            mode_doc = self.modes_collection.find_one({"name": mode_name, "user_id": user_id}) or {}
+            if not mode_doc:
+                raise ValueError("Mode not found or not owned by the user")
+            mode_id = str(mode_doc.get("_id"))
+            scrape_sites = mode_doc.get("scrape_sites", [])
+            if not scrape_sites:
+                raise ValueError("Mode has no configured scrape sites")
+            job_id = self.scraper_client.queue_mode_scrape(
+                mode_name=mode_name,
+                user_id=user_id,
+                mode_id=mode_id,
+                scrape_sites=scrape_sites,
+                auto_dispatch=True,
+            )
+            return {
+                "status": "queued",
+                "job_id": str(job_id),
+                "mode_name": mode_name,
+            }
+        return self.scraper_client.scrape_mode_synchronously(mode_name, user_id)
     
+    def _enqueue_mode_scrape(self, mode_doc, trigger_label: str = "manual"):
+        mode_name = mode_doc.get("name")
+        user_id = mode_doc.get("user_id")
+        mode_id = str(mode_doc.get("_id"))
+        scrape_sites = mode_doc.get("scrape_sites", [])
+
+        auto_dispatch = self.scraper_client.is_remote
+        job_id = self.scraper_client.queue_mode_scrape(
+            mode_name=mode_name,
+            user_id=user_id,
+            mode_id=mode_id,
+            scrape_sites=scrape_sites,
+            auto_dispatch=auto_dispatch,
+        )
+
+        if not auto_dispatch:
+            self._start_local_scrape_thread(job_id, mode_name, user_id)
+
+        print(f"[{trigger_label}] queued scrape job {job_id} for mode '{mode_name}'")
+        return job_id
+
+    def _start_local_scrape_thread(self, job_id, mode_name, user_id, resume_state=None):
+        def run_with_slot():
+            with self._job_slot("scrape", job_id):
+                self.scraper_client.dispatch_mode_scrape(job_id, mode_name, user_id, resume_state)
+
+        thread = threading.Thread(
+            target=run_with_slot,
+            daemon=True,
+            name=f"ScrapeJob-{mode_name}",
+        )
+        thread.start()
+
+    def _start_local_verification_thread(self, job_id, batch_size: int, filters: Optional[Dict[str, Any]] = None):
+        def verification_with_slot():
+            with self._job_slot("verification", job_id):
+                self.scraper_client.dispatch_verification(job_id, batch_size, filters)
+
+        thread = threading.Thread(
+            target=verification_with_slot,
+            daemon=True,
+            name=f"VerificationJob-{job_id}",
+        )
+        thread.start()
+
     @contextmanager
     def _job_slot(self, job_type: str, job_id):
         semaphore = self._job_semaphores.get(job_type)
@@ -244,16 +321,10 @@ class ScrapeScheduler:
             if not job_id or not mode_name or not user_id:
                 continue
             
-            def run_with_slot(job_id=job_id, mode_name=mode_name, user_id=user_id, resume_state=resume_state):
-                with self._job_slot("scrape", job_id):
-                    self._run_background_scrape_job(job_id, mode_name, user_id, resume_state=resume_state)
-            
-            thread = threading.Thread(
-                target=run_with_slot,
-                daemon=True,
-                name=f"ScrapeJob-{mode_name}-resume"
-            )
-            thread.start()
+            if self.scraper_client.is_remote:
+                self.scraper_client.dispatch_mode_scrape(job_id, mode_name, user_id, resume_state=resume_state)
+            else:
+                self._start_local_scrape_thread(job_id, mode_name, user_id, resume_state=resume_state)
             
             self.jobs_collection.update_one(
                 {"_id": job_id},
@@ -286,165 +357,19 @@ class ScrapeScheduler:
         if not normalized_sites:
             raise ValueError("No valid sites provided for scraping")
         
-        # Create job document
-        job_doc = {
-            "job_type": "scrape",
-            "mode_id": mode_id,
-            "mode_name": mode_name,
-            "user_id": user_id,
-            "status": "queued",
-            "progress": {
-                "total_sites": len(normalized_sites),
-                "current_site": 0,
-                "current_site_name": None,
-                "total_pages": 0,
-                "scraped_pages": 0,
-                "reused_pages": 0,
-                "failed_pages": 0
-            },
-            "checkpoint": {
-                "pending_sites": normalized_sites
-            },
-            "result": None,
-            "error": None,
-            "created_at": datetime.utcnow(),
-            "started_at": None,
-            "completed_at": None,
-            "environment": self.environment
-        }
-        
-        job_result = self.jobs_collection.insert_one(job_doc)
-        job_id = job_result.inserted_id
-        
-        # Start scraping in background thread
-        def run_with_slot():
-            with self._job_slot("scrape", job_id):
-                self._run_background_scrape_job(job_id, mode_name, user_id)
-        
-        thread = threading.Thread(
-            target=run_with_slot,
-            daemon=True,
-            name=f"ScrapeJob-{mode_name}"
+        job_id = self.scraper_client.queue_mode_scrape(
+            mode_name=mode_name,
+            user_id=user_id,
+            mode_id=mode_id,
+            scrape_sites=normalized_sites,
+            auto_dispatch=self.scraper_client.is_remote,
         )
-        thread.start()
+        
+        if not self.scraper_client.is_remote:
+            self._start_local_scrape_thread(job_id, mode_name, user_id)
         
         print(f"Started background scraping job {job_id} for mode: {mode_name}")
         return job_id
-    
-    def _run_background_scrape_job(self, job_id, mode_name: str, user_id: str, resume_state=None):
-        """
-        Execute a scraping job in the background.
-        Updates job status throughout the process.
-        
-        Args:
-            job_id: Job document ID
-            mode_name: Name of the mode to scrape
-            user_id: User ID
-            resume_state: Optional checkpoint information to continue from a previous run
-        """
-        try:
-            # Update status to in_progress
-            status_update = {
-                "status": "in_progress",
-                "environment": self.environment
-            }
-            if resume_state:
-                status_update["resumed_at"] = datetime.utcnow()
-            else:
-                status_update["started_at"] = datetime.utcnow()
-            
-            self.jobs_collection.update_one(
-                {"_id": job_id},
-                {"$set": status_update}
-            )
-            
-            print(f"Job {job_id}: Starting scrape for mode '{mode_name}'")
-            
-            # Define progress callback to update job status
-            def update_progress(progress_data):
-                """Update the job document with current progress."""
-                try:
-                    progress_fields = {}
-                    for key in ["current_site", "total_pages", "scraped_pages", "reused_pages", "failed_pages"]:
-                        if key in progress_data and progress_data[key] is not None:
-                            progress_fields[key] = progress_data[key]
-                    
-                    # Add phase and URL discovery info if provided
-                    if progress_data.get("phase"):
-                        progress_fields["phase"] = progress_data.get("phase")
-                    if progress_data.get("urls_discovered") is not None:
-                        progress_fields["urls_discovered"] = progress_data.get("urls_discovered")
-                    
-                    update_doc = {}
-                    if progress_fields:
-                        update_doc["progress"] = progress_fields
-                    
-                    checkpoint_payload = progress_data.get("checkpoint")
-                    if checkpoint_payload is not None:
-                        update_doc["checkpoint"] = checkpoint_payload
-                        update_doc["checkpoint_updated_at"] = datetime.utcnow()
-                    
-                    if update_doc:
-                        self.jobs_collection.update_one(
-                            {"_id": job_id},
-                            {"$set": update_doc}
-                        )
-                except Exception as e:
-                    print(f"Error updating progress: {e}")
-            
-            # Run the actual scraping with progress callback
-            print("scraping mode sites")
-            result = self.scraping_service.scrape_mode_sites(
-                mode_name, 
-                user_id,
-                progress_callback=update_progress,
-                resume_state=resume_state
-            )
-            
-            # Extract progress information from result
-            progress_update = {
-                "total_sites": result.get("total_sites", 0),
-                "total_pages": result.get("total_pages_scraped", 0) + result.get("total_pages_reused", 0),
-                "scraped_pages": result.get("total_pages_scraped", 0),
-                "reused_pages": result.get("total_pages_reused", 0),
-                "failed_pages": result.get("total_pages_failed", 0)
-            }
-            
-            # Update with successful results
-            self.jobs_collection.update_one(
-                {"_id": job_id},
-                {
-                    "$set": {
-                        "status": "completed",
-                        "result": result,
-                        "progress": progress_update,
-                        "completed_at": datetime.utcnow()
-                    },
-                    "$unset": {
-                        "checkpoint": "",
-                        "checkpoint_updated_at": ""
-                    }
-                }
-            )
-            
-            print(f"Job {job_id}: Completed successfully")
-            print(f"  - Pages scraped: {result.get('total_pages_scraped', 0)}")
-            print(f"  - Pages reused: {result.get('total_pages_reused', 0)}")
-            print(f"  - Pages failed: {result.get('total_pages_failed', 0)}")
-        
-        except Exception as e:
-            # Handle errors
-            error_msg = str(e)
-            print(f"Job {job_id}: Failed with error: {error_msg}")
-            
-            self.jobs_collection.update_one(
-                {"_id": job_id},
-                {"$set": {
-                    "status": "failed",
-                    "error": error_msg,
-                    "completed_at": datetime.utcnow()
-                }}
-            )
     
     def get_job_status(self, job_id):
         """
@@ -475,9 +400,11 @@ class ScrapeScheduler:
             Verification results
         """
         print(f"Triggering immediate verification for {batch_size} pages")
+        if self.scraper_client.is_remote or not self.scraping_service:
+            raise RuntimeError("Immediate verification is only available in local mode")
         return self.scraping_service.verify_scraped_content(batch_size=batch_size)
     
-    def trigger_background_verification(self, batch_size: int = 100):
+    def trigger_background_verification(self, batch_size: int = 100, content_ids: Optional[List[str]] = None, mode_name: Optional[str] = None):
         """
         Trigger a verification run in the background (non-blocking).
         Creates a job record and runs verification in a separate thread.
@@ -491,141 +418,23 @@ class ScrapeScheduler:
         if self.jobs_collection is None:
             raise RuntimeError("Jobs collection not configured for background verification")
         
-        # Create job document
-        job_doc = {
-            "job_type": "verification",
-            "status": "queued",
-            "progress": {
-                "current_page": 0,
-                "total_pages": 0,
-                "verified_unchanged": 0,
-                "verified_updated": 0,
-                "failed": 0
-            },
-            "result": None,
-            "error": None,
-            "created_at": datetime.utcnow(),
-            "started_at": None,
-            "completed_at": None
-        }
+        filters: Dict[str, Any] = {}
+        if content_ids:
+            filters["content_ids"] = content_ids
+        if mode_name:
+            filters["mode_name"] = mode_name
+        if not filters:
+            filters = None
         
-        job_result = self.jobs_collection.insert_one(job_doc)
-        job_id = job_result.inserted_id
-        
-        # Start verification in background thread
-        def verification_with_slot():
-            with self._job_slot("verification", job_id):
-                self._run_background_verification_job(job_id, batch_size)
-        
-        thread = threading.Thread(
-            target=verification_with_slot,
-            daemon=True,
-            name=f"VerificationJob-{job_id}"
+        job_id = self.scraper_client.queue_verification(
+            batch_size=batch_size,
+            auto_dispatch=self.scraper_client.is_remote,
+            filters=filters,
         )
-        thread.start()
+        
+        if not self.scraper_client.is_remote:
+            self._start_local_verification_thread(job_id, batch_size, filters)
         
         print(f"Started background verification job {job_id}")
         return job_id
-    
-    def _run_background_verification_job(self, job_id, batch_size: int):
-        """
-        Execute a verification job in the background.
-        Updates job status throughout the process.
-        
-        Args:
-            job_id: Job document ID
-            batch_size: Number of pages to verify
-        """
-        try:
-            # Update status to in_progress
-            self.jobs_collection.update_one(
-                {"_id": job_id},
-                {"$set": {
-                    "status": "in_progress",
-                    "started_at": datetime.utcnow()
-                }}
-            )
-            
-            print(f"Job {job_id}: Starting content verification")
-            
-            # Define progress callback to update job status
-            def update_progress(progress_data):
-                """Update the job document with current progress."""
-                try:
-                    progress_payload = {
-                        "current_page": progress_data.get("current_page", 0),
-                        "total_pages": progress_data.get("total_pages", 0),
-                        "verified_unchanged": progress_data.get("verified_unchanged", 0),
-                        "verified_updated": progress_data.get("verified_updated", 0),
-                        "failed": progress_data.get("failed", 0)
-                    }
-                    
-                    current_url = progress_data.get("url")
-                    if current_url:
-                        progress_payload["current_url"] = current_url
-                    
-                    base_domain = progress_data.get("base_domain")
-                    if base_domain:
-                        progress_payload["current_domain"] = base_domain
-                    
-                    doc_modes = progress_data.get("modes")
-                    if doc_modes is not None:
-                        progress_payload["current_modes"] = doc_modes
-                    
-                    primary_mode = progress_data.get("primary_mode")
-                    if not primary_mode and doc_modes:
-                        primary_mode = doc_modes[0]
-                    if primary_mode:
-                        progress_payload["current_mode"] = primary_mode
-                    
-                    self.jobs_collection.update_one(
-                        {"_id": job_id},
-                        {"$set": {"progress": progress_payload}}
-                    )
-                except Exception as e:
-                    print(f"Error updating progress: {e}")
-            
-            # Run the actual verification with progress callback
-            result = self.scraping_service.verify_scraped_content(
-                batch_size=batch_size,
-                progress_callback=update_progress
-            )
-            
-            # Extract progress information from result
-            progress_update = {
-                "total_pages": result.get("total_checked", 0),
-                "verified_unchanged": result.get("verified_unchanged", 0),
-                "verified_updated": result.get("verified_updated", 0),
-                "failed": result.get("failed", 0)
-            }
-            
-            # Update with successful results
-            self.jobs_collection.update_one(
-                {"_id": job_id},
-                {"$set": {
-                    "status": "completed",
-                    "result": result,
-                    "progress": progress_update,
-                    "completed_at": datetime.utcnow()
-                }}
-            )
-            
-            print(f"Job {job_id}: Verification completed successfully")
-            print(f"  - Unchanged: {result.get('verified_unchanged', 0)}")
-            print(f"  - Updated: {result.get('verified_updated', 0)}")
-            print(f"  - Failed: {result.get('failed', 0)}")
-        
-        except Exception as e:
-            # Handle errors
-            error_msg = str(e)
-            print(f"Job {job_id}: Failed with error: {error_msg}")
-            
-            self.jobs_collection.update_one(
-                {"_id": job_id},
-                {"$set": {
-                    "status": "failed",
-                    "error": error_msg,
-                    "completed_at": datetime.utcnow()
-                }}
-            )
 

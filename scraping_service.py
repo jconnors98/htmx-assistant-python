@@ -124,6 +124,13 @@ class ScrapingService:
         self._requests_timeout = int(config("SCRAPER_REQUEST_TIMEOUT_SECONDS", default="15"))
         self._crawler_politeness_delay = float(config("SCRAPER_CRAWL_DELAY_SECONDS", default="0.3"))
         self._max_pdf_checks_per_page = int(config("SCRAPER_MAX_PDF_CHECKS_PER_PAGE", default="50"))
+        self._embedded_pdf_checks_suppressed = False
+        local_dev_mode = self.local_dev_mode
+        embedded_pdf_default = "false" if local_dev_mode else "true"
+        self._enable_embedded_pdf_checks = config(
+            "SCRAPER_ENABLE_EMBEDDED_PDF_CHECKS",
+            default=embedded_pdf_default
+        ).lower() == "true"
         self._http_session = requests.Session()
         self._default_headers = {
             "User-Agent": "Mozilla/5.0 (compatible; HTMXAssistantBot/1.0; +https://htmx-assistant)",
@@ -144,6 +151,24 @@ class ScrapingService:
             self.discovered_files_collection.create_index("mode")
         except Exception:
             pass  # Indexes may already exist
+    
+    def _insert_discovered_file(self, file_info: Dict[str, Any]) -> bool:
+        """Insert into discovered_files if (mode, file_url) is new."""
+        file_url = file_info.get("file_url")
+        mode_name = file_info.get("mode")
+        if not file_url:
+            return False
+        query = {"file_url": file_url}
+        if mode_name:
+            query["mode"] = mode_name
+        existing = self.discovered_files_collection.find_one(query, {"_id": 1})
+        if existing:
+            return False
+        try:
+            self.discovered_files_collection.insert_one(file_info)
+            return True
+        except Exception:
+            return False
         
     def _get_memory_usage_mb(self) -> Optional[float]:
         if not psutil or not self._cached_psutil_process:
@@ -270,7 +295,8 @@ class ScrapingService:
         extract_files: bool = False,
         load_dynamic_content: bool = False,
         merge_dynamic_content: bool = False,
-        playwright_browser=None
+        playwright_browser=None,
+        embedded_pdf_checks: Optional[bool] = None,
     ) -> Tuple[str, str, Optional[str], Optional[str], Optional[List[Dict]]]:
         """
         Scrape a single URL using Playwright.
@@ -290,6 +316,9 @@ class ScrapingService:
         try:
             if not self._is_valid_url(url):
                 return "", "", f"Invalid URL: {url}", None, None
+            
+            if embedded_pdf_checks is None:
+                embedded_pdf_checks = self._enable_embedded_pdf_checks
             
             with self._borrow_browser(playwright_browser) as browser:
                 context = browser.new_context(
@@ -341,7 +370,13 @@ class ScrapingService:
                     print(f"PASS {pass_number} CONTENT LENGTH: {len(content)} chars")
                     file_links = None
                     if extract_files:
-                        file_links = self._extract_file_links(html_content, url, title, playwright_browser=browser)
+                        file_links = self._extract_file_links(
+                            html_content,
+                            url,
+                            title,
+                            playwright_browser=browser,
+                            allow_embedded_checks=embedded_pdf_checks,
+                        )
                     
                     if not content or len(content.strip()) < 100:
                         return "", title, "Insufficient content extracted (less than 100 characters)", html_content, file_links
@@ -1728,6 +1763,9 @@ class ScrapingService:
         """
         import concurrent.futures
         
+        if not self._enable_embedded_pdf_checks or self._embedded_pdf_checks_suppressed:
+            return None
+        
         try:
             # Note: We don't pass playwright_browser to the thread for thread safety
             # Each embedded PDF check gets its own browser instance
@@ -1738,11 +1776,26 @@ class ScrapingService:
         except concurrent.futures.TimeoutError:
             print(f"  ⚠ Timeout checking for embedded PDF: {page_url}")
             return None
+        except RuntimeError as e:
+            message = str(e).lower()
+            if "cannot schedule new futures after interpreter shutdown" in message:
+                print("  ⚠ Embedded PDF checks cancelled during interpreter shutdown; suppressing further checks")
+                self._embedded_pdf_checks_suppressed = True
+                return None
+            print(f"  ⚠ Error in embedded PDF check: {e}")
+            return None
         except Exception as e:
             print(f"  ⚠ Error in embedded PDF check: {e}")
             return None
     
-    def _extract_file_links(self, html_content: str, base_url: str, source_page_title: str, playwright_browser=None) -> List[Dict]:
+    def _extract_file_links(
+        self,
+        html_content: str,
+        base_url: str,
+        source_page_title: str,
+        playwright_browser=None,
+        allow_embedded_checks: Optional[bool] = None,
+    ) -> List[Dict]:
         """
         Extract downloadable file links from HTML content.
         Also checks for PDF viewer pages and extracts actual PDF URLs.
@@ -1779,6 +1832,13 @@ class ScrapingService:
         embed_check_urls = []  # Track URLs to check for embedded PDFs
         seen_file_urls = set()  # Track seen file URLs to prevent duplicates
         remaining_pdf_checks = self._max_pdf_checks_per_page
+        if allow_embedded_checks is None:
+            allow_embedded_checks = self._enable_embedded_pdf_checks
+        effective_embedded_checks = (
+            allow_embedded_checks and not self._embedded_pdf_checks_suppressed
+        )
+
+        print(f"Extracting file links from {source_page_title} on {base_url}")
         
         try:
             soup = BeautifulSoup(html_content, 'html.parser')
@@ -1842,12 +1902,17 @@ class ScrapingService:
                 elif self._is_pdf_viewer_page(absolute_url):
                     # Potential PDF viewer page - add to list for checking
                     pdf_viewer_urls.append((absolute_url, link_text))
-                else:
+                elif effective_embedded_checks:
                     # Check if this link might lead to a page with an embedded PDF
                     # Only check links from the same domain to avoid excessive crawling
                     if self._is_same_domain(absolute_url, base_url):
                         embed_check_urls.append((absolute_url, link_text))
-            
+                else:
+                    continue
+
+            print(f"Found {len(pdf_viewer_urls)} PDF viewer URLs")
+            print(f"Found {len(embed_check_urls)} embed check URLs")
+            print(f"Found {len(files)} files")
             # Process PDF viewer URLs (check all for thoroughness)
             if pdf_viewer_urls:
                 duplicates_skipped = 0
@@ -1881,8 +1946,22 @@ class ScrapingService:
                 if duplicates_skipped > 0:
                     print(f"  ⏭️  Skipped {duplicates_skipped} duplicate PDF(s) from viewers")
             
+            if not effective_embedded_checks:
+                if embed_check_urls:
+                    if not allow_embedded_checks:
+                        print("Embedded PDF checks disabled for this scrape")
+                    elif self._embedded_pdf_checks_suppressed:
+                        print("Embedded PDF checks suppressed after previous errors")
+                    else:
+                        print("Embedded PDF checks disabled via SCRAPER_ENABLE_EMBEDDED_PDF_CHECKS")
+            else:
+                print(f"Processing {len(embed_check_urls)} embed check URLs")
             # Process URLs that might have embedded PDFs (check all links for thoroughness)
-            if embed_check_urls and remaining_pdf_checks > 0:
+            if (
+                effective_embedded_checks
+                and embed_check_urls
+                and remaining_pdf_checks > 0
+            ):
                 duplicates_skipped = 0
                 
                 for embed_url, link_text in embed_check_urls:  # Check ALL links, no limit
@@ -1917,6 +1996,7 @@ class ScrapingService:
         except Exception as e:
             print(f"Error extracting file links: {e}")
         
+        print(f"Returning {len(files)} files")
         return files
     
     def _crawl_site(
@@ -2206,6 +2286,7 @@ class ScrapingService:
             return {"error": "No pending sites to process", "success": False}
         
         checkpoint_state: Dict[str, Any] = {}
+        processed_domains: Set[str] = set()
         
         def _update_checkpoint(current_site=None, remaining_urls=None, total_urls=None, processed_urls=None, pending_override=None):
             pending_snapshot = []
@@ -2265,6 +2346,8 @@ class ScrapingService:
         
         _update_checkpoint(current_site=None, pending_override=list(pending_sites_queue))
         
+        newly_scraped_ids: List[str] = []
+        
         results = {
             "success": True,
             "mode": mode_name,
@@ -2288,6 +2371,8 @@ class ScrapingService:
                 resume_consumed = True
             
             base_domain = self._get_base_domain(site_url)
+            if base_domain:
+                processed_domains.add(base_domain)
             is_single_page = self._is_single_page_url(site_url)
             site_metrics = self._init_site_metrics() if self._metrics_enabled else None
             site_timer = time.perf_counter() if self._metrics_enabled else None
@@ -2388,7 +2473,8 @@ class ScrapingService:
                         content, title, error, html_content, file_links = self.scrape_url(
                             site_url, 
                             extract_files=False,  # First pass: content only, no file discovery
-                            load_dynamic_content=False
+                            load_dynamic_content=False,
+                            embedded_pdf_checks=self._enable_embedded_pdf_checks,
                         )
                         
                         if error:
@@ -2424,7 +2510,8 @@ class ScrapingService:
                             }
                         }
                         
-                        self.scraped_content_collection.insert_one(content_doc)
+                        insert_result = self.scraped_content_collection.insert_one(content_doc)
+                        newly_scraped_ids.append(str(insert_result.inserted_id))
                         
                         # Store discovered files
                         if file_links:
@@ -2434,11 +2521,7 @@ class ScrapingService:
                                 file_info["user_id"] = user_id
                                 file_info["status"] = "discovered"
                                 file_info["base_domain"] = base_domain
-                                
-                                try:
-                                    self.discovered_files_collection.insert_one(file_info)
-                                except Exception as e:
-                                    pass
+                                self._insert_discovered_file(file_info)
                             
                             print(f"  📄 Discovered {len(file_links)} downloadable file(s)")
                         
@@ -2673,7 +2756,8 @@ class ScrapingService:
                                 }
                             }
                             
-                            self.scraped_content_collection.insert_one(content_doc)
+                            insert_result = self.scraped_content_collection.insert_one(content_doc)
+                            newly_scraped_ids.append(str(insert_result.inserted_id))
                             
                             # Store discovered files
                             if file_links:
@@ -2683,12 +2767,7 @@ class ScrapingService:
                                     file_info["user_id"] = user_id
                                     file_info["status"] = "discovered"  # 'discovered' or 'added'
                                     file_info["base_domain"] = base_domain
-                                    
-                                    try:
-                                        self.discovered_files_collection.insert_one(file_info)
-                                    except Exception as e:
-                                        # Duplicate file URL for this mode - skip
-                                        pass
+                                    self._insert_discovered_file(file_info)
                                 
                                 print(f"  📄 Discovered {len(file_links)} downloadable file(s)")
                             
@@ -2786,28 +2865,41 @@ class ScrapingService:
         print(f"Total pages: {total_content} (scraped: {results['total_pages_scraped']}, reused: {results['total_pages_reused']}, failed: {results['total_pages_failed']})")
         print(f"{'='*60}\n")
         
-        # Trigger background verification for newly scraped content
-        if results["total_pages_scraped"] > 0:
-            print(f"Triggering background verification for {results['total_pages_scraped']} newly scraped pages...")
+        results["newly_scraped_content_ids"] = newly_scraped_ids
+        site_content_ids: List[str] = []
+        if processed_domains:
+            domain_list = list(processed_domains)
+            cursor = self.scraped_content_collection.find(
+                {"base_domain": {"$in": domain_list}, "status": "active"},
+                {"_id": 1}
+            )
+            site_content_ids = [str(doc["_id"]) for doc in cursor]
+        results["verification_candidate_ids"] = site_content_ids
+        
+        # Trigger background verification for all pages tied to the scraped sites
+        if site_content_ids:
+            print(f"Triggering background verification for {len(site_content_ids)} page(s) across scraped sites...")
             if self.verification_scheduler:
                 try:
                     # Trigger background verification via scheduler (non-blocking)
                     job_id = self.verification_scheduler.trigger_background_verification(
-                        batch_size=results["total_pages_scraped"]
+                        batch_size=len(site_content_ids),
+                        content_ids=site_content_ids,
+                        mode_name=mode_name
                     )
                     print(f"✓ Background verification job started: {job_id}")
                     results["verification_job_id"] = str(job_id)
                 except Exception as e:
                     print(f"⚠ Could not start background verification: {e}")
                     print(f"  Starting verification in separate thread without job tracking...")
-                    self._trigger_verification_thread(results["total_pages_scraped"])
+                    self._trigger_verification_thread(len(site_content_ids), site_content_ids, mode_name=mode_name)
             else:
                 print(f"⚠ No verification scheduler configured - starting verification in separate thread...")
-                self._trigger_verification_thread(results["total_pages_scraped"])
+                self._trigger_verification_thread(len(site_content_ids), site_content_ids, mode_name=mode_name)
         
         return results
     
-    def _trigger_verification_thread(self, batch_size: int):
+    def _trigger_verification_thread(self, batch_size: int, content_ids: Optional[List[str]] = None, mode_name: Optional[str] = None):
         """
         Trigger verification in a separate thread when scheduler is not available.
         
@@ -2819,7 +2911,14 @@ class ScrapingService:
         def run_verification():
             try:
                 print(f"Background verification thread started for {batch_size} pages")
-                result = self.verify_scraped_content(batch_size=batch_size)
+                filters: Optional[Dict[str, Any]] = None
+                if content_ids or mode_name:
+                    filters = {}
+                    if content_ids:
+                        filters["content_ids"] = content_ids
+                    if mode_name:
+                        filters["mode_name"] = mode_name
+                result = self.verify_scraped_content(batch_size=batch_size, filters=filters)
                 print(f"Background verification complete: {result.get('verified_updated', 0)} updated, {result.get('verified_unchanged', 0)} unchanged")
             except Exception as e:
                 print(f"Background verification error: {e}")
@@ -2885,7 +2984,8 @@ class ScrapingService:
         self,
         batch_size: int = 10,
         max_retries: int = 2,
-        progress_callback=None
+        progress_callback=None,
+        filters: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, any]:
         """
         Background process to verify scraped content by re-scraping with full dynamic content.
@@ -2900,10 +3000,23 @@ class ScrapingService:
             Dictionary with verification results
         """
         # Find content that needs verification
-        pending_content = list(self.scraped_content_collection.find({
+        query: Dict[str, Any] = {
             "verification_status": "pending_verification",
             "status": "active"
-        }).limit(batch_size))
+        }
+        limit = batch_size
+        if filters:
+            mode_filter = filters.get("mode_name")
+            if mode_filter:
+                query["modes"] = mode_filter
+            content_ids = filters.get("content_ids")
+            if content_ids:
+                from bson import ObjectId
+                object_ids = [ObjectId(cid) for cid in content_ids if cid]
+                if object_ids:
+                    query["_id"] = {"$in": object_ids}
+                    limit = len(object_ids)
+        pending_content = list(self.scraped_content_collection.find(query).limit(limit))
         
         if not pending_content:
             return {
@@ -2958,7 +3071,8 @@ class ScrapingService:
                         extract_files=True,  # Second pass: extract all discoverable files
                         merge_dynamic_content=True,  # Use merge mode for second pass
                         expand_accordions=True,
-                        playwright_browser=browser  # Reuse browser for performance
+                        playwright_browser=browser,  # Reuse browser for performance
+                        embedded_pdf_checks=False,
                     )
                     
                     if error:
@@ -3031,11 +3145,7 @@ class ScrapingService:
                                     file_info_copy["user_id"] = doc.get("user_id")
                                     file_info_copy["status"] = "discovered"
                                     file_info_copy["base_domain"] = doc.get("base_domain")
-                                    
-                                    try:
-                                        self.discovered_files_collection.insert_one(file_info_copy)
-                                    except Exception:
-                                        pass  # Duplicate - skip
+                                    self._insert_discovered_file(file_info_copy)
                         
                         results["verified_updated"] += 1
                         results["updates"].append({

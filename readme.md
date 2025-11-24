@@ -87,6 +87,29 @@ Set the following variables:
 ### Development
 - `LOCAL_DEV_MODE` (optional, defaults to `false`) - Set to `true` for local development
 
+### Scraper Service
+- `SCRAPER_EXECUTION_MODE` - `local` (default) keeps scraping inside the Flask app, `remote` pushes all jobs to the worker service.
+- `SCRAPER_ENVIRONMENT` - Logical environment label stored with job documents (defaults to `prod`).
+- `SCRAPER_SQS_QUEUE_URL` - Required when `SCRAPER_EXECUTION_MODE=remote`; points to the SQS queue consumed by the scraper worker.
+- `SCRAPER_SQS_REGION` - AWS region for the scraper queue (defaults to `COGNITO_REGION` or `us-east-1`).
+- `SCRAPER_SQS_MESSAGE_GROUP_ID` (optional) - FIFO message group for deterministic ordering.
+- `SCRAPER_ENABLE_EMBEDDED_PDF_CHECKS` - Enable slow embedded-PDF detection (defaults to `false` in local dev, `true` elsewhere). Disable to speed up scrapes or avoid noisy shutdown logs.
+- `SCRAPER_MAX_PDF_CHECKS_PER_PAGE` - Upper bound on viewer/embedded PDF checks per page (defaults to `50`).
+
+The remote worker lives in `services/scraper_worker`. Run it locally with:
+
+```bash
+cd services/scraper_worker
+pip install -r requirements.txt
+python worker.py
+```
+
+For container deployments, build with:
+
+```bash
+docker build -f services/scraper_worker/Dockerfile . -t scraper-worker
+```
+
 Available modes and their prompts are stored in the `modes` collection.
 
 ## Password Reset Setup

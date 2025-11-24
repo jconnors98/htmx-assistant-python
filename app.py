@@ -21,6 +21,8 @@ import threading
 from conversation_service import ConversationService
 from scraping_service import ScrapingService
 from scrape_scheduler import ScrapeScheduler
+from assistant_services import ScraperClient
+from packages.common.scraper_contracts import ScraperQueueConfig
 from functions import (
     _get_priority_source, _get_jwks, _is_super_admin, _async_log_prompt,
     _parse_date, _normalize_color, _normalize_text_color, _process_natural_language_query,
@@ -49,25 +51,6 @@ superadmins_collection = db.get_collection("superadmins")
 reset_tokens_collection = db.get_collection("password_reset_tokens")
 scraped_content_collection = db.get_collection("scraped_content")
 scraping_jobs_collection = db.get_collection("scraping_jobs")
-
-conversation_service = ConversationService(
-    db,
-    modes_collection,
-    client,
-    VECTOR_STORE_ID,
-)
-
-scraping_service = ScrapingService(
-    client,
-    db,
-    VECTOR_STORE_ID,
-)
-
-scrape_scheduler = ScrapeScheduler(
-    scraping_service,
-    modes_collection,
-    scraping_jobs_collection,
-)
 
 localDevMode = config("LOCAL_DEV_MODE", default="false").lower()
 
@@ -101,6 +84,64 @@ ses = boto3.client(
     region_name=COGNITO_REGION
 )
 _jwks = None
+
+conversation_service = ConversationService(
+    db,
+    modes_collection,
+    client,
+    VECTOR_STORE_ID,
+)
+
+SCRAPER_EXECUTION_MODE = config("SCRAPER_EXECUTION_MODE", default="local").lower()
+SCRAPER_ENVIRONMENT = config("SCRAPER_ENVIRONMENT", default="prod")
+SCRAPER_SQS_QUEUE_URL = config("SCRAPER_SQS_QUEUE_URL", default=None)
+SCRAPER_SQS_REGION = config("SCRAPER_SQS_REGION", default=COGNITO_REGION or "us-east-1")
+SCRAPER_SQS_MESSAGE_GROUP_ID = config("SCRAPER_SQS_MESSAGE_GROUP_ID", default=None)
+
+scraping_service = None
+scraper_client = None
+
+if SCRAPER_EXECUTION_MODE == "local":
+    scraping_service = ScrapingService(
+        client,
+        db,
+        VECTOR_STORE_ID,
+    )
+    scraper_client = ScraperClient(
+        mode="local",
+        jobs_collection=scraping_jobs_collection,
+        scraper_environment="dev" if localDevMode == "true" else "prod",
+        scraping_service=scraping_service,
+    )
+else:
+    if not SCRAPER_SQS_QUEUE_URL:
+        raise RuntimeError("SCRAPER_SQS_QUEUE_URL is required when SCRAPER_EXECUTION_MODE='remote'")
+
+    sqs_client = boto3.client(
+        "sqs",
+        aws_access_key_id=AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+        region_name=SCRAPER_SQS_REGION,
+    )
+    queue_config = ScraperQueueConfig(
+        queue_url=SCRAPER_SQS_QUEUE_URL,
+        region_name=SCRAPER_SQS_REGION,
+        message_group_id=SCRAPER_SQS_MESSAGE_GROUP_ID or None,
+    )
+    scraper_client = ScraperClient(
+        mode="remote",
+        jobs_collection=scraping_jobs_collection,
+        scraper_environment=SCRAPER_ENVIRONMENT,
+        sqs_client=sqs_client,
+        queue_config=queue_config,
+    )
+
+scrape_scheduler = ScrapeScheduler(
+    modes_collection,
+    scraping_jobs_collection,
+    scraper_client=scraper_client,
+    scraping_service=scraping_service,
+)
 
 
 def cognito_auth_required(fn):
@@ -2113,24 +2154,21 @@ def delete_scraped_content(content_id):
     if not doc:
         return {"error": "Content not found"}, 404
     
-    # Start background deletion
-    def delete_in_background():
-        try:
-            scraping_service.delete_scraped_content(content_id)
-            print(f"Background deletion completed for content {content_id}")
-        except Exception as e:
-            print(f"Error in background content deletion: {e}")
-    
-    thread = threading.Thread(
-        target=delete_in_background,
-        daemon=True,
-        name=f"DeleteContent-{content_id}"
+    job_id = scraper_client.queue_delete_content(
+        content_id=content_id,
+        user_id=request.user["sub"],
+        mode_name=None,
     )
-    thread.start()
+    
+    if not scraper_client.is_remote and SCRAPER_EXECUTION_MODE == "local":
+        message = "Deletion running on local scraper service"
+    else:
+        message = "Deletion job queued on scraper worker"
     
     return {
-        "status": "deleting",
-        "message": "Deletion started in background"
+        "status": "queued",
+        "message": message,
+        "job_id": str(job_id)
     }, 202  # 202 Accepted
 
 
@@ -2155,8 +2193,22 @@ def refresh_scraped_content(content_id):
     if not url or not mode:
         return {"error": "Invalid content document"}, 400
     
+    if SCRAPER_EXECUTION_MODE != "local" or scraping_service is None:
+        job_id = scraper_client.queue_single_url_refresh(
+            content_id=content_id,
+            url=url,
+            mode_name=mode,
+            user_id=user_id,
+        )
+        return {
+            "status": "queued",
+            "job_id": str(job_id),
+            "mode": mode,
+            "message": "Refresh job enqueued on scraper worker"
+        }, 202
+    
     try:
-        # Scrape the URL
+        # Scrape the URL locally
         content, title, error = scraping_service.scrape_url(url)
         
         if error:
