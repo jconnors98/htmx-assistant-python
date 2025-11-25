@@ -139,3 +139,4 @@ For detailed setup instructions, see [SES_SETUP.md](./SES_SETUP.md).
 - `prompt_logs` - Analytics and prompt history
 - `superadmins` - Super admin user IDs
 - `password_reset_tokens` - Password reset tokens (TTL indexed)
+- `scrape_failures` - Per-page scrape failures with error metadata

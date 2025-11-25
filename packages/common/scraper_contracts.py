@@ -18,6 +18,7 @@ ScraperJobType = Literal[
     "single_url_refresh",
     "delete_content",
     "verification",
+    "site_delete",
 ]
 
 

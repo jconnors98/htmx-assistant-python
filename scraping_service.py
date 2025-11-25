@@ -107,6 +107,7 @@ class ScrapingService:
         self.scraped_content_collection = mongo_db.get_collection("scraped_content")
         self.scraped_sites_collection = mongo_db.get_collection("scraped_sites")
         self.discovered_files_collection = mongo_db.get_collection("discovered_files")
+        self.scrape_failures_collection = mongo_db.get_collection("scrape_failures")
         self.modes_collection = mongo_db.get_collection("modes")
         self.vector_store_id = vector_store_id
         self.local_dev_mode = config("LOCAL_DEV_MODE", default="false").lower() == "true"
@@ -149,6 +150,12 @@ class ScrapingService:
             self.scraped_sites_collection.create_index("base_domain", unique=True)
             self.discovered_files_collection.create_index([("mode", 1), ("file_url", 1)], unique=True)
             self.discovered_files_collection.create_index("mode")
+            self.scrape_failures_collection.create_index(
+                [("normalized_url", 1), ("mode_name", 1)],
+                unique=True,
+            )
+            self.scrape_failures_collection.create_index("base_domain")
+            self.scrape_failures_collection.create_index("failed_at")
         except Exception:
             pass  # Indexes may already exist
     
@@ -169,6 +176,72 @@ class ScrapingService:
             return True
         except Exception:
             return False
+    
+    def _record_failed_page(
+        self,
+        *,
+        normalized_url: Optional[str],
+        original_url: str,
+        base_domain: Optional[str],
+        mode_name: str,
+        user_id: str,
+        error: Optional[str],
+        attempts: Optional[int],
+        context: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Persist metadata about a failed scrape attempt."""
+        collection = getattr(self, "scrape_failures_collection", None)
+        if collection is None:
+            return
+        
+        normalized = normalized_url or self._normalize_url(original_url)
+        if not normalized:
+            return
+        
+        now = datetime.utcnow()
+        failure_context = dict(context or {})
+        if attempts is not None:
+            failure_context["attempts"] = attempts
+        
+        update_doc: Dict[str, Any] = {
+            "$set": {
+                "normalized_url": normalized,
+                "original_url": original_url,
+                "base_domain": base_domain,
+                "mode_name": mode_name,
+                "user_id": user_id,
+                "last_error": error or "Unknown error",
+                "failed_at": now,
+                "context": failure_context,
+            },
+            "$setOnInsert": {
+                "first_failed_at": now,
+                "failure_count": 0,
+            },
+            "$inc": {"failure_count": 1},
+        }
+        
+        try:
+            collection.update_one(
+                {"normalized_url": normalized, "mode_name": mode_name},
+                update_doc,
+                upsert=True,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"Warning: Could not record failed page {original_url}: {exc}")
+    
+    def _clear_failed_page(self, normalized_url: str, mode_name: str) -> None:
+        """Remove failure metadata after a successful scrape."""
+        collection = getattr(self, "scrape_failures_collection", None)
+        if collection is None or not normalized_url:
+            return
+        
+        try:
+            collection.delete_one(
+                {"normalized_url": normalized_url, "mode_name": mode_name}
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"Warning: Could not clear failed page record {normalized_url}: {exc}")
         
     def _get_memory_usage_mb(self) -> Optional[float]:
         if not psutil or not self._cached_psutil_process:
@@ -1420,7 +1493,7 @@ class ScrapingService:
                             for (const el of allElements) {
                                 const onclick = el.getAttribute('onclick');
                                 if (onclick && onclick.includes('.pdf')) {
-                                    const match = onclick.match(/['"]([^'"]*\.pdf[^'"]*)['"]/);
+                                    const match = onclick.match(/['"]([^'"]*\\.pdf[^'"]*)['"]/);
                                     if (match) return match[1];
                                 }
                             }
@@ -2445,6 +2518,7 @@ class ScrapingService:
                         {"_id": existing["_id"]},
                         {"$addToSet": {"modes": mode_name}}
                     )
+                    self._clear_failed_page(normalized_url, mode_name)
                     site_result["pages_reused"] = 1
                     results["total_pages_reused"] += 1
                     site_result["status"] = "reused"
@@ -2512,6 +2586,7 @@ class ScrapingService:
                         
                         insert_result = self.scraped_content_collection.insert_one(content_doc)
                         newly_scraped_ids.append(str(insert_result.inserted_id))
+                        self._clear_failed_page(normalized_url, mode_name)
                         
                         # Store discovered files
                         if file_links:
@@ -2548,6 +2623,20 @@ class ScrapingService:
                         results["total_pages_failed"] += 1
                         site_result["status"] = "failed"
                         print(f"  ✗ Failed: {error}")
+                        self._record_failed_page(
+                            normalized_url=normalized_url,
+                            original_url=site_url,
+                            base_domain=base_domain,
+                            mode_name=mode_name,
+                            user_id=user_id,
+                            error=error,
+                            attempts=retry_count,
+                            context={
+                                "is_single_page": True,
+                                "max_retries": max_retries,
+                                "site_url": site_url,
+                            },
+                        )
                         
                         _update_checkpoint(current_site=None, pending_override=list(pending_sites_queue))
                         
@@ -2584,6 +2673,9 @@ class ScrapingService:
                         {"_id": page["_id"]},
                         {"$addToSet": {"modes": mode_name}}
                     )
+                    normalized_existing = page.get("normalized_url")
+                    if normalized_existing:
+                        self._clear_failed_page(normalized_existing, mode_name)
                     reused_count += 1
                     _record_page()
                 
@@ -2689,6 +2781,7 @@ class ScrapingService:
                                 {"_id": existing["_id"]},
                                 {"$addToSet": {"modes": mode_name}}
                             )
+                            self._clear_failed_page(normalized_url, mode_name)
                             site_result["pages_reused"] += 1
                             results["total_pages_reused"] += 1
                             print(f"  ✓ Reused existing content")
@@ -2758,6 +2851,7 @@ class ScrapingService:
                             
                             insert_result = self.scraped_content_collection.insert_one(content_doc)
                             newly_scraped_ids.append(str(insert_result.inserted_id))
+                            self._clear_failed_page(normalized_url, mode_name)
                             
                             # Store discovered files
                             if file_links:
@@ -2801,6 +2895,21 @@ class ScrapingService:
                             site_result["pages_failed"] += 1
                             results["total_pages_failed"] += 1
                             print(f"  ✗ Failed: {error}")
+                            self._record_failed_page(
+                                normalized_url=normalized_url,
+                                original_url=url,
+                                base_domain=base_domain,
+                                mode_name=mode_name,
+                                user_id=user_id,
+                                error=error,
+                                attempts=retry_count,
+                                context={
+                                    "site_url": site_url,
+                                    "page_index": idx,
+                                    "total_urls": total_urls,
+                                    "max_retries": max_retries,
+                                },
+                            )
                         
                         # Update progress after failed page
                         _update_checkpoint(

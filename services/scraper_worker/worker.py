@@ -76,15 +76,21 @@ def _dispatch_request(request: ScraperJobRequest, processor: ScrapeJobProcessor)
             batch_size=int(payload.get("batch_size", 50)),
             filters=payload.get("filters"),
         )
+    elif request.job_type == "site_delete":
+        processor.run_site_delete_job(
+            request.job_id,
+            mode_name=payload["mode_name"],
+            domain=payload["domain"],
+        )
     else:
         raise ValueError(f"Unsupported job type: {request.job_type}")
 
 
 def main():
     local_dev_mode = config("LOCAL_DEV_MODE", default="false").lower()
-    if local_dev_mode != "true":
-        os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/opt/bitnami/playwright-browsers")
-        os.environ.setdefault("XDG_CACHE_HOME", "/opt/bitnami/playwright-cache")
+    # if local_dev_mode != "true":
+    #     os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/opt/bitnami/playwright-browsers")
+    #     os.environ.setdefault("XDG_CACHE_HOME", "/opt/bitnami/playwright-cache")
 
     queue_url = config("SCRAPER_SQS_QUEUE_URL")
     region = config("SCRAPER_SQS_REGION", default=config("COGNITO_REGION", default="us-east-1"))

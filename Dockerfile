@@ -12,5 +12,7 @@ COPY . /app
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-CMD ["python", "services/scraper_worker/worker.py"]
+RUN playwright install chromium
+RUN playwright install-deps chromium
 
+CMD ["python", "services/scraper_worker/worker.py"]

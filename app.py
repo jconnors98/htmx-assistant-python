@@ -1813,87 +1813,20 @@ def delete_site_content(mode_id, domain):
         if not content_docs:
             return {"error": "No content found for this site"}, 404
         
-        # Count what will be deleted/unlinked (for immediate response)
-        deleted_count = 0
-        unlinked_count = 0
-        content_ids = []
-        
-        for doc in content_docs:
-            modes_list = doc.get("modes", [])
-            content_ids.append(doc["_id"])
-            
-            if len(modes_list) > 1:
-                unlinked_count += 1
-            else:
-                deleted_count += 1
-        
-        # Start background deletion thread
-        def delete_in_background():
-            """Perform actual deletion in background thread."""
-            try:
-                print(f"Background deletion started for {domain} in mode {mode_name}")
-                
-                for doc_id in content_ids:
-                    doc = scraped_content_collection.find_one({"_id": doc_id})
-                    if not doc:
-                        continue
-                    
-                    modes_list = doc.get("modes", [])
-                    
-                    # If used by multiple modes, just unlink
-                    if len(modes_list) > 1:
-                        scraped_content_collection.update_one(
-                            {"_id": doc_id},
-                            {"$pull": {"modes": mode_name}}
-                        )
-                    else:
-                        # Delete from OpenAI vector store
-                        openai_file_id = doc.get("openai_file_id")
-                        if openai_file_id and VECTOR_STORE_ID:
-                            try:
-                                client.files.delete(openai_file_id)
-                                client.vector_stores.files.delete(
-                                    vector_store_id=VECTOR_STORE_ID,
-                                    file_id=openai_file_id
-                                )
-                            except Exception as e:
-                                print(f"Error deleting file {openai_file_id} from OpenAI: {e}")
-                        
-                        # Delete from MongoDB
-                        scraped_content_collection.delete_one({"_id": doc_id})
-                
-                # Update mode's has_scraped_content flag if no content remains
-                remaining_count = scraped_content_collection.count_documents({
-                    "modes": mode_name,
-                    "status": "active"
-                })
-                
-                if remaining_count == 0:
-                    modes_collection.update_one(
-                        {"name": mode_name},
-                        {"$set": {"has_scraped_content": False}}
-                    )
-                
-                print(f"Background deletion completed for {domain} in mode {mode_name}")
-                
-            except Exception as e:
-                print(f"Error in background deletion: {e}")
-        
-        # Start the background thread
-        thread = threading.Thread(
-            target=delete_in_background,
-            daemon=True,
-            name=f"DeleteSite-{domain}"
+        # Start background deletion job
+        job_id = scraper_client.queue_site_delete(
+            mode_id=mode_id,
+            mode_name=mode_name,
+            domain=domain,
+            user_id=request.user.get("sub") if not request.user.get("is_super_admin") else "superadmin",
+            auto_dispatch=True
         )
-        thread.start()
         
-        # Return immediately with counts
+        # Return immediately
         return {
             "status": "deleting",
-            "deleted": deleted_count,
-            "unlinked": unlinked_count,
-            "total": deleted_count + unlinked_count,
-            "message": "Deletion started in background. This may take a few minutes for large sites."
+            "job_id": str(job_id),
+            "message": "Deletion started in background."
         }, 202  # 202 Accepted
         
     except Exception as e:
@@ -2366,8 +2299,10 @@ def get_active_scrape_jobs(mode_id):
         return {
             "jobs": [{
                 "_id": str(job["_id"]),
+                "job_type": job.get("job_type", "scrape"),
                 "mode_id": job.get("mode_id"),
                 "mode_name": job["mode_name"],
+                "domain": job.get("domain"),
                 "status": job["status"],
                 "progress": job.get("progress", {}),
                 "created_at": job["created_at"].isoformat() if job.get("created_at") else None,

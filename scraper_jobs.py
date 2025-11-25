@@ -26,6 +26,7 @@ class ScrapeJobProcessor:
         self.jobs_collection = jobs_collection
         self.environment = environment
         self._scraped_content = getattr(scraping_service, "scraped_content_collection", None)
+        self._modes_collection = getattr(scraping_service, "modes_collection", None)
 
     # --------------------------------------------------------------------- #
     # Mode scraping
@@ -290,6 +291,73 @@ class ScrapeJobProcessor:
             )
             print(f"Delete job {job_id}: failed ({exc})")
 
+    def run_site_delete_job(self, job_id, mode_name: str, domain: str):
+        """Delete all scraped content from a specific site for a mode."""
+        if self.jobs_collection is None or self._scraped_content is None:
+            raise RuntimeError("Collections required for site delete jobs")
+
+        job_id = self._normalize_id(job_id)
+
+        try:
+            self._ensure_job_active(job_id)
+            self.jobs_collection.update_one(
+                {"_id": job_id},
+                {
+                    "$set": {
+                        "status": "in_progress",
+                        "started_at": datetime.utcnow(),
+                        "domain": domain,
+                        "mode_name": mode_name,
+                    }
+                },
+            )
+
+            # Find all content for this domain and mode
+            content_docs = list(self._scraped_content.find({
+                "base_domain": domain,
+                "modes": mode_name
+            }))
+            
+            total_docs = len(content_docs)
+            deleted_count = 0
+            
+            for i, doc in enumerate(content_docs):
+                if i % 10 == 0:  # Check job status every 10 items
+                    self._ensure_job_active(job_id)
+                    self.jobs_collection.update_one(
+                        {"_id": job_id},
+                        {"$set": {"progress": {"total": total_docs, "current": i}}}
+                    )
+                
+                self.scraping_service.delete_scraped_content(str(doc["_id"]), mode_name=mode_name)
+                deleted_count += 1
+
+            self.jobs_collection.update_one(
+                {"_id": job_id},
+                {
+                    "$set": {
+                        "status": "completed",
+                        "result": {"deleted_count": deleted_count},
+                        "completed_at": datetime.utcnow(),
+                    }
+                },
+            )
+
+        except JobCancelledError:
+            print(f"Site delete job {job_id}: cancelled")
+        except Exception as exc:
+            self.jobs_collection.update_one(
+                {"_id": job_id},
+                {
+                    "$set": {
+                        "status": "failed",
+                        "error": str(exc),
+                        "completed_at": datetime.utcnow(),
+                    }
+                },
+            )
+            print(f"Site delete job {job_id}: failed ({exc})")
+
     # --------------------------------------------------------------------- #
     # Content verification
     # --------------------------------------------------------------------- #
@@ -394,4 +462,3 @@ class ScrapeJobProcessor:
 
 
 __all__ = ["ScrapeJobProcessor"]
-

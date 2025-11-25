@@ -192,6 +192,37 @@ class ScraperClient:
     def dispatch_verification(self, job_id, batch_size: int, filters: Optional[Dict[str, Any]] = None):
         self._backend.dispatch_verification(str(job_id), batch_size, filters)
 
+    def queue_site_delete(
+        self,
+        *,
+        mode_id: str,
+        mode_name: str,
+        domain: str,
+        user_id: str,
+        auto_dispatch: bool = True,
+    ):
+        job_doc = {
+            "job_type": "site_delete",
+            "status": "queued",
+            "mode_id": str(mode_id),
+            "mode_name": mode_name,
+            "domain": domain,
+            "user_id": user_id,
+            "result": None,
+            "error": None,
+            "created_at": datetime.utcnow(),
+            "started_at": None,
+            "completed_at": None,
+            "environment": self.environment,
+        }
+        job_id = self.jobs_collection.insert_one(job_doc).inserted_id
+        if auto_dispatch or self.is_remote:
+            self.dispatch_site_delete(job_id, mode_name, domain)
+        return job_id
+
+    def dispatch_site_delete(self, job_id, mode_name, domain):
+        self._backend.dispatch_site_delete(str(job_id), mode_name, domain)
+
     # ------------------------------------------------------------------ #
     def get_verification_statistics(self) -> Dict[str, Any]:
         """Expose verification stats for schedulers."""
@@ -254,6 +285,15 @@ class _LocalScraperBackend:
         )
         thread.start()
 
+    def dispatch_site_delete(self, job_id, mode_name, domain):
+        thread = threading.Thread(
+            target=self.job_processor.run_site_delete_job,
+            args=(job_id, mode_name, domain),
+            daemon=True,
+            name=f"SiteDelete-{domain}",
+        )
+        thread.start()
+
 
 # ---------------------------------------------------------------------- #
 # Remote backend
@@ -290,6 +330,10 @@ class _SQSScraperBackend:
     def dispatch_verification(self, job_id, batch_size: int, filters: Optional[Dict[str, Any]] = None):
         payload = {"batch_size": batch_size, "filters": filters}
         self._send_request(job_id, "verification", payload)
+
+    def dispatch_site_delete(self, job_id, mode_name, domain):
+        payload = {"mode_name": mode_name, "domain": domain}
+        self._send_request(job_id, "site_delete", payload)
 
     def _send_request(self, job_id: str, job_type: str, payload: Dict[str, Any]):
         request = ScraperJobRequest(
