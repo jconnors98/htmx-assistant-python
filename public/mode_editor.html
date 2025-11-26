@@ -928,15 +928,21 @@
       
       const siteWrapper = document.querySelector(`.site-wrapper[data-domain="${domain}"]`);
       if (siteWrapper) {
-          siteWrapper.innerHTML = `
-            <div class="p-4 bg-gray-50 flex items-center justify-center gap-3">
-                <svg class="w-5 h-5 text-red-500 animate-spin" fill="none" viewBox="0 0 24 24">
+          siteWrapper.classList.add('deleting-active', 'opacity-75', 'pointer-events-none');
+          const btn = siteWrapper.querySelector('.delete-site-btn');
+          if (btn) {
+               btn.innerHTML = `<svg class="w-4 h-4 text-red-500 animate-spin" fill="none" viewBox="0 0 24 24">
                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                     <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                <span class="text-sm font-medium text-red-600">Deleting data from ${domain}...</span>
-            </div>
-          `;
+                </svg>`;
+          }
+          const titleDiv = siteWrapper.querySelector('.site-header .text-sm');
+          if (titleDiv && !titleDiv.querySelector('.deleting-badge')) {
+               const badge = document.createElement('span');
+               badge.className = 'deleting-badge ml-2 text-xs text-red-600 font-medium';
+               badge.innerText = 'Deleting...';
+               titleDiv.appendChild(badge);
+          }
       }
 
       const res = await fetch(`/flask/admin/scrape/site/${modeId}/${encodeURIComponent(domain)}`, {
@@ -944,8 +950,7 @@
         headers: { 'Authorization': 'Bearer ' + idToken }
       });
       if (!handleUnauthorized(res) && res.ok) {
-        loadScrapedSitesAndPages();
-        loadDiscoveredFiles();
+        loadActiveScrapingJobs();
       } else {
          alert('Error deleting site content');
          loadScrapedSitesAndPages(); // Reload to restore UI
@@ -1157,10 +1162,22 @@
         
         // Track deleting domains to update UI
         const deletingDomains = new Set();
+        // Track running scrape jobs to update site list
+        const runningScrapes = new Map();
+
         jobs.forEach(j => {
             if (j.job_type === 'site_delete' && j.domain) deletingDomains.add(j.domain);
+            if (j.job_type === 'scrape') {
+                const sites = j.progress.total_sites || 1;
+                const currentSiteIndex = j.progress.current_site || 0;
+                // We don't get the exact domain being scraped in the top-level progress easily 
+                // unless we enhance the backend or infer it.
+                // But we can check if we have sites in the list that match configured sites.
+                runningScrapes.set(j._id, j);
+            }
         });
         updateSiteDeleteIndicators(deletingDomains);
+        updateRunningScrapeIndicators(runningScrapes);
         
         if (jobs.length === 0) {
           container.style.display = 'none';
@@ -1204,28 +1221,123 @@
       } catch (e) { console.error(e); }
     }
 
+    function updateRunningScrapeIndicators(runningScrapes) {
+        // If we have running scrapes, we want to make sure the sites are visible in the list
+        // and show some progress.
+        // Since we don't know EXACTLY which site is being scraped right now without more data from backend,
+        // we can iterate through the configured sites and see if they are in the scraped list.
+        // If not, add them as placeholders.
+        
+        // This is tricky because "modeScrapeSites" has the configured URLs.
+        if (runningScrapes.size > 0) {
+            const container = document.getElementById('scraped-sites-pages-combined');
+            
+            // Check if we need to add placeholders
+            modeScrapeSites.forEach(url => {
+                let domain;
+                try {
+                    domain = new URL(url).hostname.replace(/^www\./, '');
+                } catch(e) { return; }
+                
+                let wrapper = document.querySelector(`.site-wrapper[data-domain="${domain}"]`);
+                if (!wrapper) {
+                    // Create placeholder wrapper
+                    wrapper = document.createElement('div');
+                    wrapper.className = 'bg-white rounded-lg border border-gray-200 overflow-hidden mb-3 site-wrapper';
+                    wrapper.dataset.domain = domain;
+                    wrapper.innerHTML = `
+                      <div class="site-header p-3 bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors flex items-center justify-between" data-domain="${domain}">
+                        <div class="flex items-center gap-3">
+                             <svg class="expand-icon w-4 h-4 text-gray-400 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+                             <div>
+                                <div class="text-sm font-semibold text-gray-800 flex items-center gap-2">
+                                    ${domain}
+                                    <span class="text-xs bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded">Scraping...</span>
+                                </div>
+                                <div class="text-xs text-gray-500 progress-text">Initializing...</div>
+                             </div>
+                        </div>
+                        <button class="delete-site-btn text-red-500 hover:text-red-700 hover:bg-red-50 p-1.5 rounded" data-domain="${domain}" onclick="event.stopPropagation()">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                        </button>
+                      </div>
+                      <div class="pages-container hidden border-t border-gray-100" data-domain="${domain}">
+                        <div class="p-3 text-xs text-gray-400 text-center">Content will appear here as it is scraped.</div>
+                      </div>
+                    `;
+                    
+                    // Add to top or bottom? Top seems better for active things.
+                    container.insertBefore(wrapper, container.firstChild);
+                    
+                    // Attach listeners
+                    wrapper.querySelector('.site-header').addEventListener('click', () => {
+                      const pagesContainer = wrapper.querySelector(`.pages-container`);
+                      const expandIcon = wrapper.querySelector('.expand-icon');
+                      if (pagesContainer.classList.contains('hidden')) {
+                        pagesContainer.classList.remove('hidden');
+                        expandIcon.style.transform = 'rotate(90deg)';
+                      } else {
+                        pagesContainer.classList.add('hidden');
+                        expandIcon.style.transform = 'rotate(0deg)';
+                      }
+                    });
+                    
+                    wrapper.querySelector('.delete-site-btn').onclick = (e) => {
+                      e.stopPropagation();
+                      deleteSiteContent(domain);
+                    };
+                } else {
+                    // Update existing wrapper if it exists but doesn't have status
+                    const statusSpan = wrapper.querySelector('.site-header .text-xs.bg-blue-100');
+                    if (!statusSpan) {
+                         const titleDiv = wrapper.querySelector('.site-header .font-semibold');
+                         if(titleDiv) {
+                             const span = document.createElement('span');
+                             span.className = 'text-xs bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded ml-2';
+                             span.innerText = 'Scraping...';
+                             titleDiv.appendChild(span);
+                         }
+                    }
+                }
+                
+                // Try to update progress text if we can map it?
+                // For now, just showing "Scraping..." is a good first step.
+            });
+        } else {
+             // Cleanup "Scraping..." badges if no jobs running
+             document.querySelectorAll('.site-wrapper .text-xs.bg-blue-100').forEach(el => el.remove());
+        }
+    }
+
     function updateSiteDeleteIndicators(deletingDomains) {
         document.querySelectorAll('.site-wrapper').forEach(wrapper => {
             const domain = wrapper.dataset.domain;
-            const isSpinner = !!wrapper.querySelector('.animate-spin');
+            const isDeleting = deletingDomains.has(domain);
+            const hasIndicator = wrapper.classList.contains('deleting-active');
             
-            if (deletingDomains.has(domain)) {
-                if (!isSpinner) {
-                     wrapper.innerHTML = `
-                        <div class="p-4 bg-gray-50 flex items-center justify-center gap-3">
-                            <svg class="w-5 h-5 text-red-500 animate-spin" fill="none" viewBox="0 0 24 24">
-                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                            </svg>
-                            <span class="text-sm font-medium text-red-600">Deleting data from ${domain}...</span>
-                        </div>
-                      `;
+            if (isDeleting) {
+                if (!hasIndicator) {
+                     wrapper.classList.add('deleting-active', 'opacity-75', 'pointer-events-none');
+                     const btn = wrapper.querySelector('.delete-site-btn');
+                     if (btn) {
+                        btn.innerHTML = `<svg class="w-4 h-4 text-red-500 animate-spin" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>`;
+                     }
+                     const titleDiv = wrapper.querySelector('.site-header .text-sm');
+                     if (titleDiv && !titleDiv.querySelector('.deleting-badge')) {
+                         const badge = document.createElement('span');
+                         badge.className = 'deleting-badge ml-2 text-xs text-red-600 font-medium';
+                         badge.innerText = 'Deleting...';
+                         titleDiv.appendChild(badge);
+                     }
                 }
             } else {
-                 // If spinner was present but job is gone, refresh list to show it's gone
-                 if (isSpinner) {
+                 if (hasIndicator) {
+                     // Job finished, refresh list
                      loadScrapedSitesAndPages();
-                     loadDiscoveredFiles(); // Refresh files too
+                     loadDiscoveredFiles();
                  }
             }
         });
@@ -1236,6 +1348,79 @@
     
     document.getElementById('trigger-scrape-btn').onclick = async () => {
        if (!modeId) return alert('Save mode first.');
+       
+       // Force a save first if there are pending changes (basic check)
+       if (document.getElementById('scrape-site-input').value.trim() !== '') {
+           if (!confirm("You have an unsaved site in the input. It will not be included. Continue?")) return;
+       }
+       
+       // Better: Check if the displayed sites match what we think is saved? 
+       // For now, just rely on user saving. 
+       // OR: trigger a save first?
+       // Let's trigger a save first to ensure latest config is used.
+       const saveBtn = document.getElementById('mode-save');
+       if (!saveBtn.disabled) {
+            // Trigger save
+            await saveBtn.click();
+            // Wait a moment for save to complete - the save button handler is async but doesn't return a promise we can await easily here without refactoring.
+            // Actually, let's just use the fact that modeScrapeSites is updated in memory, 
+            // but the backend needs the DB updated. 
+            // The existing save handler updates the DB.
+            // We can manually call the API update here if we want to be sure, OR refactor save to be reusable.
+            
+            // Refactoring save logic slightly to allow awaiting it would be best, but for this fix:
+            // We'll just manually send the update for sites if needed, or just warn the user.
+            
+            // Simplest fix for the reported issue: "URLs added, but not yet saved"
+            // The user added to the list UI, but didn't click Save.
+            // We should auto-save the sites before triggering.
+            
+            const body = {
+                scrape_sites: modeScrapeSites,
+                // We need to send other required fields or use PATCH if supported.
+                // The main save uses PUT/POST with all fields.
+                // Let's just block if not saved? No, the user wants "Run Now" to just work.
+                // Let's do a quick PATCH or re-save.
+            };
+            
+            // To be safe and consistent, let's just call the save endpoint with current state before triggering.
+            // We duplicate the save logic payload construction here or refactor. 
+            // Let's duplicate strictly necessary parts for a "quick save" of sites.
+            
+            // Actually, the easiest path is to just tell the user to save if we detect changes?
+            // But the requirement says "If I click Run Now... returns 400".
+            // The 400 comes from: if not scrape_sites: return 400.
+            // So the DB has no sites.
+            
+            // We MUST save the sites to the DB before triggering.
+            const fullBody = {
+                title: document.getElementById('mode-title').value,
+                description: document.getElementById('mode-desc').value,
+                intro: document.getElementById('mode-intro').value,
+                prompts: modePrompts,
+                tags: [],
+                preferred_sites: [],
+                blocked_sites: modeBlockedSites,
+                allow_other_sites: document.getElementById('mode-allow-other').checked,
+                priority_source: (document.querySelector('input[name="mode-priority-source"]:checked') || { value: 'sites' }).value,
+                allow_file_upload: document.getElementById('mode-allow-upload').checked,
+                scrape_sites: modeScrapeSites, // This is the key part
+                scrape_frequency: document.getElementById('scrape-frequency').value,
+                color: normalizeColor(document.getElementById('mode-color').value),
+                text_color: normalizeTextColor(document.getElementById('mode-text-color').value)
+            };
+             if (!modeId) fullBody.name = document.getElementById('mode-name').value;
+             
+             // Silent Save
+             try {
+                await fetch('/flask/admin/modes/' + modeId, {
+                    method: 'PUT',
+                    headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
+                    body: JSON.stringify(fullBody)
+                });
+             } catch(e) { console.error("Auto-save failed", e); }
+       }
+       
        const btn = document.getElementById('trigger-scrape-btn');
        btn.disabled = true; 
        btn.innerText = 'Starting...';
@@ -1244,7 +1429,8 @@
        if (!handleUnauthorized(res) && res.ok) {
            loadActiveScrapingJobs();
        } else {
-           alert('Failed to start scrape.');
+           const err = await res.json();
+           alert('Failed to start scrape: ' + (err.error || 'Unknown error'));
        }
        btn.disabled = false;
        btn.innerHTML = '<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> Run Now';
