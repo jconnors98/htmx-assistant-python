@@ -93,6 +93,16 @@
     .tab-content.active {
       display: block;
     }
+    
+    /* Hide scrollbar for Chrome, Safari and Opera */
+    .no-scrollbar::-webkit-scrollbar {
+        display: none;
+    }
+    /* Hide scrollbar for IE, Edge and Firefox */
+    .no-scrollbar {
+        -ms-overflow-style: none;  /* IE and Edge */
+        scrollbar-width: none;  /* Firefox */
+    }
   </style>
 </head>
 <body class="min-h-screen bg-gray-50 flex flex-col h-screen overflow-hidden">
@@ -237,9 +247,13 @@
                 <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                     <h2 class="text-lg font-semibold text-gray-900 mb-4">Quick Prompts</h2>
                     <p class="text-xs text-gray-500 mb-3">Suggested questions displayed to help users start a conversation.</p>
-                    <div class="bg-gray-50 rounded-lg p-3 border border-gray-200 min-h-[100px]">
-                        <div id="mode-prompts" class="flex flex-wrap gap-2">
-                             <input id="mode-prompt-input" class="flex-1 outline-none bg-transparent text-sm text-gray-700 placeholder-gray-400 min-w-[150px]" placeholder="Type & Press Enter..." />
+                    <div class="bg-gray-50 rounded-xl border border-gray-200 p-4 min-h-[160px] flex flex-col cursor-text transition-colors focus-within:bg-white focus-within:ring-2 focus-within:ring-primary/10" onclick="document.getElementById('mode-prompt-input').focus()">
+                        <div id="mode-prompts" class="flex flex-wrap gap-2 mb-3"></div>
+                        <div class="relative mt-auto">
+                            <input id="mode-prompt-input" class="w-full bg-transparent text-base text-gray-800 placeholder-gray-400 outline-none py-2 border-none ring-0 focus:ring-0" placeholder="Type a prompt and press Enter..." />
+                            <div class="absolute right-0 top-2 text-xs text-gray-400 pointer-events-none font-medium flex items-center gap-1">
+                                <span class="bg-gray-200 px-1.5 py-0.5 rounded text-[10px]">↵</span> Enter to add
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -417,6 +431,20 @@
                 </div>
              </div>
              
+             <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                <h2 class="text-lg font-semibold text-gray-900 mb-4">Configuration</h2>
+                <div class="space-y-4">
+                     <label class="flex items-center">
+                        <input type="checkbox" id="mode-allow-other" class="h-4 w-4 text-primary border-gray-300 rounded focus:ring-primary" />
+                        <span class="ml-3 text-sm text-gray-700">Allow General Internet Search (fallback if no specific data found)</span>
+                     </label>
+                     <label class="flex items-center">
+                        <input type="checkbox" id="mode-allow-upload" class="h-4 w-4 text-primary border-gray-300 rounded focus:ring-primary" />
+                        <span class="ml-3 text-sm text-gray-700">Allow Users to Upload Files in Chat</span>
+                     </label>
+                </div>
+             </div>
+
              <!-- Blocked Sites moved here -->
              <div class="bg-white rounded-xl shadow-sm border border-red-100 p-0 overflow-hidden">
                 <div class="bg-red-50 px-6 py-4 border-b border-red-100 flex justify-between items-center">
@@ -434,20 +462,6 @@
                      <div id="blocked-sites-list" class="space-y-2 max-h-[400px] overflow-y-auto pr-1">
                         <!-- Items go here -->
                      </div>
-                </div>
-             </div>
-
-             <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                <h2 class="text-lg font-semibold text-gray-900 mb-4">Configuration</h2>
-                <div class="space-y-4">
-                     <label class="flex items-center">
-                        <input type="checkbox" id="mode-allow-other" class="h-4 w-4 text-primary border-gray-300 rounded focus:ring-primary" />
-                        <span class="ml-3 text-sm text-gray-700">Allow General Internet Search (fallback if no specific data found)</span>
-                     </label>
-                     <label class="flex items-center">
-                        <input type="checkbox" id="mode-allow-upload" class="h-4 w-4 text-primary border-gray-300 rounded focus:ring-primary" />
-                        <span class="ml-3 text-sm text-gray-700">Allow Users to Upload Files in Chat</span>
-                     </label>
                 </div>
              </div>
              
@@ -1428,6 +1442,7 @@
        const res = await fetch('/flask/admin/scrape/trigger/' + modeId, { method: 'POST', headers: { 'Authorization': 'Bearer ' + idToken } });
        if (!handleUnauthorized(res) && res.ok) {
            loadActiveScrapingJobs();
+           document.getElementById('last-scraped-at').textContent = new Date().toLocaleString();
        } else {
            const err = await res.json();
            alert('Failed to start scrape: ' + (err.error || 'Unknown error'));
@@ -1485,26 +1500,27 @@
 
     function renderModePrompts(prompts) {
         const container = document.getElementById('mode-prompts');
-        container.querySelectorAll('.chip').forEach(c => c.remove());
+        container.innerHTML = '';
         const input = document.getElementById('mode-prompt-input');
         
         modePrompts = [...(prompts || [])];
         modePrompts.forEach(p => {
-            container.insertBefore(createChip(p, modePrompts, 'bg-primary'), input);
+            container.appendChild(createChip(p, modePrompts, 'bg-primary'));
         });
     }
 
     function createChip(text, arrayRef, colorClass) {
         const chip = document.createElement('span');
-        chip.className = `chip inline-flex items-center ${colorClass} text-white rounded-full px-2 py-1 text-xs mr-2 mb-1`;
+        chip.className = `chip inline-flex items-center ${colorClass} text-white rounded-lg px-3 py-1.5 text-sm shadow-sm transition-all hover:shadow-md mr-2 mb-1 animate-fade-in`;
         chip.dataset.value = text;
-        chip.innerHTML = `<span class="mr-1">${text}</span>`;
+        chip.innerHTML = `<span class="mr-2">${text}</span>`;
         
         const btn = document.createElement('button');
-        btn.innerHTML = '&times;';
-        btn.className = 'hover:text-gray-200 focus:outline-none font-bold';
+        btn.innerHTML = '<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>';
+        btn.className = 'hover:text-red-200 focus:outline-none opacity-75 hover:opacity-100 transition-opacity';
         btn.onclick = (e) => {
              e.preventDefault();
+             e.stopPropagation(); // Prevent focusing input if chip is clicked
              const idx = arrayRef.indexOf(text);
              if (idx > -1) arrayRef.splice(idx, 1);
              chip.remove();
