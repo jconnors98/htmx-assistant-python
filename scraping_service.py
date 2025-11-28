@@ -92,6 +92,22 @@ class BrowserPool:
 class ScrapingService:
     """Service for scraping websites and managing scraped content."""
 
+    _FILE_EXTENSION_TYPES: Dict[str, str] = {
+        "pdf": "PDF Document",
+        "doc": "Word Document",
+        "docx": "Word Document",
+        "xls": "Excel Spreadsheet",
+        "xlsx": "Excel Spreadsheet",
+        "ppt": "PowerPoint Presentation",
+        "pptx": "PowerPoint Presentation",
+        "txt": "Text File",
+        "csv": "CSV File",
+        "zip": "ZIP Archive",
+        "rar": "RAR Archive",
+        "json": "JSON File",
+        "xml": "XML File",
+    }
+
     def __init__(self, client, mongo_db, vector_store_id: Optional[str] = None):
         """
         Initialize the scraping service.
@@ -176,6 +192,75 @@ class ScrapingService:
             return True
         except Exception:
             return False
+    
+    def _detect_file_extension(self, url: Optional[str]) -> Optional[Tuple[str, str]]:
+        """Return (extension, human-readable type) if URL points to a known downloadable file."""
+        if not url:
+            return None
+        parsed = urlparse(url)
+        path = (parsed.path or "").lower()
+        for ext, file_type in self._FILE_EXTENSION_TYPES.items():
+            if path.endswith(f".{ext}"):
+                return ext, file_type
+        return None
+
+    def _build_file_metadata_from_url(
+        self,
+        file_url: str,
+        *,
+        link_text: Optional[str] = None,
+        source_page_url: Optional[str] = None,
+        source_page_title: Optional[str] = None,
+        file_size: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        detected = self._detect_file_extension(file_url)
+        if not detected:
+            return None
+        file_ext, file_type = detected
+        parsed = urlparse(file_url)
+        filename = os.path.basename(parsed.path) or f"document.{file_ext}"
+        return {
+            "file_url": file_url,
+            "filename": filename,
+            "file_type": file_type,
+            "file_extension": file_ext,
+            "link_text": link_text or filename,
+            "file_size": file_size,
+            "source_page_url": source_page_url or file_url,
+            "source_page_title": source_page_title or (source_page_url or file_url),
+        }
+
+    def _record_direct_file_discovery(
+        self,
+        *,
+        file_url: str,
+        base_domain: Optional[str],
+        mode_name: str,
+        user_id: str,
+        source_page_url: Optional[str] = None,
+        source_page_title: Optional[str] = None,
+        link_text: Optional[str] = None,
+    ) -> bool:
+        """Store a downloadable file without scraping the page."""
+        metadata = self._build_file_metadata_from_url(
+            file_url,
+            link_text=link_text,
+            source_page_url=source_page_url,
+            source_page_title=source_page_title,
+        )
+        if not metadata:
+            return False
+        metadata["mode"] = mode_name
+        metadata["discovered_at"] = datetime.utcnow()
+        metadata["user_id"] = user_id
+        metadata["status"] = "discovered"
+        metadata["base_domain"] = base_domain
+        inserted = self._insert_discovered_file(metadata)
+        if inserted:
+            print(f"  📄 Recorded direct file download: {file_url}")
+        else:
+            print(f"  ⏭️  Skipped duplicate direct file: {file_url}")
+        return True
     
     def _record_failed_page(
         self,
@@ -1883,23 +1968,6 @@ class ScrapingService:
         Returns:
             List of dicts with file metadata (url, filename, type, etc.)
         """
-        # Downloadable file extensions to look for
-        FILE_EXTENSIONS = {
-            'pdf': 'PDF Document',
-            'doc': 'Word Document',
-            'docx': 'Word Document',
-            'xls': 'Excel Spreadsheet',
-            'xlsx': 'Excel Spreadsheet',
-            'ppt': 'PowerPoint Presentation',
-            'pptx': 'PowerPoint Presentation',
-            'txt': 'Text File',
-            'csv': 'CSV File',
-            'zip': 'ZIP Archive',
-            'rar': 'RAR Archive',
-            'json': 'JSON File',
-            'xml': 'XML File'
-        }
-        
         files = []
         pdf_viewer_urls = []  # Track potential PDF viewer URLs to check
         embed_check_urls = []  # Track URLs to check for embedded PDFs
@@ -1927,49 +1995,26 @@ class ScrapingService:
                 # Convert relative URLs to absolute
                 absolute_url = urljoin(base_url, href)
                 
-                # Parse URL to get file extension
-                parsed = urlparse(absolute_url)
-                path = parsed.path.lower()
-                
-                # Check if URL points to a downloadable file
-                file_ext = None
-                for ext, file_type in FILE_EXTENSIONS.items():
-                    if path.endswith(f'.{ext}'):
-                        file_ext = ext
-                        break
-                
                 # Get link text for context
                 link_text = link.get_text(strip=True)
                 
-                if file_ext:
-                    # Direct file link found
-                    # Normalize URL for duplicate checking
-                    normalized_file_url = self._normalize_url(absolute_url)
-                    
-                    # Skip if we've already seen this file URL
+                file_metadata = self._build_file_metadata_from_url(
+                    absolute_url,
+                    link_text=link_text,
+                    source_page_url=base_url,
+                    source_page_title=source_page_title,
+                )
+                
+                if file_metadata:
+                    normalized_file_url = self._normalize_url(file_metadata["file_url"])
                     if normalized_file_url in seen_file_urls:
                         continue
                     
-                    filename = os.path.basename(parsed.path)
-                    
-                    # Get file size if available in link text
-                    file_size = None
                     size_match = re.search(r'[\(\[]?\s*(\d+\.?\d*\s*(?:KB|MB|GB))\s*[\)\]]?', link_text, re.IGNORECASE)
                     if size_match:
-                        file_size = size_match.group(1)
+                        file_metadata["file_size"] = size_match.group(1)
                     
-                    files.append({
-                        'file_url': absolute_url,
-                        'filename': filename,
-                        'file_type': FILE_EXTENSIONS[file_ext],
-                        'file_extension': file_ext,
-                        'link_text': link_text or filename,
-                        'file_size': file_size,
-                        'source_page_url': base_url,
-                        'source_page_title': source_page_title
-                    })
-                    
-                    # Mark this file URL as seen
+                    files.append(file_metadata)
                     seen_file_urls.add(normalized_file_url)
                     
                 elif self._is_pdf_viewer_page(absolute_url):
@@ -2514,6 +2559,28 @@ class ScrapingService:
                             continue
                         processed_urls.add(normalized_url)
                         print(f"\nScraping {label} page {idx}/{total_urls_value}: {url}")
+                        if self._record_direct_file_discovery(
+                            file_url=url,
+                            base_domain=base_domain,
+                            mode_name=mode_name,
+                            user_id=user_id,
+                            source_page_url=url,
+                            source_page_title=f"{base_domain or url} (direct file)",
+                        ):
+                            _update_checkpoint(
+                                current_site=site_url,
+                                remaining_urls=list(page_queue),
+                                total_urls=total_urls_value,
+                                processed_urls=pages_processed
+                            )
+                            _emit_progress({
+                                "current_site": base_domain,
+                                "total_pages": results["total_pages_scraped"] + results["total_pages_reused"],
+                                "scraped_pages": results["total_pages_scraped"],
+                                "reused_pages": results["total_pages_reused"],
+                                "failed_pages": results["total_pages_failed"]
+                            })
+                            continue
                         existing = self.scraped_content_collection.find_one(
                             {"normalized_url": normalized_url}
                         )
@@ -2643,7 +2710,7 @@ class ScrapingService:
                     "failed": failed_count,
                     "reused": reused_count,
                     "processed": pages_processed
-                }
+            }
             
             # If it's a single page, scrape only that page
             if is_single_page:
@@ -2681,6 +2748,20 @@ class ScrapingService:
                 )
                 _emit_progress({})
                 
+                if self._record_direct_file_discovery(
+                    file_url=site_url,
+                    base_domain=base_domain,
+                    mode_name=mode_name,
+                    user_id=user_id,
+                    source_page_url=site_url,
+                    source_page_title=f"{base_domain or site_url} (direct file)",
+                ):
+                    site_result["status"] = "completed"
+                    _update_checkpoint(current_site=None, pending_override=list(pending_sites_queue))
+                    _emit_progress({})
+                    results["sites"].append(site_result)
+                    continue
+
                 # Check if this specific page was already scraped
                 existing = self.scraped_content_collection.find_one({
                     "normalized_url": normalized_url
@@ -3005,7 +3086,7 @@ class ScrapingService:
                 
                 batch_result = _scrape_url_batch_for_site(
                     list(urls_to_scrape),
-                    total_urls=total_urls,
+                                total_urls=total_urls,
                     pages_processed_start=pages_processed,
                     label="site"
                 )
