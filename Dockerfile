@@ -16,6 +16,7 @@ COPY scraping_service.py ./scraping_service.py
 COPY scraper_jobs.py ./scraper_jobs.py
 COPY packages ./packages
 COPY services/scraper_worker ./services/scraper_worker
+COPY assistant_services ./assistant_services
 
 RUN playwright install chromium
 RUN playwright install-deps chromium
