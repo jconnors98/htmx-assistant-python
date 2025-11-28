@@ -165,7 +165,15 @@ class ScraperClient:
     def dispatch_delete_content(self, job_id, content_id, mode_name):
         self._backend.dispatch_delete_content(str(job_id), content_id, mode_name)
 
-    def queue_verification(self, *, batch_size: int = 100, auto_dispatch: bool = True, filters: Optional[Dict[str, Any]] = None):
+    def queue_verification(
+        self,
+        *,
+        batch_size: int = 500,
+        auto_dispatch: bool = True,
+        filters: Optional[Dict[str, Any]] = None,
+        mode_name: Optional[str] = None,
+        base_domain: Optional[str] = None,
+    ):
         job_doc = {
             "job_type": "verification",
             "status": "queued",
@@ -183,6 +191,8 @@ class ScraperClient:
             "completed_at": None,
             "environment": self.environment,
             "filters": filters or None,
+            "mode": mode_name,
+            "base_domain": base_domain,
         }
         job_id = self.jobs_collection.insert_one(job_doc).inserted_id
         if auto_dispatch or self.is_remote:

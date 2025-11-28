@@ -2470,6 +2470,180 @@ class ScrapingService:
                 "status": "in_progress",
                 "is_single_page": is_single_page
             }
+
+            def _scrape_url_batch_for_site(
+                url_list: List[str],
+                *,
+                total_urls: Optional[int] = None,
+                pages_processed_start: int = 0,
+                label: str = "site"
+            ) -> Dict[str, int]:
+                """
+                Scrape a list of URLs for the current site and update shared metrics.
+                Returns a dict with scraped, failed, reused, and processed counts.
+                """
+                urls = [url for url in url_list if url]
+                if not urls:
+                    return {
+                        "scraped": 0,
+                        "failed": 0,
+                        "reused": 0,
+                        "processed": pages_processed_start
+                    }
+                total_urls_value = total_urls or len(urls)
+                page_queue = deque(urls)
+                print(f"Creating browser instance for scraping {len(page_queue)} {label} page(s)...")
+                p = self._start_playwright()
+                browser = p.chromium.launch(headless=True)
+                scraped_count = 0
+                failed_count = 0
+                reused_count = 0
+                pages_processed = pages_processed_start
+                processed_urls = set()
+                try:
+                    while page_queue:
+                        url = page_queue.popleft()
+                        pages_processed += 1
+                        idx = pages_processed
+                        normalized_url = self._normalize_url(url)
+                        if not normalized_url:
+                            print(f"  ⚠️  Skipping invalid URL: {url}")
+                            continue
+                        if normalized_url in processed_urls:
+                            print(f"\nSkipping duplicate URL (already processed): {url}")
+                            continue
+                        processed_urls.add(normalized_url)
+                        print(f"\nScraping {label} page {idx}/{total_urls_value}: {url}")
+                        existing = self.scraped_content_collection.find_one(
+                            {"normalized_url": normalized_url}
+                        )
+                        if existing:
+                            self.scraped_content_collection.update_one(
+                                {"_id": existing["_id"]},
+                                {"$addToSet": {"modes": mode_name}}
+                            )
+                            self._clear_failed_page(normalized_url, mode_name)
+                            site_result["pages_reused"] += 1
+                            results["total_pages_reused"] += 1
+                            reused_count += 1
+                            _update_checkpoint(
+                                current_site=site_url,
+                                remaining_urls=list(page_queue),
+                                total_urls=total_urls_value,
+                                processed_urls=pages_processed
+                            )
+                            _emit_progress({
+                                "current_site": base_domain,
+                                "total_pages": results["total_pages_scraped"] + results["total_pages_reused"],
+                                "scraped_pages": results["total_pages_scraped"],
+                                "reused_pages": results["total_pages_reused"],
+                                "failed_pages": results["total_pages_failed"]
+                            })
+                            continue
+                        retry_count = 0
+                        success = False
+                        error = None
+                        page_start = None
+                        while retry_count <= max_retries and not success:
+                            page_start = time.perf_counter()
+                            content, title, error, html_content, file_links = self.scrape_url(
+                                url,
+                                extract_files=False,
+                                load_dynamic_content=False,
+                                playwright_browser=browser
+                            )
+                            if error:
+                                retry_count += 1
+                                if retry_count <= max_retries:
+                                    print(f"  ↻ Retry {retry_count}/{max_retries}")
+                                    time.sleep(2 ** retry_count)
+                                continue
+                            scraped_at = datetime.utcnow()
+                            openai_file_id = self.upload_to_vector_store(
+                                content, mode_name, url, title, scraped_at
+                            )
+                            content_doc = {
+                                "normalized_url": normalized_url,
+                                "original_url": url,
+                                "base_domain": base_domain,
+                                "title": title,
+                                "content": content,
+                                "scraped_at": scraped_at,
+                                "openai_file_id": openai_file_id,
+                                "status": "active",
+                                "verification_status": "pending_verification",
+                                "modes": [mode_name],
+                                "user_id": user_id,
+                                "metadata": {
+                                    "word_count": len(content.split()),
+                                    "char_count": len(content)
+                                }
+                            }
+                            insert_result = self.scraped_content_collection.insert_one(content_doc)
+                            newly_scraped_ids.append(str(insert_result.inserted_id))
+                            self._clear_failed_page(normalized_url, mode_name)
+                            if file_links:
+                                for file_info in file_links:
+                                    file_info["mode"] = mode_name
+                                    file_info["discovered_at"] = scraped_at
+                                    file_info["user_id"] = user_id
+                                    file_info["status"] = "discovered"
+                                    file_info["base_domain"] = base_domain
+                                    self._insert_discovered_file(file_info)
+                                print(f"  📄 Discovered {len(file_links)} downloadable file(s)")
+                            scraped_count += 1
+                            site_result["pages_scraped"] += 1
+                            results["total_pages_scraped"] += 1
+                            success = True
+                            print(f"  ✓ Successfully scraped ({content_doc['metadata']['word_count']} words)")
+                            _record_page(time.perf_counter() - page_start)
+                            time.sleep(1)
+                        if not success:
+                            failed_count += 1
+                            site_result["pages_failed"] += 1
+                            results["total_pages_failed"] += 1
+                            print(f"  ✗ Failed: {error}")
+                            self._record_failed_page(
+                                normalized_url=normalized_url,
+                                original_url=url,
+                                base_domain=base_domain,
+                                mode_name=mode_name,
+                                user_id=user_id,
+                                error=error,
+                                attempts=retry_count,
+                                context={
+                                    "site_url": site_url,
+                                    "page_index": idx,
+                                    "total_urls": total_urls_value,
+                                    "max_retries": max_retries,
+                                    "label": label
+                                },
+                            )
+                            if site_metrics and page_start:
+                                _record_page(time.perf_counter() - page_start)
+                        _update_checkpoint(
+                            current_site=site_url,
+                            remaining_urls=list(page_queue),
+                            total_urls=total_urls_value,
+                            processed_urls=pages_processed
+                        )
+                        _emit_progress({
+                            "current_site": base_domain,
+                            "total_pages": results["total_pages_scraped"] + results["total_pages_reused"],
+                            "scraped_pages": results["total_pages_scraped"],
+                            "reused_pages": results["total_pages_reused"],
+                            "failed_pages": results["total_pages_failed"]
+                        })
+                finally:
+                    print(f"Closing browser instance...")
+                    browser.close()
+                    p.stop()
+                return {
+                    "scraped": scraped_count,
+                    "failed": failed_count,
+                    "reused": reused_count,
+                    "processed": pages_processed
+                }
             
             # If it's a single page, scrape only that page
             if is_single_page:
@@ -2694,6 +2868,94 @@ class ScrapingService:
                     "reused_pages": results["total_pages_reused"],
                     "failed_pages": results["total_pages_failed"]
                 })
+
+                # Check sitemap coverage to ensure no pages are missing
+                sitemap_urls = self._discover_sitemap(site_url)
+                sitemap_backfill_scraped = 0
+                sitemap_backfill_failed = 0
+                if sitemap_urls:
+                    normalized_map: Dict[str, str] = {}
+                    for raw_url in sitemap_urls:
+                        if not raw_url:
+                            continue
+                        if not self._is_same_domain(raw_url, site_url):
+                            continue
+                        normalized = self._normalize_url(raw_url)
+                        if normalized:
+                            normalized_map[normalized] = raw_url
+                    sitemap_total = len(normalized_map)
+                    if sitemap_total:
+                        existing_cursor = self.scraped_content_collection.find(
+                            {"base_domain": base_domain, "status": "active"},
+                            {"normalized_url": 1}
+                        )
+                        existing_urls = {
+                            doc.get("normalized_url")
+                            for doc in existing_cursor
+                            if doc.get("normalized_url")
+                        }
+                        current_scraped_count = len(existing_urls)
+                        print(
+                            f"Sitemap for {base_domain} reports {sitemap_total} URL(s); "
+                            f"{current_scraped_count} page(s) currently scraped."
+                        )
+                        missing_normalized = [
+                            normalized for normalized in normalized_map.keys()
+                            if normalized and normalized not in existing_urls
+                        ]
+                        allowed_missing = None
+                        if max_pages_per_site:
+                            allowed_missing = max(0, max_pages_per_site - current_scraped_count)
+                        if allowed_missing is not None:
+                            if allowed_missing == 0:
+                                missing_normalized = []
+                            elif allowed_missing < len(missing_normalized):
+                                print(
+                                    f"  Limiting sitemap backfill to {allowed_missing} URL(s) "
+                                    "to honor max_pages_per_site"
+                                )
+                                missing_normalized = missing_normalized[:allowed_missing]
+                        if missing_normalized:
+                            backfill_urls = [normalized_map[norm] for norm in missing_normalized]
+                            print(f"  ➤ Found {len(backfill_urls)} sitemap URL(s) missing from scrape history. Backfilling now...")
+                            backfill_result = _scrape_url_batch_for_site(
+                                backfill_urls,
+                                total_urls=sitemap_total,
+                                pages_processed_start=current_scraped_count,
+                                label="sitemap_backfill"
+                            )
+                            sitemap_backfill_scraped = backfill_result["scraped"]
+                            sitemap_backfill_failed = backfill_result["failed"]
+                            if sitemap_backfill_scraped > 0:
+                                site_result["status"] = "completed"
+                            _update_checkpoint(current_site=None, pending_override=list(pending_sites_queue))
+                        else:
+                            print("  ✓ Sitemap coverage already complete for this site.")
+                    else:
+                        print(f"Sitemap discovered but contained no URLs for {base_domain}.")
+                else:
+                    print(f"No sitemap available for {base_domain}; skipping coverage comparison.")
+
+                # Update scraped_sites metadata with latest counters
+                current_active_pages = self.scraped_content_collection.count_documents(
+                    {"base_domain": base_domain, "status": "active"}
+                )
+                site_update: Dict[str, Any] = {
+                    "$set": {
+                        "last_scraped_at": datetime.utcnow(),
+                        "total_pages": current_active_pages
+                    },
+                    "$addToSet": {"modes": mode_name}
+                }
+                inc_doc: Dict[str, int] = {}
+                if sitemap_backfill_scraped:
+                    inc_doc["successful_pages"] = sitemap_backfill_scraped
+                if sitemap_backfill_failed:
+                    inc_doc["failed_pages"] = sitemap_backfill_failed
+                if inc_doc:
+                    site_update["$inc"] = inc_doc
+                site_filter = {"_id": site_doc.get("_id")} if site_doc.get("_id") else {"base_domain": base_domain}
+                self.scraped_sites_collection.update_one(site_filter, site_update)
                 
             else:
                 # Site not scraped yet - crawl and scrape it
@@ -2741,197 +3003,15 @@ class ScrapingService:
                     "failed_pages": results["total_pages_failed"]
                 })
                 
-                page_queue = deque(urls_to_scrape)
-                
-                # Step 3: Scrape each discovered URL
-                # Create a single browser instance for all pages in this site (significant performance boost)
-                print(f"Creating browser instance for scraping {len(page_queue)} pages...")
-                from playwright.sync_api import sync_playwright
-                p = self._start_playwright()
-                browser = p.chromium.launch(headless=True)
-                
-                scraped_count = 0
-                failed_count = 0
-                processed_urls = set()  # Track URLs processed in this session to prevent duplicates
-                
-                try:
-                    while page_queue:
-                        url = page_queue.popleft()
-                        pages_processed += 1
-                        idx = pages_processed
-                        
-                        normalized_url = self._normalize_url(url)
-                        
-                        # Skip if we've already processed this URL in this session
-                        if normalized_url in processed_urls:
-                            print(f"\nSkipping duplicate URL (already processed): {url}")
-                            continue
-                        
-                        processed_urls.add(normalized_url)
-                        print(f"\nScraping page {idx}/{total_urls}: {url}")
-                        
-                        # Check if this specific URL was already scraped
-                        existing = self.scraped_content_collection.find_one({
-                            "normalized_url": normalized_url
-                        })
-                        
-                        if existing:
-                            # URL already exists, just link to mode
-                            self.scraped_content_collection.update_one(
-                                {"_id": existing["_id"]},
-                                {"$addToSet": {"modes": mode_name}}
-                            )
-                            self._clear_failed_page(normalized_url, mode_name)
-                            site_result["pages_reused"] += 1
-                            results["total_pages_reused"] += 1
-                            print(f"  ✓ Reused existing content")
-                            
-                            # Update progress after reusing page
-                            _update_checkpoint(
-                                current_site=site_url,
-                                remaining_urls=list(page_queue),
-                                total_urls=total_urls,
-                                processed_urls=pages_processed
-                            )
-                            _emit_progress({
-                                "current_site": base_domain,
-                                "total_pages": results["total_pages_scraped"] + results["total_pages_reused"],
-                                "scraped_pages": results["total_pages_scraped"],
-                                "reused_pages": results["total_pages_reused"],
-                                "failed_pages": results["total_pages_failed"]
-                            })
-                            continue
-                        
-                        # Scrape the URL with retries (first pass: fast scrape)
-                        retry_count = 0
-                        success = False
-                        
-                        while retry_count <= max_retries and not success:
-                            page_start = time.perf_counter()
-                            # First pass: Fast scrape without dynamic content (no file discovery)
-                            # Pass the reusable browser instance for performance
-                            content, title, error, html_content, file_links = self.scrape_url(
-                                url, 
-                                extract_files=False,  # First pass: content only, no file discovery
-                                load_dynamic_content=False,
-                                playwright_browser=browser  # Reuse browser for performance
-                            )
-                            
-                            if error:
-                                retry_count += 1
-                                if retry_count <= max_retries:
-                                    print(f"  ↻ Retry {retry_count}/{max_retries}")
-                                    time.sleep(2 ** retry_count)
-                                continue
-                            
-                            # Upload to vector store
-                            scraped_at = datetime.utcnow()
-                            openai_file_id = self.upload_to_vector_store(
-                                content, mode_name, url, title, scraped_at
-                            )
-                            
-                            # Save to MongoDB with verification status
-                            content_doc = {
-                                "normalized_url": normalized_url,
-                                "original_url": url,
-                                "base_domain": base_domain,
-                                "title": title,
-                                "content": content,
-                                "scraped_at": scraped_at,
-                                "openai_file_id": openai_file_id,
-                                "status": "active",
-                                "verification_status": "pending_verification",  # Track verification status
-                                "modes": [mode_name],  # List of modes using this content
-                                "user_id": user_id,
-                                "metadata": {
-                                    "word_count": len(content.split()),
-                                    "char_count": len(content)
-                                }
-                            }
-                            
-                            insert_result = self.scraped_content_collection.insert_one(content_doc)
-                            newly_scraped_ids.append(str(insert_result.inserted_id))
-                            self._clear_failed_page(normalized_url, mode_name)
-                            
-                            # Store discovered files
-                            if file_links:
-                                for file_info in file_links:
-                                    file_info["mode"] = mode_name
-                                    file_info["discovered_at"] = scraped_at
-                                    file_info["user_id"] = user_id
-                                    file_info["status"] = "discovered"  # 'discovered' or 'added'
-                                    file_info["base_domain"] = base_domain
-                                    self._insert_discovered_file(file_info)
-                                
-                                print(f"  📄 Discovered {len(file_links)} downloadable file(s)")
-                            
-                            scraped_count += 1
-                            site_result["pages_scraped"] += 1
-                            results["total_pages_scraped"] += 1
-                            success = True
-                            print(f"  ✓ Successfully scraped ({content_doc['metadata']['word_count']} words)")
-                            _record_page(time.perf_counter() - page_start)
-                            
-                            # Update progress after each page
-                            _update_checkpoint(
-                                current_site=site_url,
-                                remaining_urls=list(page_queue),
-                                total_urls=total_urls,
-                                processed_urls=pages_processed
-                            )
-                            _emit_progress({
-                                "current_site": base_domain,
-                                "total_pages": results["total_pages_scraped"] + results["total_pages_reused"],
-                                "scraped_pages": results["total_pages_scraped"],
-                                "reused_pages": results["total_pages_reused"],
-                                "failed_pages": results["total_pages_failed"]
-                            })
-                            
-                            # Rate limiting
-                            time.sleep(1)
-                        
-                        if not success:
-                            failed_count += 1
-                            site_result["pages_failed"] += 1
-                            results["total_pages_failed"] += 1
-                            print(f"  ✗ Failed: {error}")
-                            self._record_failed_page(
-                                normalized_url=normalized_url,
-                                original_url=url,
-                                base_domain=base_domain,
-                                mode_name=mode_name,
-                                user_id=user_id,
-                                error=error,
-                                attempts=retry_count,
-                                context={
-                                    "site_url": site_url,
-                                    "page_index": idx,
-                                    "total_urls": total_urls,
-                                    "max_retries": max_retries,
-                                },
-                            )
-                        
-                        # Update progress after failed page
-                        _update_checkpoint(
-                            current_site=site_url,
-                            remaining_urls=list(page_queue),
-                            total_urls=total_urls,
-                            processed_urls=pages_processed
-                        )
-                        _emit_progress({
-                            "current_site": base_domain,
-                            "total_pages": results["total_pages_scraped"] + results["total_pages_reused"],
-                            "scraped_pages": results["total_pages_scraped"],
-                            "reused_pages": results["total_pages_reused"],
-                            "failed_pages": results["total_pages_failed"]
-                        })
-                        if site_metrics and not success and page_start:
-                            _record_page(time.perf_counter() - page_start)
-                finally:
-                    # Always close the browser when done with this site
-                    print(f"Closing browser instance...")
-                    browser.close()
-                    p.stop()
+                batch_result = _scrape_url_batch_for_site(
+                    list(urls_to_scrape),
+                    total_urls=total_urls,
+                    pages_processed_start=pages_processed,
+                    label="site"
+                )
+                scraped_count = batch_result["scraped"]
+                failed_count = batch_result["failed"]
+                pages_processed = batch_result["processed"]
                 
                 # Step 4: Record that this site has been scraped
                 self.scraped_sites_collection.insert_one({
@@ -2976,8 +3056,11 @@ class ScrapingService:
         
         results["newly_scraped_content_ids"] = newly_scraped_ids
         site_content_ids: List[str] = []
+        verification_domain: Optional[str] = None
         if processed_domains:
             domain_list = list(processed_domains)
+            if len(domain_list) == 1:
+                verification_domain = domain_list[0]
             cursor = self.scraped_content_collection.find(
                 {"base_domain": {"$in": domain_list}, "status": "active"},
                 {"_id": 1}
@@ -2994,7 +3077,8 @@ class ScrapingService:
                     job_id = self.verification_scheduler.trigger_background_verification(
                         batch_size=len(site_content_ids),
                         content_ids=site_content_ids,
-                        mode_name=mode_name
+                        mode_name=mode_name,
+                        base_domain=verification_domain
                     )
                     print(f"✓ Background verification job started: {job_id}")
                     results["verification_job_id"] = str(job_id)

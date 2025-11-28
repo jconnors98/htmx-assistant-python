@@ -6,7 +6,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 import boto3
 from decouple import config
@@ -19,8 +19,9 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from packages.common.scraper_contracts import ScraperJobRequest  # noqa: E402
+from packages.common.scraper_contracts import ScraperJobRequest, ScraperQueueConfig  # noqa: E402
 from scraper_jobs import ScrapeJobProcessor  # noqa: E402
+from assistant_services.scraper_client import ScraperClient  # noqa: E402
 from scraping_service import ScrapingService  # noqa: E402
 
 
@@ -29,6 +30,45 @@ logging.basicConfig(
     level=getattr(logging, config("LOG_LEVEL", default="INFO").upper()),
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
+
+
+class _WorkerVerificationScheduler:
+    """Minimal scheduler shim so scraping_service can queue verification jobs."""
+
+    def __init__(self, scraper_client: ScraperClient):
+        self.scraper_client = scraper_client
+
+    def trigger_background_verification(
+        self,
+        batch_size: int = 100,
+        content_ids: Optional[List[str]] = None,
+        mode_name: Optional[str] = None,
+        base_domain: Optional[str] = None,
+    ):
+        filters: Dict[str, Any] = {}
+        if content_ids:
+            filters["content_ids"] = content_ids
+        if mode_name:
+            filters["mode_name"] = mode_name
+        if not filters:
+            filters = None
+
+        job_id = self.scraper_client.queue_verification(
+            batch_size=batch_size,
+            auto_dispatch=True,
+            filters=filters,
+            mode_name=mode_name,
+            base_domain=base_domain,
+        )
+        log.info(
+            "Queued background verification job %s (batch=%s, content_ids=%s, mode=%s, base_domain=%s)",
+            job_id,
+            batch_size,
+            len(content_ids or []),
+            mode_name,
+            base_domain,
+        )
+        return job_id
 
 
 def _build_mongo_client():
@@ -94,28 +134,43 @@ def main():
 
     queue_url = config("SCRAPER_SQS_QUEUE_URL")
     region = config("SCRAPER_SQS_REGION", default=config("COGNITO_REGION", default="us-east-1"))
+    message_group_id = config("SCRAPER_SQS_MESSAGE_GROUP_ID", default=None) or None
     wait_seconds = int(config("SCRAPER_SQS_WAIT_TIME", default="10"))
     max_messages = int(config("SCRAPER_SQS_MAX_MESSAGES", default="5"))
     visibility_timeout = int(config("SCRAPER_SQS_VISIBILITY_TIMEOUT", default="300"))
     idle_sleep = int(config("SCRAPER_IDLE_SLEEP_SECONDS", default="5"))
+    scraper_environment = config("SCRAPER_ENVIRONMENT", default="prod")
 
     mongo_client = _build_mongo_client()
     db = mongo_client.get_database(config("MONGO_DB", default="bcca-assistant"))
     jobs_collection = db.get_collection("scraping_jobs")
 
     openai_client = OpenAI(api_key=config("OPENAI_API_KEY"))
+    sqs = _build_sqs_client(region)
+    queue_config = ScraperQueueConfig(
+        queue_url=queue_url,
+        region_name=region,
+        message_group_id=message_group_id,
+    )
+    scraper_client = ScraperClient(
+        mode="remote",
+        jobs_collection=jobs_collection,
+        scraper_environment=scraper_environment,
+        sqs_client=sqs,
+        queue_config=queue_config,
+    )
+
     scraping_service = ScrapingService(
         client=openai_client,
         mongo_db=db,
         vector_store_id=config("OPENAI_VECTOR_STORE_ID", default=None),
     )
+    scraping_service.verification_scheduler = _WorkerVerificationScheduler(scraper_client)
     processor = ScrapeJobProcessor(
         scraping_service=scraping_service,
         jobs_collection=jobs_collection,
-        environment=config("SCRAPER_ENVIRONMENT", default="prod"),
+        environment=scraper_environment,
     )
-
-    sqs = _build_sqs_client(region)
 
     log.info("Scraper worker started. Queue=%s Region=%s", queue_url, region)
 

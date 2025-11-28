@@ -404,7 +404,13 @@ class ScrapeScheduler:
             raise RuntimeError("Immediate verification is only available in local mode")
         return self.scraping_service.verify_scraped_content(batch_size=batch_size)
     
-    def trigger_background_verification(self, batch_size: int = 100, content_ids: Optional[List[str]] = None, mode_name: Optional[str] = None):
+    def trigger_background_verification(
+        self,
+        batch_size: int = 100,
+        content_ids: Optional[List[str]] = None,
+        mode_name: Optional[str] = None,
+        base_domain: Optional[str] = None,
+    ):
         """
         Trigger a verification run in the background (non-blocking).
         Creates a job record and runs verification in a separate thread.
@@ -430,6 +436,8 @@ class ScrapeScheduler:
             batch_size=batch_size,
             auto_dispatch=self.scraper_client.is_remote,
             filters=filters,
+            mode_name=mode_name,
+            base_domain=base_domain,
         )
         
         if not self.scraper_client.is_remote:
