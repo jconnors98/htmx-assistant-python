@@ -2002,6 +2002,60 @@ def add_discovered_file(mode_id):
         return {"error": "Failed to add file", "details": str(e)}, 500
 
 
+@routes.post("/admin/scrape/block-file/<mode_id>")
+@cognito_auth_required
+def block_discovered_file(mode_id):
+    """Block a discovered file URL and remove it from the list."""
+    try:
+        data = request.get_json()
+        file_id = data.get("file_id")
+        
+        if not file_id:
+            return {"error": "file_id is required"}, 400
+        
+        # Get the discovered file
+        discovered_files_collection = db.get_collection("discovered_files")
+        file_doc = discovered_files_collection.find_one({"_id": ObjectId(file_id)})
+        
+        if not file_doc:
+            return {"error": "File not found"}, 404
+        
+        file_url = file_doc.get("file_url")
+        mode_name = file_doc.get("mode")
+        
+        # Verify mode matches
+        query = {"_id": ObjectId(mode_id)}
+        if not request.user.get("is_super_admin"):
+            query["user_id"] = request.user["sub"]
+        
+        mode_doc = modes_collection.find_one(query)
+        if not mode_doc:
+            return {"error": "Mode not found or access denied"}, 403
+            
+        if mode_doc.get("name") != mode_name:
+            return {"error": "File does not belong to this mode"}, 400
+            
+        # Add URL to blocked_file_urls
+        modes_collection.update_one(
+            {"_id": ObjectId(mode_id)},
+            {"$addToSet": {"blocked_file_urls": file_url}}
+        )
+        
+        # Delete the discovered file record
+        discovered_files_collection.delete_one({"_id": ObjectId(file_id)})
+        
+        print(f"Blocked file URL: {file_url} for mode {mode_name}")
+        
+        return {
+            "success": True,
+            "message": "File blocked and removed from list"
+        }, 200
+        
+    except Exception as e:
+        print(f"Error blocking file: {e}")
+        return {"error": "Failed to block file", "details": str(e)}, 500
+
+
 @routes.delete("/admin/scrape/discovered-file/<file_id>")
 @cognito_auth_required
 def delete_discovered_file(file_id):

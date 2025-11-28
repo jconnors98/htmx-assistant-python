@@ -1040,6 +1040,7 @@
             </div>
             <div class="flex gap-2 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                 <button class="add-file-btn text-xs bg-white border border-gray-200 text-green-600 px-2 py-1 rounded hover:bg-green-50 transition-colors" data-file-id="${file._id}">Add</button>
+                <button class="block-file-btn text-xs bg-white border border-gray-200 text-gray-600 px-2 py-1 rounded hover:bg-gray-100 transition-colors" data-file-id="${file._id}" title="Block this file URL permanently">Block</button>
                 <button class="remove-file-btn text-xs bg-white border border-gray-200 text-red-600 px-2 py-1 rounded hover:bg-red-50 transition-colors" data-file-id="${file._id}">Dismiss</button>
             </div>
           `;
@@ -1058,6 +1059,10 @@
       document.querySelectorAll('.add-file-btn').forEach(btn => btn.onclick = (e) => {
           e.stopPropagation();
           addDiscoveredFile(btn.dataset.fileId);
+      });
+      document.querySelectorAll('.block-file-btn').forEach(btn => btn.onclick = (e) => {
+          e.stopPropagation();
+          blockDiscoveredFile(btn.dataset.fileId);
       });
       document.querySelectorAll('.remove-file-btn').forEach(btn => btn.onclick = (e) => {
           e.stopPropagation();
@@ -1159,6 +1164,20 @@
         });
         if (!handleUnauthorized(res) && res.ok) {
             loadDiscoveredFiles();
+        }
+    }
+
+    async function blockDiscoveredFile(fileId) {
+        if(!confirm("Block this file URL? It will be removed and ignored in future scrapes.")) return;
+        const res = await fetch('/flask/admin/scrape/block-file/' + modeId, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ file_id: fileId })
+        });
+        if (!handleUnauthorized(res) && res.ok) {
+            loadDiscoveredFiles();
+        } else {
+            alert("Failed to block file.");
         }
     }
 

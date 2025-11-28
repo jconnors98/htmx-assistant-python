@@ -176,11 +176,24 @@ class ScrapingService:
             pass  # Indexes may already exist
     
     def _insert_discovered_file(self, file_info: Dict[str, Any]) -> bool:
-        """Insert into discovered_files if (mode, file_url) is new."""
+        """Insert into discovered_files if (mode, file_url) is new and not blocked."""
         file_url = file_info.get("file_url")
         mode_name = file_info.get("mode")
         if not file_url:
             return False
+            
+        # Check if URL is blocked for this mode
+        if mode_name:
+            try:
+                mode_doc = self.modes_collection.find_one(
+                    {"name": mode_name}, 
+                    {"blocked_file_urls": 1}
+                )
+                if mode_doc and file_url in mode_doc.get("blocked_file_urls", []):
+                    return False
+            except Exception:
+                pass  # Continue if check fails
+            
         query = {"file_url": file_url}
         if mode_name:
             query["mode"] = mode_name
@@ -301,7 +314,6 @@ class ScrapingService:
             },
             "$setOnInsert": {
                 "first_failed_at": now,
-                "failure_count": 0,
             },
             "$inc": {"failure_count": 1},
         }
@@ -2761,7 +2773,7 @@ class ScrapingService:
                     _emit_progress({})
                     results["sites"].append(site_result)
                     continue
-
+                
                 # Check if this specific page was already scraped
                 existing = self.scraped_content_collection.find_one({
                     "normalized_url": normalized_url
