@@ -72,7 +72,7 @@ SES_SENDER_EMAIL = config("SES_SENDER_EMAIL", default=None)
 DEFAULT_MODE_COLOR = "#82002d"
 DEFAULT_TEXT_COLOR = "#ffffff"
 
-DOCUMENT_INTELLIGENCE_ENABLED = config("DOCUMENT_INTELLIGENCE_ENABLED", default="false").lower() == "true"
+DOC_INTEL_ENABLED = config("DOC_INTEL_ENABLED", default="false").lower() == "true"
 DOC_INTEL_STORAGE_DIR = config(
     "DOC_INTEL_STORAGE_DIR",
     default=os.path.join(os.getcwd(), "storage", "doc_intel"),
@@ -99,12 +99,12 @@ def _merge_doc_intel_settings(settings):
     merged = {**DOC_INTEL_DEFAULT_SETTINGS}
     if isinstance(settings, dict):
         merged.update(settings)
-    merged["enabled"] = DOCUMENT_INTELLIGENCE_ENABLED and bool(merged.get("enabled"))
+    merged["enabled"] = DOC_INTEL_ENABLED and bool(merged.get("enabled"))
     return merged
 
 
 def _attach_doc_intel_metadata(doc):
-    doc["doc_intelligence_enabled"] = DOCUMENT_INTELLIGENCE_ENABLED and bool(doc.get("doc_intelligence_enabled"))
+    doc["doc_intelligence_enabled"] = DOC_INTEL_ENABLED and bool(doc.get("doc_intelligence_enabled"))
     doc["doc_intelligence_settings"] = _merge_doc_intel_settings(doc.get("doc_intelligence_settings"))
     return doc
 
@@ -115,7 +115,7 @@ def _doc_intel_mode_lookup(mode_name: str):
     mode_doc = modes_collection.find_one({"name": mode_name})
     if not mode_doc:
         return None, ({"error": "Mode not found"}, 404)
-    if not (DOCUMENT_INTELLIGENCE_ENABLED and mode_doc.get("doc_intelligence_enabled")):
+    if not (DOC_INTEL_ENABLED and mode_doc.get("doc_intelligence_enabled")):
         return None, ({"error": "Document intelligence is not enabled for this mode"}, 403)
     return mode_doc, None
 
@@ -161,7 +161,7 @@ doc_intelligence_service = DocumentIntelligenceService(
     storage_dir=DOC_INTEL_STORAGE_DIR,
     toolbox=document_toolbox,
     expiry_minutes=DOC_INTEL_EXPIRY_MINUTES,
-) if DOCUMENT_INTELLIGENCE_ENABLED else None
+) if DOC_INTEL_ENABLED else None
 
 conversation_service = ConversationService(
     db,
@@ -169,7 +169,7 @@ conversation_service = ConversationService(
     client,
     VECTOR_STORE_ID,
     doc_intelligence_service=doc_intelligence_service,
-    document_intelligence_enabled=DOCUMENT_INTELLIGENCE_ENABLED,
+    document_intelligence_enabled=DOC_INTEL_ENABLED,
 )
 
 SCRAPER_EXECUTION_MODE = config("SCRAPER_EXECUTION_MODE", default="local").lower()
@@ -483,7 +483,7 @@ def upload_files():
                 doc_intelligence_service
                 and mode_doc
                 and mode_doc.get("doc_intelligence_enabled")
-                and DOCUMENT_INTELLIGENCE_ENABLED
+                and DOC_INTEL_ENABLED
                 and doc_intel_session_id
             ):
                 doc_intel_candidates.append(
@@ -722,7 +722,7 @@ def create_mode():
         "has_scraped_content": False,
         "color": _normalize_color(data.get("color")),
         "text_color": _normalize_text_color(data.get("text_color")),
-        "doc_intelligence_enabled": DOCUMENT_INTELLIGENCE_ENABLED and bool(data.get("doc_intelligence_enabled", False)),
+        "doc_intelligence_enabled": DOC_INTEL_ENABLED and bool(data.get("doc_intelligence_enabled", False)),
         "doc_intelligence_settings": _merge_doc_intel_settings(data.get("doc_intelligence_settings")),
     }
 
@@ -765,7 +765,7 @@ def update_mode(mode_id):
         "has_scraped_content": doc.get("has_scraped_content", False),
         "color": _normalize_color(data.get("color", doc.get("color", DEFAULT_MODE_COLOR))),
         "text_color": _normalize_text_color(data.get("text_color", doc.get("text_color", DEFAULT_TEXT_COLOR))),
-        "doc_intelligence_enabled": DOCUMENT_INTELLIGENCE_ENABLED and bool(data.get("doc_intelligence_enabled", doc.get("doc_intelligence_enabled", False))),
+        "doc_intelligence_enabled": DOC_INTEL_ENABLED and bool(data.get("doc_intelligence_enabled", doc.get("doc_intelligence_enabled", False))),
         "doc_intelligence_settings": _merge_doc_intel_settings(data.get("doc_intelligence_settings", doc.get("doc_intelligence_settings"))),
     }
 
