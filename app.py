@@ -4,7 +4,8 @@ import io
 import json
 import secrets
 from functools import wraps
-from flask import Flask, Blueprint, request, send_from_directory, Response
+from flask import Flask, Blueprint, request, send_from_directory, Response, url_for, send_file
+from werkzeug.datastructures import FileStorage
 from markdown import markdown
 import bleach
 from decouple import config
@@ -23,6 +24,8 @@ from scraping_service import ScrapingService
 from scrape_scheduler import ScrapeScheduler
 from assistant_services import ScraperClient
 from packages.common.scraper_contracts import ScraperQueueConfig
+from document_intelligence_service import DocumentIntelligenceService
+from tools import DocumentToolbox
 from functions import (
     _get_priority_source, _get_jwks, _is_super_admin, _async_log_prompt,
     _parse_date, _normalize_color, _normalize_text_color, _process_natural_language_query,
@@ -51,6 +54,7 @@ superadmins_collection = db.get_collection("superadmins")
 reset_tokens_collection = db.get_collection("password_reset_tokens")
 scraped_content_collection = db.get_collection("scraped_content")
 scraping_jobs_collection = db.get_collection("scraping_jobs")
+document_projects_collection = db.get_collection("document_projects")
 
 localDevMode = config("LOCAL_DEV_MODE", default="false").lower()
 
@@ -67,6 +71,67 @@ SES_SENDER_EMAIL = config("SES_SENDER_EMAIL", default=None)
 
 DEFAULT_MODE_COLOR = "#82002d"
 DEFAULT_TEXT_COLOR = "#ffffff"
+
+DOCUMENT_INTELLIGENCE_ENABLED = config("DOCUMENT_INTELLIGENCE_ENABLED", default="false").lower() == "true"
+DOC_INTEL_STORAGE_DIR = config(
+    "DOC_INTEL_STORAGE_DIR",
+    default=os.path.join(os.getcwd(), "storage", "doc_intel"),
+)
+DOC_INTEL_DEFAULT_SETTINGS = {
+    "enabled": False,
+    "auto_ingest": False,
+    "storage_prefix": "doc_intel",
+}
+DOC_INTEL_MAX_UPLOAD_FILES = int(config("DOC_INTEL_MAX_UPLOAD_FILES", default="20"))
+DOC_INTEL_MAX_UPLOAD_MB = int(config("DOC_INTEL_MAX_UPLOAD_MB", default="200"))
+DOC_INTEL_ALLOWED_EXTENSIONS = set(
+    ext.strip().lower()
+    for ext in config(
+        "DOC_INTEL_ALLOWED_EXTENSIONS",
+        default="pdf,zip,doc,docx,xls,xlsx,ppt,pptx,txt,csv,jpg,jpeg,png,tif,tiff",
+    ).split(",")
+    if ext.strip()
+)
+DOC_INTEL_EXPIRY_MINUTES = int(config("DOC_INTEL_EXPIRY_MINUTES", default="30"))
+
+
+def _merge_doc_intel_settings(settings):
+    merged = {**DOC_INTEL_DEFAULT_SETTINGS}
+    if isinstance(settings, dict):
+        merged.update(settings)
+    merged["enabled"] = DOCUMENT_INTELLIGENCE_ENABLED and bool(merged.get("enabled"))
+    return merged
+
+
+def _attach_doc_intel_metadata(doc):
+    doc["doc_intelligence_enabled"] = DOCUMENT_INTELLIGENCE_ENABLED and bool(doc.get("doc_intelligence_enabled"))
+    doc["doc_intelligence_settings"] = _merge_doc_intel_settings(doc.get("doc_intelligence_settings"))
+    return doc
+
+
+def _doc_intel_mode_lookup(mode_name: str):
+    if not mode_name:
+        return None, ({"error": "mode is required"}, 400)
+    mode_doc = modes_collection.find_one({"name": mode_name})
+    if not mode_doc:
+        return None, ({"error": "Mode not found"}, 404)
+    if not (DOCUMENT_INTELLIGENCE_ENABLED and mode_doc.get("doc_intelligence_enabled")):
+        return None, ({"error": "Document intelligence is not enabled for this mode"}, 403)
+    return mode_doc, None
+
+
+def _doc_intel_validate_files(files):
+    if len(files) > DOC_INTEL_MAX_UPLOAD_FILES:
+        return {"error": f"Maximum {DOC_INTEL_MAX_UPLOAD_FILES} files per upload"}, 400
+    total_bytes = request.content_length or 0
+    if total_bytes and total_bytes > DOC_INTEL_MAX_UPLOAD_MB * 1024 * 1024:
+        return {"error": f"Upload exceeds {DOC_INTEL_MAX_UPLOAD_MB}MB limit"}, 400
+    for file in files:
+        filename = (file.filename or "").lower()
+        ext = filename.rsplit(".", 1)[-1] if "." in filename else ""
+        if ext not in DOC_INTEL_ALLOWED_EXTENSIONS:
+            return {"error": f"File type not allowed: {filename}"}, 400
+    return None
 
 
 
@@ -85,11 +150,26 @@ ses = boto3.client(
 )
 _jwks = None
 
+document_toolbox = DocumentToolbox(
+    openai_client=client,
+    storage_dir=DOC_INTEL_STORAGE_DIR,
+)
+
+doc_intelligence_service = DocumentIntelligenceService(
+    modes_collection=modes_collection,
+    projects_collection=document_projects_collection,
+    storage_dir=DOC_INTEL_STORAGE_DIR,
+    toolbox=document_toolbox,
+    expiry_minutes=DOC_INTEL_EXPIRY_MINUTES,
+) if DOCUMENT_INTELLIGENCE_ENABLED else None
+
 conversation_service = ConversationService(
     db,
     modes_collection,
     client,
     VECTOR_STORE_ID,
+    doc_intelligence_service=doc_intelligence_service,
+    document_intelligence_enabled=DOCUMENT_INTELLIGENCE_ENABLED,
 )
 
 SCRAPER_EXECUTION_MODE = config("SCRAPER_EXECUTION_MODE", default="local").lower()
@@ -141,6 +221,7 @@ scrape_scheduler = ScrapeScheduler(
     scraping_jobs_collection,
     scraper_client=scraper_client,
     scraping_service=scraping_service,
+    doc_intelligence_service=doc_intelligence_service,
 )
 
 
@@ -382,8 +463,14 @@ def add_security_headers(response):
 @routes.post("/upload-files")
 def upload_files():
     files = request.files.getlist("files")
+    mode_name = (request.form.get("mode") or "").strip()
+    doc_intel_session_id = (request.form.get("doc_intel_session_id") or "").strip()
+    mode_doc = None
+    if mode_name:
+        mode_doc = modes_collection.find_one({"name": mode_name})
     file_ids = []
-    
+    doc_intel_candidates = []
+
     for file in files:
         if file and file.filename:
             data = file.read()
@@ -392,6 +479,26 @@ def upload_files():
                 file=(file.filename, file_stream), purpose="assistants"
             )
             file_ids.append(uploaded.id)
+            if (
+                doc_intelligence_service
+                and mode_doc
+                and mode_doc.get("doc_intelligence_enabled")
+                and DOCUMENT_INTELLIGENCE_ENABLED
+                and doc_intel_session_id
+            ):
+                doc_intel_candidates.append(
+                    FileStorage(
+                        stream=io.BytesIO(data),
+                        filename=file.filename,
+                        content_type=getattr(file, "content_type", None),
+                    )
+                )
+
+    if doc_intel_candidates and mode_doc and doc_intel_session_id:
+        try:
+            doc_intelligence_service.ingest_files(mode_doc, doc_intel_session_id, doc_intel_candidates)
+        except Exception as exc:  # noqa: BLE001
+            print(f"Doc intelligence ingest failed: {exc}")
     
     return {"file_ids": file_ids}
 
@@ -421,6 +528,7 @@ def ask():
     tag = (request.form.get("tag") or "").strip()
     conversation_id = (request.form.get("conversation_id") or "").strip()
     previous_response_id = (request.form.get("response_id") or "").strip()
+    doc_intel_session_id = (request.form.get("doc_intel_session_id") or "").strip()
     mode_doc = modes_collection.find_one({"name": mode}) if mode else None
     allow_file_upload = mode_doc.get("allow_file_upload", False) if mode_doc else False
     
@@ -463,6 +571,7 @@ def ask():
             tag=tag,
             previous_response_id=previous_response_id or None,
             file_ids=openai_file_ids,
+            doc_intel_session_id=doc_intel_session_id or None,
         )
 
         # Log the AI response
@@ -521,6 +630,7 @@ def ask():
 def list_modes():
     docs = list(modes_collection.find({}, {"_id": 0, "database": 0}))
     for doc in docs:
+        doc = _attach_doc_intel_metadata(doc)
         doc["color"] = _normalize_color(doc.get("color"), DEFAULT_MODE_COLOR)
         doc["text_color"] = _normalize_text_color(doc.get("text_color"), DEFAULT_TEXT_COLOR)
     return {"modes": docs}
@@ -531,6 +641,7 @@ def get_mode(mode):
     doc = modes_collection.find_one({"name": mode}, {"_id": 0, "database": 0})
     if not doc:
         return {"prompts": []}, 404
+    doc = _attach_doc_intel_metadata(doc)
     return {
         "prompts": doc.get("prompts", []),
         "description": doc.get("description", ""),
@@ -540,6 +651,8 @@ def get_mode(mode):
         "has_files": doc.get("has_files", False),
         "color": _normalize_color(doc.get("color"), DEFAULT_MODE_COLOR),
         "text_color": _normalize_text_color(doc.get("text_color"), DEFAULT_TEXT_COLOR),
+        "doc_intelligence_enabled": doc.get("doc_intelligence_enabled", False),
+        "doc_intelligence_settings": doc.get("doc_intelligence_settings", {}),
     }
 
 
@@ -556,6 +669,7 @@ def list_modes_admin():
         d.pop("user_id", None)
         d["priority_source"] = _get_priority_source(d)
         d.pop("prioritize_files", None)
+        d = _attach_doc_intel_metadata(d)
         d["color"] = _normalize_color(d.get("color"), DEFAULT_MODE_COLOR)
         d["text_color"] = _normalize_text_color(d.get("text_color"), DEFAULT_TEXT_COLOR)
         docs.append(d)
@@ -575,6 +689,7 @@ def get_mode_admin(mode_id):
     doc["priority_source"] = _get_priority_source(doc)
     doc.pop("prioritize_files", None)
     doc.pop("user_id", None)
+    doc = _attach_doc_intel_metadata(doc)
     doc["color"] = _normalize_color(doc.get("color"), DEFAULT_MODE_COLOR)
     doc["text_color"] = _normalize_text_color(doc.get("text_color"), DEFAULT_TEXT_COLOR)
     return doc
@@ -607,6 +722,8 @@ def create_mode():
         "has_scraped_content": False,
         "color": _normalize_color(data.get("color")),
         "text_color": _normalize_text_color(data.get("text_color")),
+        "doc_intelligence_enabled": DOCUMENT_INTELLIGENCE_ENABLED and bool(data.get("doc_intelligence_enabled", False)),
+        "doc_intelligence_settings": _merge_doc_intel_settings(data.get("doc_intelligence_settings")),
     }
 
     doc["priority_source"] = _get_priority_source(data)
@@ -618,6 +735,7 @@ def create_mode():
     doc["_id"] = str(result.inserted_id)
     doc.pop("user_id", None)
     doc.pop("prioritize_files", None)
+    doc = _attach_doc_intel_metadata(doc)
     return doc, 201
 
 
@@ -647,6 +765,8 @@ def update_mode(mode_id):
         "has_scraped_content": doc.get("has_scraped_content", False),
         "color": _normalize_color(data.get("color", doc.get("color", DEFAULT_MODE_COLOR))),
         "text_color": _normalize_text_color(data.get("text_color", doc.get("text_color", DEFAULT_TEXT_COLOR))),
+        "doc_intelligence_enabled": DOCUMENT_INTELLIGENCE_ENABLED and bool(data.get("doc_intelligence_enabled", doc.get("doc_intelligence_enabled", False))),
+        "doc_intelligence_settings": _merge_doc_intel_settings(data.get("doc_intelligence_settings", doc.get("doc_intelligence_settings"))),
     }
 
     update["priority_source"] = _get_priority_source(data)
@@ -659,6 +779,7 @@ def update_mode(mode_id):
     doc["_id"] = str(doc["_id"])
     doc.pop("user_id", None)
     doc.pop("prioritize_files", None)
+    doc = _attach_doc_intel_metadata(doc)
     doc["color"] = _normalize_color(doc.get("color"), DEFAULT_MODE_COLOR)
     doc["text_color"] = _normalize_text_color(doc.get("text_color"), DEFAULT_TEXT_COLOR)
     return doc
@@ -1055,6 +1176,11 @@ def admin_analytics_page():
 @routes.get("/admin/mode")
 def admin_mode_page():
     return send_from_directory(routes.static_folder, "mode_editor.html")
+
+
+@routes.get("/admin/how-to")
+def admin_how_to_page():
+    return send_from_directory(routes.static_folder, "how-to.html")
 
 
 @routes.get("/admin/analytics/summary")
@@ -1663,6 +1789,336 @@ def download_document(doc_id):
     except Exception as e:
         print("s3 download failed", e)
         return {"error": "Failed to download file"}, 500
+
+
+def _doc_intel_guard():
+    if not doc_intelligence_service:
+        return {"error": "Document intelligence is disabled"}, 400
+    return None
+
+
+@routes.get("/doc-intel/summary")
+def doc_intel_summary():
+    guard = _doc_intel_guard()
+    if guard:
+        return guard
+    mode_name = (request.args.get("mode") or "").strip()
+    session_id = (request.args.get("session_id") or "").strip()
+    if not session_id:
+        return {"error": "session_id is required"}, 400
+    mode_doc, error = _doc_intel_mode_lookup(mode_name)
+    if error:
+        return error
+    summary = doc_intelligence_service.get_project_summary(session_id)
+    if not summary:
+        return {"project_id": None, "file_count": 0, "package_count": 0, "files": [], "packages": []}
+    return summary
+
+
+@routes.post("/doc-intel/ingest")
+def doc_intel_ingest():
+    guard = _doc_intel_guard()
+    if guard:
+        return guard
+    mode_name = (request.form.get("mode") or "").strip()
+    session_id = (request.form.get("session_id") or "").strip()
+    if not session_id:
+        return {"error": "session_id is required"}, 400
+    mode_doc, error = _doc_intel_mode_lookup(mode_name)
+    if error:
+        return error
+    files = request.files.getlist("files")
+    if not files:
+        return {"error": "At least one file is required"}, 400
+    validation_error = _doc_intel_validate_files(files)
+    if validation_error:
+        return validation_error
+    try:
+        result = doc_intelligence_service.ingest_files(mode_doc, session_id, files)
+        return result
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)}, 500
+
+
+@routes.get("/doc-intel/search")
+def doc_intel_search():
+    guard = _doc_intel_guard()
+    if guard:
+        return guard
+    mode_name = (request.args.get("mode") or "").strip()
+    session_id = (request.args.get("session_id") or "").strip()
+    if not session_id:
+        return {"error": "session_id is required"}, 400
+    mode_doc, error = _doc_intel_mode_lookup(mode_name)
+    if error:
+        return error
+    query_text = (request.args.get("query") or "").strip()
+    if not query_text:
+        return {"error": "query is required"}, 400
+    filters = {}
+    trade = (request.args.get("trade") or "").strip().lower()
+    if trade:
+        filters["trade"] = trade
+    results = doc_intelligence_service.search(session_id, query_text, filters or None)
+    return {"results": results}
+
+
+@routes.post("/doc-intel/query-search")
+def doc_intel_query_search():
+    """Dedicated endpoint for search mode that bypasses the conversation service."""
+    guard = _doc_intel_guard()
+    if guard:
+        return guard
+        
+    data = request.get_json(silent=True) or request.form.to_dict() or {}
+    mode_name = (data.get("mode") or "").strip()
+    session_id = (data.get("session_id") or "").strip()
+    query_text = (data.get("query") or "").strip()
+    
+    if not session_id:
+        return {"error": "session_id is required"}, 400
+    if not query_text:
+        return {"error": "query is required"}, 400
+        
+    mode_doc, error = _doc_intel_mode_lookup(mode_name)
+    if error:
+        return error
+        
+    # Check for filters
+    filters = data.get("filters", {})
+    
+    try:
+        # Perform the search using doc intelligence service
+        results = doc_intelligence_service.search(session_id, query_text, filters or None)
+        formatted_results = doc_intelligence_service._format_search_results(results, {"action": "search", "query": query_text})
+        
+        # Convert to HTML response format matching the chat interface
+        html_reply = markdown(formatted_results)
+        
+        # Auto-link plain URLs
+        def _linkify(match):
+            url = match.group(0)
+            return f'<a href="{url}" target="_blank" rel="noopener">{url}</a>'
+
+        html_reply = re.sub(r'(?<!href=")(https?://[^\s<]+)', _linkify, html_reply)
+        
+        html_reply = bleach.clean(
+            html_reply,
+            tags=list(bleach.sanitizer.ALLOWED_TAGS) + ["img", "p", "h3", "br", "ul", "li", "strong", "em"],
+            attributes={"a": ["href", "target", "rel"], "img": ["src", "alt"]},
+        )
+        
+        response_id = str(ObjectId())
+        conversation_id = data.get("conversation_id") or str(ObjectId())
+        
+        html = (
+            '<div class="chat-entry assistant">'
+            '<div class="bubble markdown">'
+            f"{html_reply}"
+            "</div></div>"
+            f'<input type="hidden" id="conversation_id" name="conversation_id" value="{conversation_id}" hx-swap-oob="true"/>'
+            f'<input type="hidden" id="response_id" name="response_id" value="{response_id}" hx-swap-oob="true"/>'
+        )
+        
+        return html
+        
+    except Exception as exc:  # noqa: BLE001
+        print(f"Error in doc-intel-query-search: {exc}")
+        return (
+            '<div class="chat-entry assistant">'
+            '<div class="bubble">❌ There was an error searching your documents. Please try again.</div>'
+            "</div>"
+        ), 500
+
+
+@routes.post("/doc-intel/build-package")
+def doc_intel_build_package():
+    guard = _doc_intel_guard()
+    if guard:
+        return guard
+    data = request.get_json() or {}
+    mode_name = (data.get("mode") or "").strip()
+    session_id = (data.get("session_id") or "").strip()
+    if not session_id:
+        return {"error": "session_id is required"}, 400
+    mode_doc, error = _doc_intel_mode_lookup(mode_name)
+    if error:
+        return error
+    plan = data.get("plan") or {}
+    output = (data.get("output") or "pdf").lower()
+    if output not in {"pdf", "zip"}:
+        return {"error": "output must be 'pdf' or 'zip'"}, 400
+    if not plan:
+        return {"error": "plan is required"}, 400
+    try:
+        package = doc_intelligence_service.build_package(mode_doc, session_id, plan, output)
+        package["download_url"] = url_for(
+            "routes.doc_intel_package_download",
+            package_id=package["package_id"],
+            mode=mode_name,
+            session_id=session_id,
+            file_type="zip" if package.get("output_zip_path") else "pdf",
+            _external=False,
+        )
+        return {"package": package}
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)}, 500
+
+
+@routes.get("/doc-intel/package/<package_id>")
+def doc_intel_package_download(package_id):
+    guard = _doc_intel_guard()
+    if guard:
+        return guard
+    mode_name = (request.args.get("mode") or "").strip()
+    file_type = (request.args.get("file_type") or "pdf").lower()
+    session_id = (request.args.get("session_id") or "").strip()
+    if not session_id:
+        return {"error": "session_id is required"}, 400
+    mode_doc, error = _doc_intel_mode_lookup(mode_name)
+    if error:
+        return error
+    package = doc_intelligence_service.get_package(session_id, package_id)
+    if not package:
+        return {"error": "Package not found"}, 404
+    file_path = package.output_zip_path if file_type == "zip" else package.output_pdf_path
+    if not file_path or not os.path.exists(file_path):
+        return {"error": "Package file unavailable"}, 404
+    return send_file(file_path, as_attachment=True, download_name=os.path.basename(file_path))
+
+
+@routes.get("/doc-intel/extract")
+def doc_intel_extract():
+    guard = _doc_intel_guard()
+    if guard:
+        return guard
+    mode_name = (request.args.get("mode") or "").strip()
+    session_id = (request.args.get("session_id") or "").strip()
+    query_text = (request.args.get("query") or "").strip()
+    if not query_text:
+        return {"error": "query is required"}, 400
+    if not session_id:
+        return {"error": "session_id is required"}, 400
+    mode_doc, error = _doc_intel_mode_lookup(mode_name)
+    if error:
+        return error
+    filters = {}
+    trade = (request.args.get("trade") or "").strip().lower()
+    if trade:
+        filters["trade"] = trade
+    payload = doc_intelligence_service.structured_extract_payload(mode_doc, session_id, query_text, filters or None)
+    return payload
+
+
+@routes.post("/doc-intel/auto-package")
+def doc_intel_auto_package():
+    guard = _doc_intel_guard()
+    if guard:
+        return guard
+    data = request.get_json() or {}
+    mode_name = (data.get("mode") or "").strip()
+    session_id = (data.get("session_id") or "").strip()
+    mode_doc, error = _doc_intel_mode_lookup(mode_name)
+    if error:
+        return error
+    if not session_id:
+        return {"error": "session_id is required"}, 400
+    trade = (data.get("trade") or "").strip().lower() or None
+    output = (data.get("output") or "pdf").lower()
+    instructions = data.get("instructions")
+    try:
+        result = doc_intelligence_service.build_package_from_intent(
+            mode_doc,
+            session_id,
+            trade=trade,
+            output=output,
+            filters=data.get("filters"),
+            query=instructions,
+        )
+        package = result["package"]
+        file_type = "zip" if package.get("output_zip_path") else "pdf"
+        package["download_url"] = (
+            f"/flask/doc-intel/package/{package['package_id']}?mode={mode_name}"
+            f"&session_id={session_id}&file_type={file_type}"
+        )
+        return result
+    except Exception as exc:  # noqa: BLE001
+        app.logger.error(f"Error building package: {exc}", exc_info=True)
+        return {"error": str(exc)}, 500
+
+
+@routes.post("/doc-intel/propose-package")
+def doc_intel_propose_package():
+    guard = _doc_intel_guard()
+    if guard:
+        return guard
+    data = request.get_json() or {}
+    mode_name = (data.get("mode") or "").strip()
+    session_id = (data.get("session_id") or "").strip()
+    
+    mode_doc, error = _doc_intel_mode_lookup(mode_name)
+    if error:
+        return error
+    if not session_id:
+        return {"error": "session_id is required"}, 400
+        
+    trade = (data.get("trade") or "").strip().lower() or None
+    instructions = data.get("instructions")
+    filters = data.get("filters")
+    
+    try:
+        proposal = doc_intelligence_service.propose_bid_package(
+            mode_doc,
+            session_id,
+            trade=trade,
+            filters=filters,
+            query=instructions
+        )
+        return proposal
+    except Exception as exc:  # noqa: BLE001
+        app.logger.error(f"Error proposing package: {exc}", exc_info=True)
+        return {"error": str(exc)}, 500
+
+
+@routes.post("/doc-intel/build-package-selection")
+def doc_intel_build_package_selection():
+    guard = _doc_intel_guard()
+    if guard:
+        return guard
+    data = request.get_json() or {}
+    mode_name = (data.get("mode") or "").strip()
+    session_id = (data.get("session_id") or "").strip()
+    
+    mode_doc, error = _doc_intel_mode_lookup(mode_name)
+    if error:
+        return error
+    if not session_id:
+        return {"error": "session_id is required"}, 400
+        
+    file_ids = data.get("file_ids") or []
+    if not file_ids:
+        return {"error": "No files selected"}, 400
+        
+    plan_details = data.get("plan_details") or {}
+    output = (data.get("output") or "pdf").lower()
+    
+    try:
+        package = doc_intelligence_service.build_package_from_selection(
+            mode_doc,
+            session_id,
+            file_ids,
+            plan_details,
+            output
+        )
+        file_type = "zip" if package.get("output_zip_path") else "pdf"
+        package["download_url"] = (
+            f"/flask/doc-intel/package/{package['package_id']}?mode={mode_name}"
+            f"&session_id={session_id}&file_type={file_type}"
+        )
+        return {"package": package}
+    except Exception as exc:  # noqa: BLE001
+        app.logger.error(f"Error building package from selection: {exc}", exc_info=True)
+        return {"error": str(exc)}, 500
 
 
 @routes.post("/admin/scrape/trigger/<mode_id>")

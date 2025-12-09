@@ -135,6 +135,20 @@
             Back
           </button>
           
+          <a href="/flask/admin/how-to" target="_blank" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-medium transition-colors flex items-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            Guide
+          </a>
+
+          <button id="view-analytics" class="hidden px-4 py-2 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 border border-blue-200">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+            </svg>
+            Analytics
+          </button>
+
           <a href="https://bcca.ai/flask/widget-demo.html" target="_blank" class="px-4 py-2 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 border border-blue-200">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
@@ -649,6 +663,16 @@
       } else {
         document.getElementById('last-scraped-at').textContent = 'Never';
       }
+
+      // Show Analytics Button
+      const analyticsBtn = document.getElementById('view-analytics');
+      if (analyticsBtn) {
+        analyticsBtn.classList.remove('hidden');
+        analyticsBtn.classList.add('flex');
+        analyticsBtn.onclick = () => {
+            window.location.href = '/flask/admin/analytics?modeId=' + encodeURIComponent(m._id);
+        };
+      }
     }
 
     document.getElementById('mode-save').onclick = async () => {
@@ -1040,8 +1064,8 @@
             </div>
             <div class="flex gap-2 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                 <button class="add-file-btn text-xs bg-white border border-gray-200 text-green-600 px-2 py-1 rounded hover:bg-green-50 transition-colors" data-file-id="${file._id}">Add</button>
-                <button class="block-file-btn text-xs bg-white border border-gray-200 text-gray-600 px-2 py-1 rounded hover:bg-gray-100 transition-colors" data-file-id="${file._id}" title="Block this file URL permanently">Block</button>
-                <button class="remove-file-btn text-xs bg-white border border-gray-200 text-red-600 px-2 py-1 rounded hover:bg-red-50 transition-colors" data-file-id="${file._id}">Dismiss</button>
+                <button class="block-remove-file-btn text-xs bg-white border border-gray-200 text-red-600 px-2 py-1 rounded hover:bg-red-50 transition-colors" data-file-id="${file._id}" title="Block this file URL permanently and remove it">Block & Remove</button>
+                <button class="remove-file-btn text-xs bg-white border border-gray-200 text-gray-600 px-2 py-1 rounded hover:bg-gray-100 transition-colors" data-file-id="${file._id}">Dismiss</button>
             </div>
           `;
           list.appendChild(div);
@@ -1060,9 +1084,9 @@
           e.stopPropagation();
           addDiscoveredFile(btn.dataset.fileId);
       });
-      document.querySelectorAll('.block-file-btn').forEach(btn => btn.onclick = (e) => {
+      document.querySelectorAll('.block-remove-file-btn').forEach(btn => btn.onclick = (e) => {
           e.stopPropagation();
-          blockDiscoveredFile(btn.dataset.fileId);
+          blockAndRemoveDiscoveredFile(btn.dataset.fileId);
       });
       document.querySelectorAll('.remove-file-btn').forEach(btn => btn.onclick = (e) => {
           e.stopPropagation();
@@ -1077,7 +1101,12 @@
     const selectAllCb = document.getElementById('select-all-files');
     selectAllCb.onclick = () => {
         const checkboxes = document.querySelectorAll('.file-checkbox');
-        checkboxes.forEach(cb => cb.checked = selectAllCb.checked);
+        checkboxes.forEach(cb => {
+            const entry = cb.closest('.discovered-file-entry');
+            if (entry && entry.style.display !== 'none') {
+                cb.checked = selectAllCb.checked;
+            }
+        });
         updateBulkButtons();
     };
     
@@ -1167,17 +1196,32 @@
         }
     }
 
-    async function blockDiscoveredFile(fileId) {
-        if(!confirm("Block this file URL? It will be removed and ignored in future scrapes.")) return;
-        const res = await fetch('/flask/admin/scrape/block-file/' + modeId, {
-            method: 'POST',
-            headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ file_id: fileId })
-        });
-        if (!handleUnauthorized(res) && res.ok) {
+    async function blockAndRemoveDiscoveredFile(fileId) {
+        if(!confirm("Block this file URL? It will be removed now and ignored in future scrapes.")) return;
+        try {
+            const blockRes = await fetch('/flask/admin/scrape/block-file/' + modeId, {
+                method: 'POST',
+                headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ file_id: fileId })
+            });
+            if (handleUnauthorized(blockRes) || !blockRes.ok) {
+                alert("Failed to block file.");
+                return;
+            }
+
+            const deleteRes = await fetch('/flask/admin/scrape/discovered-file/' + fileId, {
+                method: 'DELETE',
+                headers: { 'Authorization': 'Bearer ' + idToken }
+            });
+            if (handleUnauthorized(deleteRes) || !deleteRes.ok) {
+                alert("Blocked, but failed to remove from list. Please refresh.");
+                return;
+            }
+
             loadDiscoveredFiles();
-        } else {
-            alert("Failed to block file.");
+        } catch (err) {
+            console.error('Block and remove failed:', err);
+            alert("Failed to block and remove file.");
         }
     }
 

@@ -1,0 +1,826 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>AI Assistant – Setup Guide</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <style>
+    :root {
+      --burgundy: #7A1E35;
+      --burgundy-dark: #5E1629;
+      --burgundy-light: #A23C52;
+
+      --bg: #ffffff;
+      --bg-soft: #fafafa;
+      --text-main: #1d1d1f;
+      --text-muted: #555555;
+      --border-subtle: rgba(0,0,0,0.1);
+      --border-strong: rgba(0,0,0,0.18);
+
+      --radius-lg: 18px;
+      --radius-xl: 24px;
+      --shadow-soft: 0 10px 35px rgba(15,23,42,0.08);
+      --shadow-subtle: 0 6px 20px rgba(15,23,42,0.06);
+    }
+
+    * {margin: 0; padding: 0; box-sizing: border-box;}
+
+    body {
+      font-family: system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text-main);
+      line-height: 1.6;
+    }
+
+    a {text-decoration: none; color: inherit;}
+
+    main {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 2.5rem 1.5rem 4rem;
+    }
+
+    /* NAVIGATION */
+    .nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 2.5rem;
+      gap: 1rem;
+    }
+
+    .nav-logo {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      background: #fff;
+      border: 1px solid var(--border-subtle);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      color: var(--burgundy-dark);
+      font-weight: 600;
+      box-shadow: var(--shadow-subtle);
+    }
+
+    .nav-left {
+      display: flex;
+      gap: 0.8rem;
+      align-items: center;
+    }
+
+    .nav-title {
+      font-size: 0.95rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      font-weight: 600;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 1rem;
+      font-size: 0.9rem;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .nav-link {
+      padding: 0.35rem 0.8rem;
+      border-radius: 999px;
+      color: var(--text-muted);
+      border: 1px solid transparent;
+      cursor: pointer;
+    }
+
+    .nav-link:hover {
+      background: #f5f5f5;
+      border-color: var(--border-subtle);
+      color: var(--text-main);
+    }
+
+    .nav-link-primary {
+      background: linear-gradient(135deg, var(--burgundy), var(--burgundy-dark));
+      color: #fff;
+      font-weight: 600;
+      box-shadow: 0 8px 24px rgba(90,20,40,0.25);
+    }
+
+    /* HERO */
+    .hero {
+      background: linear-gradient(135deg, #ffffff, #fdf5f7);
+      padding: 3rem;
+      border-radius: 32px;
+      border: 1px solid var(--border-subtle);
+      box-shadow: var(--shadow-soft);
+      margin-bottom: 3rem;
+    }
+
+    .hero-title {
+      font-size: 2.4rem;
+      font-weight: 700;
+      margin-bottom: 0.6rem;
+      color: var(--burgundy-dark);
+    }
+
+    .hero-title span {
+      color: var(--burgundy);
+    }
+
+    .hero-subtitle {
+      color: var(--text-muted);
+      margin-bottom: 1.4rem;
+      max-width: 36rem;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--burgundy), var(--burgundy-dark));
+      color: #fff;
+      padding: 0.7rem 1.4rem;
+      border-radius: 999px;
+      border: none;
+      cursor: pointer;
+      font-weight: 600;
+      box-shadow: 0 8px 24px rgba(90,20,40,0.25);
+    }
+
+    /* STEP SUMMARY CARDS */
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0,1fr));
+      gap: 0.8rem;
+      margin-top: 2rem;
+    }
+
+    .feature-card {
+      background: #ffffff;
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 0.8rem 0.9rem;
+      box-shadow: var(--shadow-subtle);
+      font-size: 0.85rem;
+    }
+
+    .feature-tag {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--burgundy);
+      margin-bottom: 0.25rem;
+      font-weight: 600;
+    }
+
+    .feature-title {
+      color: var(--burgundy-dark);
+      font-weight: 600;
+      margin-bottom: 0.2rem;
+      font-size: 0.9rem;
+    }
+
+    .feature-text {
+      color: var(--text-muted);
+      font-size: 0.8rem;
+    }
+
+    /* SECTIONS */
+    section {
+      margin-bottom: 3rem;
+    }
+
+    .section-header {
+      margin-bottom: 1.2rem;
+    }
+
+    .section-kicker {
+      color: var(--burgundy);
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-weight: 600;
+    }
+
+    .section-title {
+      font-size: 1.45rem;
+      color: var(--burgundy-dark);
+    }
+
+    .section-description {
+      color: var(--text-muted);
+      max-width: 40rem;
+    }
+
+    /* PANELS */
+    .panel {
+      background: #fff;
+      padding: 1.2rem;
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border-subtle);
+      box-shadow: var(--shadow-subtle);
+      margin-bottom: 1rem;
+      font-size: 0.95rem;
+    }
+
+    .panel-title {
+      color: var(--burgundy-dark);
+      font-weight: 600;
+      margin-bottom: 0.4rem;
+    }
+
+    .panel-list {
+      padding-left: 1.2rem;
+      color: var(--text-muted);
+    }
+
+    .panel-list li {
+      margin-bottom: 0.25rem;
+    }
+
+    /* TWO-COLUMN LAYOUT (optional) */
+    .two-col {
+      display: grid;
+      grid-template-columns: minmax(0,1.4fr) minmax(0,1fr);
+      gap: 1rem;
+      align-items: flex-start;
+    }
+
+    /* TABS (Advanced / Search priority) */
+    .tabs {
+      display: flex;
+      gap: 0.4rem;
+      background: #f5f5f5;
+      padding: 0.2rem;
+      border-radius: 999px;
+      margin-bottom: 1rem;
+      border: 1px solid var(--border-subtle);
+      width: fit-content;
+    }
+
+    .tab {
+      padding: 0.35rem 0.8rem;
+      border-radius: 999px;
+      color: var(--text-muted);
+      font-size: 0.8rem;
+    }
+
+    .tab.active {
+      background: #fff;
+      border: 1px solid var(--border-subtle);
+      color: var(--burgundy-dark);
+    }
+
+    .priority-layout {
+      display: grid;
+      grid-template-columns: minmax(0,1.4fr) minmax(0,1fr);
+      gap: 1.2rem;
+    }
+
+    .priority-card {
+      background: #fff;
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 1rem;
+      box-shadow: var(--shadow-subtle);
+      font-size: 0.9rem;
+    }
+
+    .toggle-pill {
+      width: 36px;
+      height: 20px;
+      background: #f5f5f5;
+      border-radius: 999px;
+      border: 1px solid var(--border-strong);
+      position: relative;
+    }
+
+    .toggle-pill::before {
+      content: "";
+      position: absolute;
+      top: 2px;
+      left: 17px;
+      width: 14px;
+      height: 14px;
+      background: var(--burgundy);
+      border-radius: 50%;
+    }
+
+    /* WARNING */
+    .warning {
+      background: #fff5f6;
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-lg);
+      padding: 1rem;
+      display: flex;
+      gap: 1rem;
+      font-size: 0.9rem;
+    }
+
+    .warning-icon {
+      background: #fff;
+      border: 1px solid var(--burgundy-light);
+      border-radius: 50%;
+      width: 24px;
+      height: 24px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      color: var(--burgundy-dark);
+      font-weight: 600;
+    }
+
+    /* FAQ */
+    .faq {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0,1fr));
+      gap: 1rem;
+      font-size: 0.9rem;
+    }
+
+    .faq-item {
+      background: #fff;
+      padding: 1rem;
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border-subtle);
+      box-shadow: var(--shadow-subtle);
+    }
+
+    .faq-q {
+      font-weight: 600;
+      color: var(--burgundy-dark);
+      margin-bottom: 0.25rem;
+    }
+
+    .faq-a {
+      color: var(--text-muted);
+    }
+
+    /* SUPPORT */
+    .support {
+      background: #fdf5f7;
+      padding: 1.5rem;
+      border-radius: 20px;
+      border: 1px solid var(--border-subtle);
+      box-shadow: var(--shadow-subtle);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+      font-size: 0.9rem;
+    }
+
+    .support-btn {
+      padding: 0.6rem 1rem;
+      background: #fff;
+      border-radius: 999px;
+      border: 1px solid var(--border-subtle);
+      color: var(--text-muted);
+      cursor: pointer;
+    }
+
+    .support-btn:hover {
+      border-color: var(--burgundy-light);
+      color: var(--burgundy-dark);
+      background: #fff7f9;
+    }
+
+    footer {
+      text-align: center;
+      margin-top: 2rem;
+      color: var(--text-muted);
+      font-size: 0.8rem;
+    }
+
+    /* RESPONSIVE */
+    @media (max-width: 900px) {
+      .feature-grid {
+        grid-template-columns: repeat(3, minmax(0,1fr));
+      }
+      .priority-layout,
+      .two-col {
+        grid-template-columns: minmax(0,1fr);
+      }
+      .faq {
+        grid-template-columns: minmax(0,1fr);
+      }
+    }
+
+    @media (max-width: 640px) {
+      main {
+        padding: 2rem 1rem 3rem;
+      }
+      .hero {
+        padding: 2.2rem 1.6rem;
+      }
+      .feature-grid {
+        grid-template-columns: minmax(0,1fr);
+      }
+      .nav {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .nav-links {
+        justify-content: flex-start;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <main>
+    <!-- NAV -->
+    <header class="nav">
+      <div class="nav-left">
+        <div class="nav-logo">A</div>
+        <div class="nav-title">AI Assistant · Setup Guide</div>
+      </div>
+
+      <nav class="nav-links">
+        <a href="#general-setup" class="nav-link">General Setup</a>
+        <a href="#scraping" class="nav-link">Scraping</a>
+        <a href="#documents" class="nav-link">Documents</a>
+        <a href="#advanced" class="nav-link">Advanced</a>
+        <a href="#analytics" class="nav-link">Analytics</a>
+        <a href="#faq" class="nav-link">FAQ</a>
+        <button class="nav-link nav-link-primary">Open Mode Editor</button>
+      </nav>
+    </header>
+
+    <!-- HERO -->
+    <section class="hero">
+      <h1 class="hero-title">
+        Configure your <span>AI Assistant</span> in five steps.
+      </h1>
+      <p class="hero-subtitle">
+        This setup guide walks you through everything: General Setup, Scraping, Documents, Advanced settings,
+        and Analytics—so your Assistant answers from the right sources with the right tone.
+      </p>
+      <button class="btn-primary">Start configuration</button>
+
+      <!-- Step summary cards -->
+      <div class="feature-grid">
+        <article class="feature-card">
+          <div class="feature-tag">Step 1</div>
+          <div class="feature-title">General Setup</div>
+          <div class="feature-text">Internal name, display title, colours, system prompt (description), and quick prompts.</div>
+        </article>
+        <article class="feature-card">
+          <div class="feature-tag">Step 2</div>
+          <div class="feature-title">Scraping</div>
+          <div class="feature-text">Website and PDF scraping for your sites and partners.</div>
+        </article>
+        <article class="feature-card">
+          <div class="feature-tag">Step 3</div>
+          <div class="feature-title">Documents</div>
+          <div class="feature-text">Upload files and manage scraped PDFs you’ve enabled.</div>
+        </article>
+        <article class="feature-card">
+          <div class="feature-tag">Step 4</div>
+          <div class="feature-title">Advanced</div>
+          <div class="feature-text">Search priority, internet access, exclusions, and delete mode.</div>
+        </article>
+        <article class="feature-card">
+          <div class="feature-tag">Step 5</div>
+          <div class="feature-title">Analytics</div>
+          <div class="feature-text">See every conversation and trend in one place.</div>
+        </article>
+      </div>
+    </section>
+
+    <!-- STEP 1: GENERAL SETUP -->
+    <section id="general-setup">
+      <div class="section-header">
+        <div class="section-kicker">Step 1</div>
+        <h2 class="section-title">General Setup</h2>
+        <p class="section-description">
+          Start by defining how your Assistant appears and behaves: its name, branding, core instructions,
+          and the first experience users see when they open it.
+        </p>
+      </div>
+
+      <div class="two-col">
+        <div class="panel">
+          <h3 class="panel-title">Internal Name, Display Title & Colours</h3>
+          <p>
+            These settings control how your Assistant appears in the Mode Editor and for end users.
+          </p>
+          <ul class="panel-list" style="margin-top:0.5rem;">
+            <li><strong>Internal Mode Name</strong> – unique ID (e.g., “support-bot”), you will not be able to edit this</li>
+            <li><strong>Display Title</strong> – what users see (e.g., “Ask HR” or “Program Assistant”)</li>
+            <li><strong>Colours</strong> – match your brand’s primary colour so the Assistant feels native</li>
+          </ul>
+        </div>
+
+        <div class="panel">
+          <h3 class="panel-title">Welcome Message</h3>
+          <p>
+            The welcome message is the first text users see above the chat box. Use it to explain who the
+            Assistant is and what it can help with.
+          </p>
+          <ul class="panel-list" style="margin-top:0.5rem;">
+            <li>“Hi, I’m your Programs Assistant. Ask me about eligibility, deadlines, or how to apply.”</li>
+            <li>“I can help you find training, funding, and support options based on your situation.”</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="two-col">
+        <div class="panel">
+          <h3 class="panel-title">Description (System Prompt)</h3>
+          <p>
+            Labeled as <strong>Description</strong> in the editor, this text is injected into the AI's <strong>System Prompt</strong>. It defines the Assistant's job description and rules.
+          </p>
+          <ul class="panel-list" style="margin-top:0.5rem;">
+            <li>Who the Assistant represents (site, organization, program)</li>
+            <li>What topics it should answer and what to avoid</li>
+            <li>Any required disclaimers or boundaries</li>
+          </ul>
+          <p style="margin-top:0.7rem;">
+            A clear description keeps answers consistent with your policies.
+          </p>
+        </div>
+
+        <div class="panel">
+          <h3 class="panel-title">Quick Prompts (Common Questions)</h3>
+          <p>
+            Quick prompts appear as clickable suggestions under the welcome message. They help users get started
+            and discover what your Assistant can do.
+          </p>
+          <ul class="panel-list" style="margin-top:0.5rem;">
+            <li>“What programs are available right now?”</li>
+            <li>“Where do I find apprenticeship or training information?”</li>
+            <li>“What funding or grants might apply to me?”</li>
+            <li>“How do I register or apply?”</li>
+          </ul>
+          <p style="margin-top:0.7rem;">
+            You can edit these at any time. Changes are live instantly for all new conversations.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- STEP 2: WEBSITE & PDF SCRAPING -->
+    <section id="scraping">
+      <div class="section-header">
+        <div class="section-kicker">Step 2</div>
+        <h2 class="section-title">Website & PDF Scraping</h2>
+        <p class="section-description">
+          Scraping imports content from your websites and PDFs so your Assistant can answer from trusted,
+          publicly visible information—without you copying and pasting text.
+        </p>
+      </div>
+
+      <div class="panel">
+        <h3 class="panel-title">Website scraping</h3>
+        <p>When enabled, website scraping will:</p>
+        <ul class="panel-list">
+          <li>Read every publicly visible page you’ve connected</li>
+          <li>Capture pop-ups, expandable “+” sections, and JavaScript-driven content</li>
+          <li>Incrementally update only new or changed content</li>
+          <li>Allow you to include <strong>partner sites</strong> alongside your own</li>
+          <li>
+            Reuse an existing partner Mode’s scraping if they already have one,
+            so the system does not re-scrape the same site
+          </li>
+        </ul>
+      </div>
+
+      <div class="panel">
+        <h3 class="panel-title">Scraping Frequency</h3>
+        <p>You can control how often the Assistant updates its knowledge:</p>
+        <ul class="panel-list" style="margin-top:0.5rem;">
+            <li><strong>Manual</strong> – only scrapes when you click "Run Now"</li>
+            <li><strong>Daily</strong> – updates automatically every day (2 AM UTC)</li>
+            <li><strong>Weekly</strong> – updates automatically every week (Sunday 3 AM UTC)</li>
+        </ul>
+      </div>
+
+      <div class="panel">
+        <h3 class="panel-title">PDF scraping from your sites</h3>
+        <p>
+          As your sites are scraped, PDFs linked on your pages are automatically discovered and listed for review.
+        </p>
+        <ul class="panel-list" style="margin-top:0.5rem;">
+          <li>Discovered PDFs appear in a <strong>PDF list</strong> under Scraping or Discovered Files</li>
+          <li>You choose which PDFs to enable for this Assistant</li>
+          <li>Only enabled PDFs are indexed and available to answer questions</li>
+        </ul>
+        <p style="margin-top:0.7rem;">
+          Enabled PDFs then appear in the <strong>Documents</strong> section (Step 3), where you can manage them
+          alongside uploaded files.
+        </p>
+      </div>
+
+      <div class="panel">
+        <h3 class="panel-title">Managing scraped pages</h3>
+        <p>
+          You can exclude any scraped page so the Assistant will not use it in responses.
+        </p>
+        <ul class="panel-list" style="margin-top:0.5rem;">
+          <li>Exclude pages that are outdated, confusing, or not meant for this audience</li>
+          <li>Exclusion affects only this Mode—your site stays unchanged</li>
+        </ul>
+        <p style="margin-top:0.7rem;">
+          If a page appears in Scraped Pages it was already public. To remove it everywhere
+          (including search and future scraping), you must unpublish or restrict it in your CMS.
+        </p>
+      </div>
+    </section>
+
+    <!-- STEP 3: DOCUMENTS -->
+    <section id="documents">
+      <div class="section-header">
+        <div class="section-kicker">Step 3</div>
+        <h2 class="section-title">Documents</h2>
+        <p class="section-description">
+          Use the Documents section to upload files and manage any scraped PDFs you’ve enabled.
+          This is where you control exactly which documents your Assistant can reference.
+        </p>
+      </div>
+
+      <div class="two-col">
+        <div class="panel">
+          <h3 class="panel-title">Upload your own documents</h3>
+          <p>Upload files that don’t live on your public website or that you want tightly controlled.</p>
+          <ul class="panel-list" style="margin-top:0.5rem;">
+            <li>Internal HR or policy manuals</li>
+            <li>Training guides and onboarding materials</li>
+            <li>Partner agreements or program descriptions</li>
+            <li>Legacy PDFs not currently on your site</li>
+          </ul>
+          <p style="margin-top:0.7rem;">
+            Uploaded documents appear in your Documents list, where you can download or delete them at any time.
+          </p>
+        </div>
+
+        <div class="panel">
+          <h3 class="panel-title">Scraped PDFs you’ve enabled</h3>
+          <p>
+            Any “enabled” PDFs from Step 2 are also listed in Documents. This gives you a single place
+            to see all files the Assistant is using.
+          </p>
+          <ul class="panel-list" style="margin-top:0.5rem;">
+            <li>Review which PDFs from your sites and partners are active</li>
+            <li>Remove a PDF from the Assistant by disabling or deleting it</li>
+            <li>Keep a clear record of which documents power your answers</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- STEP 4: ADVANCED SETTINGS -->
+    <section id="advanced">
+      <div class="section-header">
+        <div class="section-kicker">Step 4</div>
+        <h2 class="section-title">Advanced Settings</h2>
+        <p class="section-description">
+          Advanced settings control where the Assistant looks for answers first, if it’s allowed to use
+          the internet, which sites to exclude, and how to safely delete a Mode.
+        </p>
+      </div>
+
+      <div class="tabs">
+        <div class="tab active">Search priority</div>
+        <div class="tab">Internet & exclusions</div>
+        <div class="tab">Delete mode</div>
+      </div>
+
+      <div class="priority-layout">
+        <!-- LEFT: SEARCH PRIORITY -->
+        <div class="panel">
+          <h3 class="panel-title">Search priority</h3>
+          <p>
+            Decide whether the Assistant should look at your websites or documents first.
+          </p>
+          <ul class="panel-list" style="margin-top:0.5rem;">
+            <li><strong>Websites first</strong> – best when your public site is the single source of truth.</li>
+            <li><strong>Documents first</strong> – best for internal HR, policy, or training Assistants.</li>
+          </ul>
+          <p style="margin-top:0.7rem;">
+            The Assistant still considers all allowed sources—it simply changes which content is evaluated first.
+          </p>
+        </div>
+
+        <!-- RIGHT: INTERNET ACCESS / EXCLUSIONS -->
+        <div class="priority-card">
+          <h3 class="panel-title">Internet access & blocked websites</h3>
+          <p>
+            Internet access lets the Assistant look beyond your content when needed.
+          </p>
+          <div style="display:flex;align-items:center;gap:0.5rem;margin:0.6rem 0;">
+            <div class="toggle-pill"></div>
+            <span style="font-size:0.85rem;">Allow general internet search</span>
+          </div>
+          <ul class="panel-list">
+            <li>Assistant checks your content first</li>
+            <li>Then optionally searches the wider internet</li>
+          </ul>
+          <p style="margin-top:0.7rem;">
+            You can also maintain a list of <strong>blocked websites</strong>—domains the Assistant must never use,
+            even if internet search is enabled.
+          </p>
+        </div>
+      </div>
+
+      <!-- DELETE MODE WARNING -->
+      <div class="warning" style="margin-top:1.4rem;">
+        <div class="warning-icon">!</div>
+        <div>
+          <div class="panel-title" style="margin-bottom:0.2rem;">Delete Mode (Permanent)</div>
+          <p>
+            Deleting a Mode permanently removes its configuration and access. You’ll be asked to confirm twice.
+            Once deleted, a Mode cannot be restored—but you can always create a new one using similar settings.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- STEP 5: ANALYTICS -->
+    <section id="analytics">
+      <div class="section-header">
+        <div class="section-kicker">Step 5</div>
+        <h2 class="section-title">Analytics</h2>
+        <p class="section-description">
+          Analytics lets you see how people are using your Assistant: what they ask, how it responds,
+          and where you might need to improve your content.
+        </p>
+      </div>
+
+      <div class="panel">
+        <h3 class="panel-title">How to open Analytics</h3>
+        <ul class="panel-list">
+          <li>Go to the <strong>Admin Dashboard</strong> (Mode List)</li>
+          <li>Click the <strong>graph icon</strong> on the Mode card</li>
+          <li>Analytics opens in a dedicated view</li>
+        </ul>
+        <p style="margin-top:0.8rem;">From there, you can:</p>
+        <ul class="panel-list" style="margin-top:0.4rem;">
+          <li>View every conversation and message</li>
+          <li>See exactly what users asked and how the AI replied</li>
+          <li>Filter by date, topic, or Mode</li>
+          <li>Ask natural language questions about your data (e.g., “What topics came up most this month?”)</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- FAQ -->
+    <section id="faq">
+      <div class="section-header">
+        <div class="section-kicker">Help</div>
+        <h2 class="section-title">Frequently asked questions</h2>
+      </div>
+
+      <div class="faq">
+        <article class="faq-item">
+          <div class="faq-q">Does scraping affect SEO or change my site?</div>
+          <p class="faq-a">
+            No. Scraping only reads publicly visible content. It doesn’t modify your website or how search engines see it.
+          </p>
+        </article>
+
+        <article class="faq-item">
+          <div class="faq-q">Can I control what the Assistant knows?</div>
+          <p class="faq-a">
+            Yes. You decide which pages, PDFs, and uploaded documents are included and whether internet search is allowed.
+          </p>
+        </article>
+
+        <article class="faq-item">
+          <div class="faq-q">How often should I re-scrape my sites?</div>
+          <p class="faq-a">
+            Re-scrape after making significant content updates. The system only adds new or changed content.
+          </p>
+        </article>
+
+        <article class="faq-item">
+          <div class="faq-q">Can I have different Assistants for different audiences?</div>
+          <p class="faq-a">
+            Yes. Create multiple Modes—for example, a public Programs Assistant and a private HR Assistant—with different content and rules.
+          </p>
+        </article>
+      </div>
+    </section>
+
+    <!-- SUPPORT -->
+    <section id="support">
+      <div class="support">
+        <div>
+          <div style="font-weight:600; color:var(--burgundy-dark);">
+            Need help configuring your Assistant?
+          </div>
+          <div style="color:var(--text-muted);">
+            Our team can review your setup and help you troubleshoot tricky scenarios.
+          </div>
+        </div>
+        <div class="support-actions">
+          <a class="support-btn" href="mailto:theteam@bidcentral.ca">Email us</a>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      © BC Construction Association · AI Assistant Setup Guide
+    </footer>
+  </main>
+</body>
+</html>
+

@@ -16,6 +16,8 @@ class ConversationService:
         client,
         vector_store_id: Optional[str] = None,
         max_messages: int = 20,
+        doc_intelligence_service=None,
+        document_intelligence_enabled: bool = False,
     ) -> None:
         self.client = client
         self.conversations = db.get_collection("conversations")
@@ -24,6 +26,8 @@ class ConversationService:
         self.modes = modes_collection
         self.vector_store_id = vector_store_id
         self.max_messages = max_messages
+        self.doc_intelligence_service = doc_intelligence_service
+        self.document_intelligence_enabled = document_intelligence_enabled
 
     # Public API ---------------------------------------------------------
     def add_user_message(self, conversation_id: str, user_id: str, text: str) -> None:
@@ -124,9 +128,8 @@ class ConversationService:
         return context
 
     def _build_prompt_and_tools(
-        self, mode: str, tag: str
+        self, mode_doc: Optional[Dict[str, Any]], mode: str, tag: str
     ) -> Tuple[str, List[Dict], List[Dict[str, Any]]]:
-        mode_doc = self.modes.find_one({"name": mode}) if mode else None
         mode_context = mode_doc.get("description", "") if mode_doc else ""
         mode_preferred_sites = mode_doc.get("preferred_sites", []) if mode_doc else []
         mode_blocked_sites = mode_doc.get("blocked_sites", []) if mode_doc else []
@@ -304,11 +307,26 @@ class ConversationService:
         previous_response_id: Optional[str] = None,
         file_id: Optional[str] = None,
         file_ids: Optional[List[str]] = None,
+        doc_intel_session_id: Optional[str] = None,
     ) -> Tuple[str, str, Optional[dict]]:
         conv_id = ObjectId(conversation_id)
         self.add_user_message(conversation_id, user_id, text)
+        mode_doc = self.modes.find_one({"name": mode}) if mode else None
+        doc_session_id = doc_intel_session_id or conversation_id
+
+        if (
+            self.document_intelligence_enabled
+            and self.doc_intelligence_service
+            and mode_doc
+            and mode_doc.get("doc_intelligence_enabled")
+        ):
+            doc_context = self.doc_intelligence_service.generate_assistant_context(mode_doc, text, doc_session_id)
+            if doc_context:
+                return self._respond_with_manual_text(conv_id, doc_context, text)
+
         context = self._build_context(conversation_id)
-        system_prompt, tools, data_sources = self._build_prompt_and_tools(mode, tag)
+        system_prompt, tools, data_sources = self._build_prompt_and_tools(mode_doc, mode, tag)
+
         full_system_prompt = f"{system_prompt}\n{context}"
         
         # Get all files for this conversation (previous + new)
@@ -371,7 +389,7 @@ class ConversationService:
                 # If anything goes wrong, assume confident to avoid double calls
                 return True
 
-        response = _call_model("gpt-4.1-mini")
+        response = _call_model("gpt-5-mini")
         
         called_function = False
         # Handle function calls for permit search (permitsca mode only)
@@ -406,7 +424,7 @@ class ConversationService:
                     
                     # Get the AI's final response with tool results
                     final_response = self.client.responses.create(
-                        model="gpt-4.1-mini",
+                        model="gpt-5-mini",
                         input=[
                             {"role": "system", "content": full_system_prompt},
                             {"role": "user", "content": text},
@@ -418,8 +436,8 @@ class ConversationService:
                     called_function = True
         
         if not _is_confident(response) and not called_function:
-            print("response from mini model is not confident, calling gpt-4.1")
-            response = _call_model("gpt-4.1")
+            print("response from mini model is not confident, calling gpt-5.1")
+            response = _call_model("gpt-5.1")
         output_text = response.output_text
         now = datetime.utcnow()
         usage = response.usage.total_tokens if response.usage else None
@@ -473,3 +491,22 @@ class ConversationService:
             ]
             if old_ids:
                 self.messages.delete_many({"_id": {"$in": old_ids}})
+
+    def _respond_with_manual_text(self, conv_id: ObjectId, assistant_text: str, user_text: str) -> Tuple[str, str, Optional[dict]]:
+        response_id = str(ObjectId())
+        now = datetime.utcnow()
+        usage = None
+        self.messages.insert_one(
+            {
+                "conversation_id": conv_id,
+                "role": "assistant",
+                "content": assistant_text,
+                "model": "doc_intel",
+                "usage": usage,
+                "created_at": now,
+            }
+        )
+        self.conversations.update_one({"_id": conv_id}, {"$set": {"updated_at": now}})
+        self._update_summary(conv_id, user_text, assistant_text)
+        self._enforce_cap(conv_id)
+        return assistant_text, response_id, usage

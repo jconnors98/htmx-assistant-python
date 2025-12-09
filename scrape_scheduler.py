@@ -25,12 +25,14 @@ class ScrapeScheduler:
         *,
         scraper_client,
         scraping_service=None,
+        doc_intelligence_service=None,
         execution_mode: str | None = None,
     ):
         if scraper_client is None:
             raise ValueError("scraper_client is required for ScrapeScheduler")
         self.scraper_client = scraper_client
         self.scraping_service = scraping_service
+        self.doc_intelligence_service = doc_intelligence_service
         self.modes_collection = modes_collection
         self.jobs_collection = jobs_collection
         self.scheduler = BackgroundScheduler()
@@ -79,10 +81,20 @@ class ScrapeScheduler:
                 name='Content Verification',
                 replace_existing=True
             )
+
+            # Schedule document intelligence cleanup every 1 hour
+            if self.doc_intelligence_service:
+                self.scheduler.add_job(
+                    self._run_doc_intel_cleanup,
+                    CronTrigger(hour='*'),  # Every hour
+                    id='doc_intel_cleanup',
+                    name='Doc Intel Cleanup',
+                    replace_existing=True
+                )
             
             self.scheduler.start()
             self._running = True
-            print("Scrape scheduler started (includes content verification every 4 hours)")
+            print("Scrape scheduler started (includes content verification and doc intel cleanup)")
             self._resume_incomplete_jobs()
     
     def stop(self):
@@ -92,6 +104,18 @@ class ScrapeScheduler:
             self._running = False
             print("Scrape scheduler stopped")
     
+    def _run_doc_intel_cleanup(self):
+        """Run cleanup for expired document intelligence files."""
+        if not self.doc_intelligence_service:
+            return
+            
+        try:
+            print(f"Running doc intel cleanup at {datetime.utcnow()}")
+            cleaned_count = self.doc_intelligence_service.cleanup_expired_documents()
+            print(f"Doc intel cleanup completed: {cleaned_count} projects cleaned up.")
+        except Exception as e:
+            print(f"Error running doc intel cleanup: {e}")
+
     def _run_daily_scrapes(self):
         """Run scraping for all modes configured with daily frequency."""
         print(f"Running daily scrapes at {datetime.utcnow()}")
