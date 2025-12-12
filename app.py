@@ -3,6 +3,7 @@ import re
 import io
 import json
 import secrets
+import logging
 from functools import wraps
 from flask import Flask, Blueprint, request, send_from_directory, Response, url_for, send_file
 from werkzeug.datastructures import FileStorage
@@ -31,6 +32,9 @@ from functions import (
     _parse_date, _normalize_color, _normalize_text_color, _process_natural_language_query,
     _search_prompts_tool, _get_unique_prompts_data, _search_permits_tool, _get_analytics_data_for_query
 )
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 if not config("OPENAI_API_KEY"):
     raise RuntimeError("Missing API key. Check your .env file.")
@@ -465,27 +469,39 @@ def upload_files():
     files = request.files.getlist("files")
     mode_name = (request.form.get("mode") or "").strip()
     doc_intel_session_id = (request.form.get("doc_intel_session_id") or "").strip()
+    upload_to_openai_flag = (request.form.get("upload_to_openai") or "").lower() == "true"
+    
+    logger.info(f"Upload request received: {len(files)} files, mode={mode_name}, doc_intel_session={doc_intel_session_id}")
+    
     mode_doc = None
     if mode_name:
         mode_doc = modes_collection.find_one({"name": mode_name})
     file_ids = []
     doc_intel_candidates = []
+    doc_intel_active = (
+        doc_intelligence_service
+        and mode_doc
+        and mode_doc.get("doc_intelligence_enabled")
+        and DOC_INTEL_ENABLED
+        and doc_intel_session_id
+    )
 
     for file in files:
         if file and file.filename:
+            logger.info(f"Processing upload: {file.filename}")
             data = file.read()
             file_stream = io.BytesIO(data)
-            uploaded = client.files.create(
-                file=(file.filename, file_stream), purpose="assistants"
-            )
-            file_ids.append(uploaded.id)
-            if (
-                doc_intelligence_service
-                and mode_doc
-                and mode_doc.get("doc_intelligence_enabled")
-                and DOC_INTEL_ENABLED
-                and doc_intel_session_id
-            ):
+            # Only upload to OpenAI when not in doc-intel-only flow, or when explicitly requested.
+            if (not doc_intel_active) or upload_to_openai_flag:
+                uploaded = client.files.create(
+                    file=(file.filename, file_stream), purpose="assistants"
+                )
+                file_ids.append(uploaded.id)
+                logger.info(f"Uploaded to OpenAI: {uploaded.id}")
+            else:
+                logger.info("Skipped OpenAI upload (doc-intel flow)")
+            
+            if doc_intel_active:
                 doc_intel_candidates.append(
                     FileStorage(
                         stream=io.BytesIO(data),
@@ -496,8 +512,10 @@ def upload_files():
 
     if doc_intel_candidates and mode_doc and doc_intel_session_id:
         try:
+            logger.info(f"Handoff to DocIntel: {len(doc_intel_candidates)} candidates")
             doc_intelligence_service.ingest_files(mode_doc, doc_intel_session_id, doc_intel_candidates)
         except Exception as exc:  # noqa: BLE001
+            logger.error(f"Doc intelligence ingest failed: {exc}", exc_info=True)
             print(f"Doc intelligence ingest failed: {exc}")
     
     return {"file_ids": file_ids}
@@ -1822,6 +1840,9 @@ def doc_intel_ingest():
         return guard
     mode_name = (request.form.get("mode") or "").strip()
     session_id = (request.form.get("session_id") or "").strip()
+    
+    logger.info(f"DocIntel ingest requested: mode={mode_name}, session={session_id}")
+    
     if not session_id:
         return {"error": "session_id is required"}, 400
     mode_doc, error = _doc_intel_mode_lookup(mode_name)
@@ -1830,13 +1851,18 @@ def doc_intel_ingest():
     files = request.files.getlist("files")
     if not files:
         return {"error": "At least one file is required"}, 400
+    
+    logger.info(f"Validating {len(files)} files for ingestion")
     validation_error = _doc_intel_validate_files(files)
     if validation_error:
+        logger.warning(f"Validation failed: {validation_error}")
         return validation_error
     try:
         result = doc_intelligence_service.ingest_files(mode_doc, session_id, files)
+        logger.info("Ingestion completed successfully")
         return result
     except Exception as exc:  # noqa: BLE001
+        logger.error(f"Ingestion error: {exc}", exc_info=True)
         return {"error": str(exc)}, 500
 
 

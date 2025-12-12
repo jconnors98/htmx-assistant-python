@@ -88,15 +88,30 @@ class DocumentIntelligenceService:
             raise ValueError("Document intelligence is not enabled for this mode.")
         project = self._ensure_project(mode_doc, session_id)
 
+        logger.info(f"Starting ingestion for session {session_id}")
         processed_files = []
         for file_storage in files:
+            fname = getattr(file_storage, "filename", "unknown")
             if not getattr(file_storage, "filename", None):
                 continue
-            saved_path = self._persist_upload(file_storage)
-            processed_files.extend(self._process_path(saved_path, mode_doc, project))
+            
+            try:
+                logger.info(f"Persisting upload: {fname}")
+                saved_path = self._persist_upload(file_storage)
+                logger.info(f"Processing path: {saved_path}")
+                processed_files.extend(self._process_path(saved_path, mode_doc, project))
+            except Exception as e:
+                logger.error(f"Error processing file {fname}: {e}", exc_info=True)
+                # Continue with other files? Or raise? 
+                # Current logic implies we might want to continue or just let it bubble up.
+                # Given the loop, maybe we should continue but for now let's just log and re-raise or let it bubble if critical.
+                # The original code didn't catch here, so I won't suppress it, just log.
+                raise
 
         project.touch()
         self._save_project(project)
+        
+        logger.info(f"Ingestion finished. Processed {len(processed_files)} documents.")
 
         return {
             "ingested": len(processed_files),
@@ -404,12 +419,17 @@ class DocumentIntelligenceService:
     # ------------------------------------------------------------------ #
     def _process_path(self, file_path: str, mode_doc: Dict[str, Any], project: ProjectContext) -> List[DocumentMetadata]:
         file_info = self.toolbox.detect_file_type(file_path)
+        logger.debug(f"Detected file type for {file_path}: {file_info}")
         processed: List[DocumentMetadata] = []
 
         if file_info.get("file_extension") == "zip":
+            logger.info(f"Extracting ZIP: {file_path}")
             extracted = self.toolbox.extract_zip(file_path)
+            logger.info(f"Extracted {len(extracted)} files from ZIP")
             for extracted_path in extracted:
                 processed.extend(self._process_path(extracted_path, mode_doc, project))
+            # Original ZIP is no longer needed once extracted; remove to avoid temp bloat
+            self._cleanup_file_and_parent(file_path)
             return processed
 
         text_payload = ""
@@ -417,16 +437,28 @@ class DocumentIntelligenceService:
         extra = {"processing_notes": []}
 
         if file_info.get("is_pdf"):
+            logger.info(f"Parsing PDF: {file_path}")
             parsed = self.toolbox.parse_pdf(file_path)
             text_payload = parsed.get("text", "")
             extra["images"] = parsed.get("images", [])
         elif file_info.get("is_image"):
+            logger.info(f"Processing Image (OCR): {file_path}")
             enhanced_path = self.toolbox.enhance_blueprint_for_ocr(file_path)
-            ocr_text = self.toolbox.ocr_image(enhanced_path)
+            try:
+                ocr_text = self.toolbox.ocr_image(enhanced_path)
+            finally:
+                # Cleanup intermediate enhanced file if it was created
+                if enhanced_path and enhanced_path != file_path and os.path.exists(enhanced_path):
+                    try:
+                        os.remove(enhanced_path)
+                    except Exception as e:
+                        logger.warning(f"Failed to remove temp OCR file {enhanced_path}: {e}")
             text_payload = ocr_text
         else:
+            logger.info(f"Reading text file: {file_path}")
             text_payload = self._read_text_file(file_path)
 
+        logger.info(f"Classifying document: {file_path}")
         classification = self.toolbox.classify_document(text_payload, Path(file_path).name, ocr_text)
         embedding = self.toolbox.embed_text(text_payload or ocr_text)
 
@@ -451,6 +483,7 @@ class DocumentIntelligenceService:
 
         self._upsert_document(project, metadata)
         processed.append(metadata)
+        logger.info(f"Document processed and upserted: {metadata.file_id}")
         return processed
 
     def _upsert_document(self, project: ProjectContext, document: DocumentMetadata) -> None:
@@ -578,4 +611,21 @@ class DocumentIntelligenceService:
             f"/flask/doc-intel/package/{package.get('package_id')}?"
             f"mode={mode_name}&session_id={session_id}&file_type={file_type}"
         )
+
+    def _cleanup_file_and_parent(self, file_path: str) -> None:
+        """Best-effort removal of a file and its empty parent directory (within storage)."""
+        try:
+            if file_path and os.path.exists(file_path):
+                os.remove(file_path)
+            parent = Path(file_path).parent
+            if (
+                parent
+                and parent != self.storage_dir
+                and parent.exists()
+                and parent.is_dir()
+                and not any(parent.iterdir())
+            ):
+                parent.rmdir()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Temp cleanup failed for {file_path}: {exc}")
 

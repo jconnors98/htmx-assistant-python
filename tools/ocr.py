@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 import tempfile
 from pathlib import Path
+from typing import Optional
 
 import cv2  # type: ignore
 import numpy as np  # type: ignore
@@ -9,7 +11,7 @@ import pytesseract  # type: ignore
 from PIL import Image  # type: ignore
 
 
-def enhance_blueprint_for_ocr(image_path: str) -> str:
+def enhance_blueprint_for_ocr(image_path: str, work_dir: Optional[str] = None) -> str:
     """
     Applies a sequence of OpenCV operations to improve blueprint legibility prior to OCR.
     Returns the path to the processed image.
@@ -48,7 +50,16 @@ def enhance_blueprint_for_ocr(image_path: str) -> str:
     matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
     deskewed = cv2.warpAffine(sharpened, matrix, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
 
-    temp_file = Path(tempfile.mkstemp(prefix="blueprint_", suffix=".png")[1])
+    if work_dir:
+        Path(work_dir).mkdir(parents=True, exist_ok=True)
+        fd, temp_file_path = tempfile.mkstemp(prefix="blueprint_", suffix=".png", dir=work_dir)
+        os.close(fd)
+        temp_file = Path(temp_file_path)
+    else:
+        fd, temp_file_path = tempfile.mkstemp(prefix="blueprint_", suffix=".png")
+        os.close(fd)
+        temp_file = Path(temp_file_path)
+
     cv2.imwrite(str(temp_file), deskewed)
     return str(temp_file)
 

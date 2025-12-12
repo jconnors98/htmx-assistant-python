@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from datetime import datetime
 from typing import Optional, Tuple, List, Dict, Any
 from urllib.parse import quote_plus, urlencode
@@ -28,6 +29,13 @@ class ConversationService:
         self.max_messages = max_messages
         self.doc_intelligence_service = doc_intelligence_service
         self.document_intelligence_enabled = document_intelligence_enabled
+        # Lightweight runtime tuning knobs (speed and cost control)
+        self.max_summary_chars = 1200
+        self.max_message_chars = 800
+        self.max_context_chars = 5000
+        self.recent_history_limit = 9  # keep ~4 user/assistant turns, capped by char budget
+        self.mode_cache_ttl = 120  # seconds
+        self._mode_cache: Dict[str, Dict[str, Any]] = {}
 
     # Public API ---------------------------------------------------------
     def add_user_message(self, conversation_id: str, user_id: str, text: str) -> None:
@@ -108,24 +116,55 @@ class ConversationService:
         """Build summary and recent history context for the model."""
         conv_id = ObjectId(conversation_id)
         summary_doc = self.summaries.find_one({"conversation_id": conv_id})
-        summary = summary_doc.get("summary_text", "") if summary_doc else ""
+        summary_raw = summary_doc.get("summary_text", "") if summary_doc else ""
+        summary = self._truncate_text(summary_raw, self.max_summary_chars)
 
         # Grab the latest 8 messages before the newest user message
         all_msgs = list(
             self.messages.find({"conversation_id": conv_id})
             .sort("created_at", -1)
-            .limit(9)
+            .limit(self.recent_history_limit)
         )
         # first item is the latest user message, the rest are previous turns
         recent_history = list(reversed(all_msgs[1:]))
-        recent_history = recent_history[-8:]  # last 4 turns (8 messages)
+        recent_text_parts = []
+        budget = max(self.max_context_chars - len(summary), 0)
+        for message in recent_history:
+            # Cap each message and respect an overall budget to keep latency low
+            content = self._truncate_text(
+                message.get("content", ""), self.max_message_chars
+            )
+            entry = f"{message.get('role', 'unknown').capitalize()}: {content}"
+            if budget - len(entry) < 0:
+                break
+            recent_text_parts.append(entry)
+            budget -= len(entry)
 
-        recent_text = "\n".join(
-            f"{m['role'].capitalize()}: {m['content']}" for m in recent_history
-        )
+        recent_text = "\n".join(recent_text_parts)
 
         context = f"<SUMMARY>\n{summary}\n<RECENT_TURNS>\n{recent_text}\n"
         return context
+
+    def _get_mode_doc(self, mode: str) -> Optional[Dict[str, Any]]:
+        """Fetch mode config with a small per-process cache to cut DB latency."""
+        if not mode:
+            return None
+        cached = self._mode_cache.get(mode)
+        now = time.time()
+        if cached and (now - cached["ts"]) < self.mode_cache_ttl:
+            return cached["doc"]
+        doc = self.modes.find_one({"name": mode})
+        self._mode_cache[mode] = {"doc": doc, "ts": now}
+        return doc
+
+    @staticmethod
+    def _truncate_text(text: str, max_chars: int) -> str:
+        """Keep head/tail of long text to preserve intent while trimming tokens."""
+        if not text or len(text) <= max_chars:
+            return text
+        head = text[: max_chars // 2]
+        tail = text[-max_chars // 2 :]
+        return f"{head} ... {tail}"
 
     def _build_prompt_and_tools(
         self, mode_doc: Optional[Dict[str, Any]], mode: str, tag: str
@@ -311,7 +350,7 @@ class ConversationService:
     ) -> Tuple[str, str, Optional[dict]]:
         conv_id = ObjectId(conversation_id)
         self.add_user_message(conversation_id, user_id, text)
-        mode_doc = self.modes.find_one({"name": mode}) if mode else None
+        mode_doc = self._get_mode_doc(mode) if mode else None
         doc_session_id = doc_intel_session_id or conversation_id
 
         if (

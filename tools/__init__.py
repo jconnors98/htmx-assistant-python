@@ -19,6 +19,14 @@ class DocumentToolbox:
 
     # Extraction utilities -------------------------------------------------
     def extract_zip(self, zip_file_path: str, output_dir: Optional[str] = None) -> List[str]:
+        if not output_dir:
+            import tempfile
+            # Create a dedicated temp directory within storage_dir to ensure it uses the main volume
+            # and can be cleaned up if needed.
+            tmp_root = self.storage_dir / "tmp"
+            tmp_root.mkdir(exist_ok=True)
+            output_dir = tempfile.mkdtemp(prefix="zip_extract_", dir=str(tmp_root))
+            
         return extract.extract_zip(zip_file_path, output_dir)
 
     def detect_file_type(self, file_path: str) -> Dict[str, Any]:
@@ -29,7 +37,10 @@ class DocumentToolbox:
         return pdf_tools.parse_pdf(file_path)
 
     def enhance_blueprint_for_ocr(self, image_path: str) -> str:
-        return ocr.enhance_blueprint_for_ocr(image_path)
+        # Create a tmp directory in storage_dir for these intermediate files
+        tmp_root = self.storage_dir / "tmp" 
+        tmp_root.mkdir(exist_ok=True)
+        return ocr.enhance_blueprint_for_ocr(image_path, work_dir=str(tmp_root))
 
     def ocr_image(self, image_path: str) -> str:
         return ocr.ocr_image(image_path)
