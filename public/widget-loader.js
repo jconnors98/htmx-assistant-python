@@ -40,21 +40,24 @@
   };
   
   const positionStyle = positions[config.position] || positions['bottom-right'];
+  const widgetOrigin = (() => {
+    try {
+      return new URL(config.baseUrl).origin;
+    } catch (err) {
+      console.warn('Chat Widget: unable to parse baseUrl origin', err);
+      return null;
+    }
+  })();
   
   // Create iframe container
   const createWidget = function() {
     // Create container div
     const container = document.createElement('div');
     container.id = 'chat-widget-container';
-    container.style.cssText = `
-      position: fixed;
-      ${positionStyle}
-      z-index: 999999;
-      width: 420px;
-      height: 600px;
-      max-width: calc(100vw - 40px);
-      max-height: calc(100vh - 100px);
-    `;
+    
+    // Track desired size reported by iframe (defaults to compact footprint)
+    let desiredWidth = 420;
+    let desiredHeight = 120;
     
     // Create iframe
     const iframe = document.createElement('iframe');
@@ -72,8 +75,8 @@
     iframe.allow = 'clipboard-write';
     iframe.title = 'Chat Widget';
     
-    // Responsive handling for mobile
-    const handleResize = function() {
+    // Helper to clamp and apply the container size without occupying extra space
+    const applyContainerStyles = function() {
       if (window.innerWidth <= 480) {
         container.style.cssText = `
           position: fixed;
@@ -88,21 +91,47 @@
           max-height: 100%;
         `;
         iframe.style.borderRadius = '0';
-      } else {
-        container.style.cssText = `
-          position: fixed;
-          ${positionStyle}
-          z-index: 999999;
-          width: 420px;
-          height: 600px;
-          max-width: calc(100vw - 40px);
-          max-height: calc(100vh - 100px);
-        `;
-        iframe.style.borderRadius = '24px';
+        return;
       }
+      
+      const clampedWidth = Math.max(280, Math.min(desiredWidth, window.innerWidth - 40));
+      const clampedHeight = Math.max(80, Math.min(desiredHeight, window.innerHeight - 100));
+      
+      container.style.cssText = `
+        position: fixed;
+        ${positionStyle}
+        z-index: 999999;
+        width: ${clampedWidth}px;
+        height: ${clampedHeight}px;
+        max-width: calc(100vw - 40px);
+        max-height: calc(100vh - 100px);
+      `;
+      iframe.style.borderRadius = '24px';
+    };
+    
+    // Responsive handling for mobile
+    const handleResize = function() {
+      applyContainerStyles();
+    };
+    
+    // Listen for size messages from the iframe so the container only matches visible content
+    const handleWidgetMessage = function(event) {
+      const data = event.data || {};
+      if (!data || data.source !== 'chat-widget' || data.type !== 'SIZE') return;
+      if (widgetOrigin && event.origin !== widgetOrigin) return;
+      
+      if (typeof data.width === 'number' && !Number.isNaN(data.width)) {
+        desiredWidth = data.width;
+      }
+      if (typeof data.height === 'number' && !Number.isNaN(data.height)) {
+        desiredHeight = data.height;
+      }
+      
+      applyContainerStyles();
     };
     
     window.addEventListener('resize', handleResize);
+    window.addEventListener('message', handleWidgetMessage);
     handleResize();
     
     container.appendChild(iframe);

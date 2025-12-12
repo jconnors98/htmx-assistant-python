@@ -609,8 +609,10 @@
     let selectedFiles = [];
     let uploadedFileIds = [];
     let isUploading = false;
+    document.body.style.margin = '0';
     
     // Elements
+    const chatWidgetContainer = document.getElementById('chat-widget');
     const collapsedView = document.getElementById('collapsed-view');
     const expandedView = document.getElementById('expanded-view');
     const searchInput = document.getElementById('search-input');
@@ -662,6 +664,7 @@
           sendBtnExpanded.disabled = false;
           searchInput.placeholder = data.intro || "Ask me anything...";
           searchInput.focus();
+          requestAnimationFrame(() => notifyParentSize('init-complete'));
         } else {
           searchInput.placeholder = "Failed to load mode settings";
           searchInput.disabled = false;
@@ -671,6 +674,8 @@
         searchInput.placeholder = "Failed to load mode settings";
         searchInput.disabled = false;
       }
+      
+      requestAnimationFrame(() => notifyParentSize('init'));
     }
     
     // Apply theme colors
@@ -691,6 +696,33 @@
       return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
     }
     
+    // Notify parent (widget-loader) of size so container only covers visible area
+    function notifyParentSize(reason = 'manual') {
+      if (!chatWidgetContainer || window.parent === window) return;
+      
+      const rect = chatWidgetContainer.getBoundingClientRect();
+      const measuredWidth = Math.ceil(rect.width || chatWidgetContainer.offsetWidth || 0);
+      const measuredHeight = Math.ceil(
+        Math.max(
+          rect.height,
+          chatWidgetContainer.scrollHeight || 0,
+          document.body ? document.body.scrollHeight : 0,
+          document.documentElement ? document.documentElement.scrollHeight : 0
+        )
+      );
+      
+      if (!measuredWidth || !measuredHeight) return;
+      
+      window.parent.postMessage({
+        source: 'chat-widget',
+        type: 'SIZE',
+        width: measuredWidth,
+        height: measuredHeight,
+        expanded: isExpanded,
+        reason
+      }, '*');
+    }
+    
     // Expand widget
     function expandWidget() {
       isExpanded = true;
@@ -704,6 +736,7 @@
       }
       
       messageInput.focus();
+      requestAnimationFrame(() => notifyParentSize('expanded'));
     }
     
     // Collapse widget
@@ -718,6 +751,7 @@
       }
       
       searchInput.focus();
+      requestAnimationFrame(() => notifyParentSize('collapsed'));
     }
     
     // Clear chat
@@ -1087,6 +1121,15 @@
     
     // Make removeFile function global
     window.removeFile = removeFile;
+    
+    // Observe size changes so the parent iframe can shrink/grow to visible content
+    if (window.ResizeObserver && chatWidgetContainer) {
+      const resizeObserver = new ResizeObserver(() => notifyParentSize('resize-observer'));
+      resizeObserver.observe(chatWidgetContainer);
+    }
+    
+    window.addEventListener('resize', () => notifyParentSize('iframe-resize'));
+    requestAnimationFrame(() => notifyParentSize('dom-ready'));
     
     // Initialize on load
     document.addEventListener('DOMContentLoaded', init);

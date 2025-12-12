@@ -33,8 +33,8 @@ class DocumentToolbox:
         return extract.detect_file_type(file_path)
 
     # PDF & OCR ------------------------------------------------------------
-    def parse_pdf(self, file_path: str) -> Dict[str, Any]:
-        return pdf_tools.parse_pdf(file_path)
+    def parse_pdf(self, file_path: str, *, max_seconds: Optional[int] = 90) -> Dict[str, Any]:
+        return pdf_tools.parse_pdf(file_path, max_seconds=max_seconds)
 
     def enhance_blueprint_for_ocr(self, image_path: str) -> str:
         # Create a tmp directory in storage_dir for these intermediate files

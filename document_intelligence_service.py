@@ -36,6 +36,8 @@ class DocumentIntelligenceService:
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         self.expiry_minutes = expiry_minutes
+        # PDF safety limits: allow large files, but stop runaway parsing
+        self.max_pdf_seconds = 90
 
     # ------------------------------------------------------------------ #
     # Public API
@@ -438,9 +440,13 @@ class DocumentIntelligenceService:
 
         if file_info.get("is_pdf"):
             logger.info(f"Parsing PDF: {file_path}")
-            parsed = self.toolbox.parse_pdf(file_path)
+            parsed = self.toolbox.parse_pdf(file_path, max_seconds=self.max_pdf_seconds)
             text_payload = parsed.get("text", "")
             extra["images"] = parsed.get("images", [])
+            if parsed.get("truncated"):
+                extra["processing_notes"].append(
+                    f"PDF parsing truncated (time limit hit: seconds<={self.max_pdf_seconds})."
+                )
         elif file_info.get("is_image"):
             logger.info(f"Processing Image (OCR): {file_path}")
             enhanced_path = self.toolbox.enhance_blueprint_for_ocr(file_path)
