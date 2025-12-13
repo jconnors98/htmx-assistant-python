@@ -59,6 +59,9 @@
     // NOTE: keep this small so we don't block the page before the iframe reports its real size
     let desiredWidth = 72;
     let desiredHeight = 72;
+    // Track expanded/collapsed state as explicitly reported by the widget.
+    // Default to collapsed so we don't overlay the page on initial load.
+    let isExpanded = false;
     
     // Create iframe
     const iframe = document.createElement('iframe');
@@ -79,7 +82,10 @@
     
     // Helper to clamp and apply the container size without occupying extra space
     const applyContainerStyles = function() {
-      if (window.innerWidth <= 480) {
+      const isCollapsed = !isExpanded;
+
+      // Mobile: only go full-screen when expanded; keep a small bubble when collapsed.
+      if (window.innerWidth <= 480 && !isCollapsed) {
         container.style.cssText = `
           position: fixed;
           bottom: 0;
@@ -99,10 +105,6 @@
         return;
       }
       
-      // When the widget is "collapsed", it typically reports a small size (e.g. ~72x72).
-      // In that state, we should NOT enforce large minimums (280x80), otherwise the iframe
-      // will create an invisible click-blocking rectangle over the page.
-      const isCollapsed = desiredWidth <= 120 && desiredHeight <= 120;
       const zIndex = isCollapsed ? 1 : 999999;
 
       const minWidth = isCollapsed ? 48 : 280;
@@ -135,6 +137,10 @@
       const data = event.data || {};
       if (!data || data.source !== 'chat-widget' || data.type !== 'SIZE') return;
       if (widgetOrigin && event.origin !== widgetOrigin) return;
+
+      if (typeof data.expanded === 'boolean') {
+        isExpanded = data.expanded;
+      }
       
       if (typeof data.width === 'number' && !Number.isNaN(data.width)) {
         desiredWidth = data.width;
