@@ -12,7 +12,7 @@
       position: fixed;
       bottom: 20px;
       right: 20px;
-      z-index: 9999;
+      z-index: 99999;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     }
     
@@ -696,20 +696,18 @@
       return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
     }
     
-    // Notify parent (widget-loader) of size so container only covers visible area
+    // Notify parent (widget-loader) of size so container only covers VISIBLE UI.
+    // Important: the outer `#chat-widget` can be fixed-positioned and/or contain hidden
+    // sections; measuring it can produce an expanded-size box even when collapsed.
     function notifyParentSize(reason = 'manual') {
       if (!chatWidgetContainer || window.parent === window) return;
       
-      const rect = chatWidgetContainer.getBoundingClientRect();
-      const measuredWidth = Math.ceil(rect.width || chatWidgetContainer.offsetWidth || 0);
-      const measuredHeight = Math.ceil(
-        Math.max(
-          rect.height,
-          chatWidgetContainer.scrollHeight || 0,
-          document.body ? document.body.scrollHeight : 0,
-          document.documentElement ? document.documentElement.scrollHeight : 0
-        )
-      );
+      const targetEl = isExpanded ? expandedView : collapsedView;
+      if (!targetEl) return;
+      
+      const rect = targetEl.getBoundingClientRect();
+      const measuredWidth = Math.ceil(rect.width || targetEl.offsetWidth || 0);
+      const measuredHeight = Math.ceil(rect.height || targetEl.offsetHeight || 0);
       
       if (!measuredWidth || !measuredHeight) return;
       

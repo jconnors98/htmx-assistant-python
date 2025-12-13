@@ -92,7 +92,7 @@
           left: 0;
           right: 0;
           top: 0;
-          z-index: 999999;
+          z-index: 0;
           width: 100%;
           height: 100%;
           max-width: 100%;
@@ -105,8 +105,6 @@
         return;
       }
       
-      const zIndex = isCollapsed ? 1 : 999999;
-
       const minWidth = isCollapsed ? 48 : 280;
       const minHeight = isCollapsed ? 48 : 80;
 
@@ -116,7 +114,7 @@
       container.style.cssText = `
         position: fixed;
         ${positionStyle}
-        z-index: ${zIndex};
+        z-index: 0;
         /* Let the iframe define size so we don't reserve/block extra empty area */
         width: auto;
         height: auto;
@@ -160,7 +158,6 @@
     document.body.appendChild(container);
     
     console.log('Chat Widget loaded successfully');
-    console.log('isExpanded:', isExpanded);
   };
   
   // Wait for DOM to be ready
