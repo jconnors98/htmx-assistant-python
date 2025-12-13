@@ -160,6 +160,7 @@
     document.body.appendChild(container);
     
     console.log('Chat Widget loaded successfully');
+    console.log('isExpanded:', isExpanded);
   };
   
   // Wait for DOM to be ready
