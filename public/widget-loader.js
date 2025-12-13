@@ -80,19 +80,19 @@
     // Helper to clamp and apply the container size without occupying extra space
     const applyContainerStyles = function() {
       if (window.innerWidth <= 480) {
-        container.style.cssText = `
-          position: fixed;
-          bottom: 0;
-          left: 0;
-          right: 0;
-          top: 0;
-          z-index: 0;
-          width: 100%;
-          height: 100%;
-          max-width: 100%;
-          max-height: 100%;
-          pointer-events: none;
-        `;
+      container.style.cssText = `
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        top: 0;
+        z-index: 999999;
+        width: 100%;
+        height: 100%;
+        max-width: 100%;
+        max-height: 100%;
+        pointer-events: none;
+      `;
         iframe.style.width = '100%';
         iframe.style.height = '100%';
         iframe.style.borderRadius = '0';
@@ -105,14 +105,14 @@
       container.style.cssText = `
         position: fixed;
         ${positionStyle}
-        z-index: 0;
+        z-index: 999999;
         /* Let the iframe define size so we don't reserve/block extra empty area */
-        width: auto;
-        height: auto;
+        width: ${clampedWidth}px;
+        height: ${clampedHeight}px;
         pointer-events: none;
       `;
-      iframe.style.width = `${clampedWidth}px`;
-      iframe.style.height = `${clampedHeight}px`;
+      iframe.style.width = '100%';
+      iframe.style.height = '100%';
       iframe.style.borderRadius = '24px';
     };
     
