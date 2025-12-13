@@ -55,14 +55,10 @@
     const container = document.createElement('div');
     container.id = 'chat-widget-container';
     
-    // Track desired size reported by iframe (defaults to a reasonable collapsed footprint).
-    // If the iframe hasn't reported its real size yet (or postMessage is delayed),
-    // we still want the widget to look correct on first paint.
-    let desiredWidth = 380;
+    // Track desired size reported by iframe (defaults to compact footprint)
+    // NOTE: keep this small so we don't block the page before the iframe reports its real size
+    let desiredWidth = 72;
     let desiredHeight = 72;
-    // Track expanded/collapsed state as explicitly reported by the widget.
-    // Default to collapsed so we don't overlay the page on initial load.
-    let isExpanded = false;
     
     // Create iframe
     const iframe = document.createElement('iframe');
@@ -83,10 +79,7 @@
     
     // Helper to clamp and apply the container size without occupying extra space
     const applyContainerStyles = function() {
-      const isCollapsed = !isExpanded;
-
-      // Mobile: only go full-screen when expanded; keep a small bubble when collapsed.
-      if (window.innerWidth <= 480 && !isCollapsed) {
+      if (window.innerWidth <= 480) {
         container.style.cssText = `
           position: fixed;
           bottom: 0;
@@ -106,11 +99,8 @@
         return;
       }
       
-      const minWidth = isCollapsed ? 48 : 280;
-      const minHeight = isCollapsed ? 48 : 80;
-
-      const clampedWidth = Math.max(minWidth, Math.min(desiredWidth, window.innerWidth - 40));
-      const clampedHeight = Math.max(minHeight, Math.min(desiredHeight, window.innerHeight - 100));
+      const clampedWidth = Math.max(280, Math.min(desiredWidth, window.innerWidth - 40));
+      const clampedHeight = Math.max(80, Math.min(desiredHeight, window.innerHeight - 100));
       
       container.style.cssText = `
         position: fixed;
@@ -136,10 +126,6 @@
       const data = event.data || {};
       if (!data || data.source !== 'chat-widget' || data.type !== 'SIZE') return;
       if (widgetOrigin && event.origin !== widgetOrigin) return;
-
-      if (typeof data.expanded === 'boolean') {
-        isExpanded = data.expanded;
-      }
       
       if (typeof data.width === 'number' && !Number.isNaN(data.width)) {
         desiredWidth = data.width;
