@@ -55,9 +55,10 @@
     const container = document.createElement('div');
     container.id = 'chat-widget-container';
     
-    // Track desired size reported by iframe (defaults to compact footprint)
-    // NOTE: keep this small so we don't block the page before the iframe reports its real size
-    let desiredWidth = 72;
+    // Track desired size reported by iframe (defaults to a reasonable collapsed footprint).
+    // If the iframe hasn't reported its real size yet (or postMessage is delayed),
+    // we still want the widget to look correct on first paint.
+    let desiredWidth = 380;
     let desiredHeight = 72;
     // Track expanded/collapsed state as explicitly reported by the widget.
     // Default to collapsed so we don't overlay the page on initial load.
