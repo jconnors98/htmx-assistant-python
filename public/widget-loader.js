@@ -56,8 +56,9 @@
     container.id = 'chat-widget-container';
     
     // Track desired size reported by iframe (defaults to compact footprint)
-    let desiredWidth = 420;
-    let desiredHeight = 120;
+    // NOTE: keep this small so we don't block the page before the iframe reports its real size
+    let desiredWidth = 72;
+    let desiredHeight = 72;
     
     // Create iframe
     const iframe = document.createElement('iframe');
@@ -65,8 +66,6 @@
     
     iframe.src = widgetUrl;
     iframe.style.cssText = `
-      width: 100%;
-      height: 100%;
       border: none;
       border-radius: 24px;
       box-shadow: none;
@@ -74,6 +73,9 @@
     `;
     iframe.allow = 'clipboard-write';
     iframe.title = 'Chat Widget';
+    // Ensure the wrapper doesn't eat clicks; only the iframe should be interactive.
+    container.style.pointerEvents = 'none';
+    iframe.style.pointerEvents = 'auto';
     
     // Helper to clamp and apply the container size without occupying extra space
     const applyContainerStyles = function() {
@@ -89,7 +91,10 @@
           height: 100%;
           max-width: 100%;
           max-height: 100%;
+          pointer-events: none;
         `;
+        iframe.style.width = '100%';
+        iframe.style.height = '100%';
         iframe.style.borderRadius = '0';
         return;
       }
@@ -101,11 +106,13 @@
         position: fixed;
         ${positionStyle}
         z-index: 999999;
-        width: ${clampedWidth}px;
-        height: ${clampedHeight}px;
-        max-width: calc(100vw - 40px);
-        max-height: calc(100vh - 100px);
+        /* Let the iframe define size so we don't reserve/block extra empty area */
+        width: auto;
+        height: auto;
+        pointer-events: none;
       `;
+      iframe.style.width = `${clampedWidth}px`;
+      iframe.style.height = `${clampedHeight}px`;
       iframe.style.borderRadius = '24px';
     };
     
