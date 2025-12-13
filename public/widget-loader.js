@@ -99,13 +99,22 @@
         return;
       }
       
-      const clampedWidth = Math.max(280, Math.min(desiredWidth, window.innerWidth - 40));
-      const clampedHeight = Math.max(80, Math.min(desiredHeight, window.innerHeight - 100));
+      // When the widget is "collapsed", it typically reports a small size (e.g. ~72x72).
+      // In that state, we should NOT enforce large minimums (280x80), otherwise the iframe
+      // will create an invisible click-blocking rectangle over the page.
+      const isCollapsed = desiredWidth <= 120 && desiredHeight <= 120;
+      const zIndex = isCollapsed ? 1 : 999999;
+
+      const minWidth = isCollapsed ? 48 : 280;
+      const minHeight = isCollapsed ? 48 : 80;
+
+      const clampedWidth = Math.max(minWidth, Math.min(desiredWidth, window.innerWidth - 40));
+      const clampedHeight = Math.max(minHeight, Math.min(desiredHeight, window.innerHeight - 100));
       
       container.style.cssText = `
         position: fixed;
         ${positionStyle}
-        z-index: 999999;
+        z-index: ${zIndex};
         /* Let the iframe define size so we don't reserve/block extra empty area */
         width: auto;
         height: auto;
