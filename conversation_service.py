@@ -428,7 +428,7 @@ class ConversationService:
                 # If anything goes wrong, assume confident to avoid double calls
                 return True
 
-        response = _call_model("gpt-5-mini")
+        response = _call_model("gpt-4.1-mini")
         
         called_function = False
         # Handle function calls for permit search (permitsca mode only)
@@ -463,7 +463,7 @@ class ConversationService:
                     
                     # Get the AI's final response with tool results
                     final_response = self.client.responses.create(
-                        model="gpt-5-mini",
+                        model="gpt-4.1-mini",
                         input=[
                             {"role": "system", "content": full_system_prompt},
                             {"role": "user", "content": text},
@@ -476,7 +476,7 @@ class ConversationService:
         
         if not _is_confident(response) and not called_function:
             print("response from mini model is not confident, calling gpt-5.1")
-            response = _call_model("gpt-5.1")
+            response = _call_model("gpt-4.1")
         output_text = response.output_text
         now = datetime.utcnow()
         usage = response.usage.total_tokens if response.usage else None

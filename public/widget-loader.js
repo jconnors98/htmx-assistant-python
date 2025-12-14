@@ -127,11 +127,25 @@
       if (!data || data.source !== 'chat-widget' || data.type !== 'SIZE') return;
       if (widgetOrigin && event.origin !== widgetOrigin) return;
       
-      if (typeof data.width === 'number' && !Number.isNaN(data.width)) {
-        desiredWidth = data.width;
+      const reportedWidth = (typeof data.width === 'number' && !Number.isNaN(data.width))
+        ? data.width
+        : null;
+      const reportedHeight = (typeof data.height === 'number' && !Number.isNaN(data.height))
+        ? data.height
+        : null;
+      
+      if (reportedWidth !== null) {
+        desiredWidth = reportedWidth;
       }
-      if (typeof data.height === 'number' && !Number.isNaN(data.height)) {
-        desiredHeight = data.height;
+      
+      // If the widget reports that it's expanded, ensure we request at least
+      // the full expanded height (600px) even if the measured height is missing
+      // or very small. This prevents the container from staying at the compact
+      // 80px size when users send a message to auto-expand.
+      if (data.expanded) {
+        desiredHeight = Math.max(reportedHeight || 0, 600);
+      } else if (reportedHeight !== null) {
+        desiredHeight = reportedHeight;
       }
       
       applyContainerStyles();
@@ -144,7 +158,7 @@
     container.appendChild(iframe);
     document.body.appendChild(container);
     
-    console.log('Chat Widget loaded successfully');
+    console.log('Chat Widget v0.1 loaded successfully');
   };
   
   // Wait for DOM to be ready

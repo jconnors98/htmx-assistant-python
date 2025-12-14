@@ -698,7 +698,7 @@
     // Notify parent (widget-loader) of size so container only covers VISIBLE UI.
     // Important: the outer `#chat-widget` can be fixed-positioned and/or contain hidden
     // sections; measuring it can produce an expanded-size box even when collapsed.
-    function notifyParentSize(reason = 'manual') {
+    function notifyParentSize(reason = 'manual', overrideHeight = undefined) {
       if (!chatWidgetContainer || window.parent === window) return;
       
       const targetEl = isExpanded ? expandedView : collapsedView;
@@ -714,7 +714,7 @@
         source: 'chat-widget',
         type: 'SIZE',
         width: measuredWidth,
-        height: measuredHeight,
+        height: overrideHeight !== undefined ? overrideHeight : measuredHeight,
         expanded: isExpanded,
         reason
       }, '*');
@@ -733,7 +733,13 @@
       }
       
       messageInput.focus();
-      requestAnimationFrame(() => notifyParentSize('expanded'));
+      // Wait for DOM to fully render the expanded view before notifying parent
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          // Explicitly request 600px height on the parent container when expanded
+          notifyParentSize('expanded', 600);
+        });
+      });
     }
     
     // Collapse widget
@@ -748,7 +754,12 @@
       }
       
       searchInput.focus();
-      requestAnimationFrame(() => notifyParentSize('collapsed'));
+      // Wait for DOM to fully render the collapsed view before notifying parent
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          notifyParentSize('collapsed');
+        });
+      });
     }
     
     // Clear chat
@@ -797,8 +808,11 @@
       }
       
       // Expand if not expanded
-      if (!isExpanded) {
+      const wasCollapsed = !isExpanded;
+      if (wasCollapsed) {
         expandWidget();
+        // Wait a bit for the expansion to complete
+        await new Promise(resolve => setTimeout(resolve, 50));
       }
       
       // Remove empty state if present
