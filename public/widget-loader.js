@@ -59,6 +59,7 @@
     // NOTE: keep this small so we don't block the page before the iframe reports its real size
     let desiredWidth = 72;
     let desiredHeight = 72;
+    let isFullscreen = false;
     
     // Create iframe
     const iframe = document.createElement('iframe');
@@ -79,7 +80,7 @@
     
     // Helper to clamp and apply the container size without occupying extra space
     const applyContainerStyles = function() {
-      if (window.innerWidth <= 480) {
+      if (window.innerWidth <= 480 || isFullscreen) {
       container.style.cssText = `
         position: fixed;
         bottom: 0;
@@ -134,6 +135,10 @@
         ? data.height
         : null;
       
+      if (typeof data.fullscreen === 'boolean') {
+        isFullscreen = data.fullscreen;
+      }
+
       if (reportedWidth !== null) {
         desiredWidth = reportedWidth;
       }
@@ -158,7 +163,7 @@
     container.appendChild(iframe);
     document.body.appendChild(container);
     
-    console.log('Chat Widget v0.1 loaded successfully');
+    console.log('Chat Widget v0.2 loaded successfully');
   };
   
   // Wait for DOM to be ready

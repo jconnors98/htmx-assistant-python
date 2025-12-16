@@ -290,6 +290,25 @@
     }
     
     /* Minimize Button */
+    .maximize-btn {
+      background: rgba(255,255,255,0.2);
+      border-radius: 6px;
+      padding: 4px 8px;
+      cursor: pointer;
+      transition: background 0.2s;
+      border: none;
+      color: white;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+      margin-left: 8px;
+    }
+    
+    .maximize-btn:hover {
+      background: rgba(255,255,255,0.3);
+    }
+
     .minimize-btn {
       background: rgba(255,255,255,0.2);
       border-radius: 6px;
@@ -302,6 +321,7 @@
       align-items: center;
       gap: 4px;
       font-size: 12px;
+      margin-left: 8px;
     }
     
     .minimize-btn:hover {
@@ -446,7 +466,21 @@
     }
     
     /* Mobile Responsive */
-    @media (max-width: 480px) {
+    .widget-container.fullscreen {
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      width: 100% !important;
+      height: 100% !important;
+      max-width: none !important;
+      max-height: none !important;
+      border-radius: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    @media (max-width: 410px) {
       .widget-container {
         bottom: 0;
         right: 0;
@@ -541,6 +575,11 @@
             </svg>
             <span>Clear</span>
           </button>
+          <button id="maximize-btn" class="maximize-btn" title="Toggle Fullscreen">
+            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path>
+            </svg>
+          </button>
           <button id="minimize-btn" class="minimize-btn" title="Minimize">
             <svg width="16" height="16" fill="white" viewBox="0 0 24 24">
               <path d="M19 13H5v-2h14v2z"/>
@@ -600,6 +639,7 @@
     
     // State
     let isExpanded = false;
+    let isFullScreen = false;
     let hasBeenExpandedOnce = false; // Track if user has expanded at least once
     let conversationId = '';
     let responseId = '';
@@ -622,6 +662,7 @@
     const attachBtnCollapsed = document.getElementById('attach-btn-collapsed');
     const attachBtnExpanded = document.getElementById('attach-btn-expanded');
     const minimizeBtn = document.getElementById('minimize-btn');
+    const maximizeBtn = document.getElementById('maximize-btn');
     const clearBtn = document.getElementById('clear-btn');
     const expandBtn = document.getElementById('expand-btn');
     const fileInput = document.getElementById('file-input');
@@ -706,7 +747,13 @@
       
       const rect = targetEl.getBoundingClientRect();
       const measuredWidth = Math.ceil(rect.width || targetEl.offsetWidth || 0);
-      const measuredHeight = Math.ceil(rect.height || targetEl.offsetHeight || 0);
+      let measuredHeight = Math.ceil(rect.height || targetEl.offsetHeight || 0);
+
+      // If collapsed and expand button is visible (not hidden), add extra height for the button
+      // which is positioned absolutely above the container (-50px)
+      if (!isExpanded && expandBtn && !expandBtn.classList.contains('hidden')) {
+        measuredHeight += 60;
+      }
       
       if (!measuredWidth || !measuredHeight) return;
       
@@ -716,10 +763,52 @@
         width: measuredWidth,
         height: overrideHeight !== undefined ? overrideHeight : measuredHeight,
         expanded: isExpanded,
+        fullscreen: isFullScreen,
         reason
       }, '*');
     }
     
+    // Toggle Full Screen
+    function toggleFullScreen() {
+      isFullScreen = !isFullScreen;
+      
+      // Update icon
+      if (isFullScreen) {
+        chatWidgetContainer.classList.add('fullscreen');
+        
+        // Show compress icon
+        maximizeBtn.innerHTML = `
+          <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+             <path stroke-linecap="round" stroke-linejoin="round" d="M5 9h4V5M4 4l5 5M19 9h-4V5M20 4l-5 5M5 15h4v4M4 20l5-5M19 15h-4v4M20 20l-5-5"></path>
+          </svg>`;
+        maximizeBtn.title = "Exit Full Screen";
+        
+        // Ensure expanded view takes full height if possible (CSS)
+        expandedView.style.height = '100%';
+        expandedView.style.maxHeight = '100%';
+        expandedView.style.width = '100%';
+        expandedView.style.maxWidth = '100%';
+        
+      } else {
+        chatWidgetContainer.classList.remove('fullscreen');
+        
+        // Show expand icon
+        maximizeBtn.innerHTML = `
+          <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path>
+          </svg>`;
+        maximizeBtn.title = "Full Screen";
+        
+        // Reset styles to class defaults
+        expandedView.style.height = '';
+        expandedView.style.maxHeight = '';
+        expandedView.style.width = '';
+        expandedView.style.maxWidth = '';
+      }
+      
+      notifyParentSize('fullscreen-toggle');
+    }
+
     // Expand widget
     function expandWidget() {
       isExpanded = true;
@@ -744,6 +833,10 @@
     
     // Collapse widget
     function collapseWidget() {
+      if (isFullScreen) {
+        toggleFullScreen(); // Properly exit fullscreen state and reset icon
+      }
+      
       isExpanded = false;
       expandedView.classList.add('hidden');
       collapsedView.classList.remove('hidden');
@@ -1122,6 +1215,7 @@
     });
     
     minimizeBtn.addEventListener('click', collapseWidget);
+    maximizeBtn.addEventListener('click', toggleFullScreen);
     clearBtn.addEventListener('click', clearChat);
     expandBtn.addEventListener('click', expandWidget);
     
