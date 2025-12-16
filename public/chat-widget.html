@@ -85,6 +85,7 @@
       color: white;
       padding: 16px;
       display: flex;
+      flex-direction: column;
       justify-content: space-between;
       align-items: flex-start;
       flex-shrink: 0;
@@ -565,26 +566,28 @@
       <div class="chat-window">
         <!-- Header -->
         <div class="chat-header">
-          <div style="flex: 1;">
+          <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
             <h3 id="widget-title" style="margin: 0; font-size: 16px; font-weight: 600;">Assistant</h3>
-            <p id="widget-subtitle" style="margin: 4px 0 0 0; font-size: 12px; opacity: 0.9;">How can I help you?</p>
+            <div style="display: flex; align-items: center;">
+              <button id="clear-btn" class="clear-btn" title="Clear chat">
+                <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                </svg>
+                <span>Clear</span>
+              </button>
+              <button id="maximize-btn" class="maximize-btn" title="Toggle Fullscreen">
+                <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path>
+                </svg>
+              </button>
+              <button id="minimize-btn" class="minimize-btn" title="Minimize">
+                <svg width="16" height="16" fill="white" viewBox="0 0 24 24">
+                  <path d="M19 13H5v-2h14v2z"/>
+                </svg>
+              </button>
+            </div>
           </div>
-          <button id="clear-btn" class="clear-btn" title="Clear chat">
-            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
-            </svg>
-            <span>Clear</span>
-          </button>
-          <button id="maximize-btn" class="maximize-btn" title="Toggle Fullscreen">
-            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path>
-            </svg>
-          </button>
-          <button id="minimize-btn" class="minimize-btn" title="Minimize">
-            <svg width="16" height="16" fill="white" viewBox="0 0 24 24">
-              <path d="M19 13H5v-2h14v2z"/>
-            </svg>
-          </button>
+          <p id="widget-subtitle" style="margin: 8px 0 0 0; font-size: 12px; opacity: 0.9; line-height: 1.4;">How can I help you?</p>
         </div>
         
         <!-- Messages -->

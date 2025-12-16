@@ -100,7 +100,7 @@
         return;
       }
       
-      const clampedWidth = Math.max(280, Math.min(desiredWidth, window.innerWidth - 40));
+      const clampedWidth = Math.max(380, Math.min(desiredWidth, window.innerWidth - 40));
       const clampedHeight = Math.max(80, Math.min(desiredHeight, window.innerHeight - 100));
       
       container.style.cssText = `
@@ -163,7 +163,7 @@
     container.appendChild(iframe);
     document.body.appendChild(container);
     
-    console.log('Chat Widget v0.2 loaded successfully');
+    console.log('Chat Widget v0.21 loaded successfully');
   };
   
   // Wait for DOM to be ready
