@@ -887,7 +887,7 @@
       if (!targetEl) return;
       
       const rect = targetEl.getBoundingClientRect();
-      const measuredWidth = Math.ceil(rect.width || targetEl.offsetWidth || 0);
+      let measuredWidth = Math.ceil(rect.width || targetEl.offsetWidth || 0);
       let measuredHeight = Math.ceil(rect.height || targetEl.offsetHeight || 0);
 
       // If collapsed and expand button is visible (not hidden), add extra height for the button
