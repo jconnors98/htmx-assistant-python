@@ -16,12 +16,55 @@
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     }
     
+    /* FAB (Floating Action Button) */
+    .widget-fab {
+      width: 60px;
+      height: 60px;
+      border-radius: 50%;
+      background: var(--theme-color, #82002d);
+      color: white;
+      border: none;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.3s ease;
+      position: absolute;
+      bottom: 0;
+      right: 0;
+    }
+
+    .widget-fab:hover {
+      background: var(--theme-color-hover, #6b0024);
+      transform: scale(1.1);
+    }
+
     /* Collapsed State - Search Bar Only */
     .widget-collapsed {
       width: 380px;
       max-width: calc(100vw - 40px);
     }
     
+    /* Close Button for Search Bar */
+    .close-search-btn {
+      background: transparent;
+      border: none;
+      color: #9ca3af;
+      cursor: pointer;
+      padding: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      margin-left: 4px;
+    }
+
+    .close-search-btn:hover {
+      background: #f3f4f6;
+      color: #ef4444;
+    }
+
     /* Expanded State - Full Chat */
     .widget-expanded {
       width: 420px;
@@ -215,6 +258,46 @@
       30% { opacity: 1; }
     }
     
+    /* Prompt Buttons */
+    .prompt-buttons-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 8px;
+      margin: 16px;
+      margin-top: auto;
+    }
+
+    .prompt-btn {
+      background: #f3f4f6;
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      padding: 10px;
+      text-align: left;
+      font-size: 13px;
+      color: #374151;
+      cursor: pointer;
+      transition: all 0.2s;
+      line-height: 1.4;
+    }
+
+    .prompt-btn:hover {
+      background: white;
+      border-color: var(--theme-color, #82002d);
+      color: var(--theme-color, #82002d);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    }
+
+    /* Disclaimer */
+    .chat-disclaimer {
+      font-size: 10px;
+      color: #9ca3af;
+      text-align: center;
+      padding: 8px 16px;
+      border-top: 1px solid #f3f4f6;
+      background: #f9fafb;
+      line-height: 1.3;
+    }
+
     /* Input Area */
     .input-area {
       border-top: 1px solid #e5e7eb;
@@ -233,7 +316,7 @@
       border-radius: 20px;
       padding: 10px 16px;
       outline: none !important;
-      font-size: 14px;
+      font-size: 16px;
       resize: none;
       max-height: 100px;
       transition: border-color 0.2s;
@@ -505,6 +588,11 @@
       .chat-window {
         border-radius: 0;
       }
+
+      /* Hide maximize button on mobile since it's already full screen */
+      .maximize-btn {
+        display: none !important;
+      }
     }
     
     /* Scrollbar Styling */
@@ -528,8 +616,15 @@
 </head>
 <body>
   <div id="chat-widget" class="widget-container">
+    <!-- FAB State -->
+    <button id="fab-view" class="widget-fab" title="Open Chat">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="white">
+        <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>
+      </svg>
+    </button>
+
     <!-- Collapsed State: Search Bar -->
-    <div id="collapsed-view" class="widget-collapsed" style="position: relative;">
+    <div id="collapsed-view" class="widget-collapsed hidden" style="position: relative;">
       <!-- Expand Button (shown after first expansion/minimize) -->
       <button id="expand-btn" class="expand-btn hidden" title="Expand chat">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
@@ -558,6 +653,12 @@
             <path stroke-linecap="round" stroke-linejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6"></path>
           </svg>
         </button>
+        
+        <button id="close-search-btn" class="close-search-btn" title="Close">
+          <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+        </button>
       </div>
     </div>
     
@@ -582,7 +683,7 @@
               </button>
               <button id="minimize-btn" class="minimize-btn" title="Minimize">
                 <svg width="16" height="16" fill="white" viewBox="0 0 24 24">
-                  <path d="M19 13H5v-2h14v2z"/>
+                  <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
                 </svg>
               </button>
             </div>
@@ -597,11 +698,19 @@
             <div class="empty-state-icon">💬</div>
             <div class="empty-state-text">
               <strong>Start a conversation</strong><br />
-              Type a message below to get started
+              Type a message below or choose a prompt
             </div>
           </div>
+          
+          <!-- Prompt Buttons (populated dynamically) -->
+          <div id="prompt-buttons" class="prompt-buttons-grid"></div>
         </div>
         
+        <!-- Disclaimer -->
+        <div class="chat-disclaimer">
+          AI Assistant is using generative AI, which can make mistakes. Please verify important information independently. <a href="https://bcca.ai/flask/terms-of-use.html" target="_blank" style="color: inherit; text-decoration: underline;">See Terms</a>
+        </div>
+
         <!-- Input Area -->
         <div class="input-area">
           <!-- File previews -->
@@ -642,6 +751,7 @@
     
     // State
     let isExpanded = false;
+    let isFabVisible = true;
     let isFullScreen = false;
     let hasBeenExpandedOnce = false; // Track if user has expanded at least once
     let conversationId = '';
@@ -651,10 +761,12 @@
     let selectedFiles = [];
     let uploadedFileIds = [];
     let isUploading = false;
+    let currentPrompts = [];
     document.body.style.margin = '0';
     
     // Elements
     const chatWidgetContainer = document.getElementById('chat-widget');
+    const fabView = document.getElementById('fab-view');
     const collapsedView = document.getElementById('collapsed-view');
     const expandedView = document.getElementById('expanded-view');
     const searchInput = document.getElementById('search-input');
@@ -668,9 +780,11 @@
     const maximizeBtn = document.getElementById('maximize-btn');
     const clearBtn = document.getElementById('clear-btn');
     const expandBtn = document.getElementById('expand-btn');
+    const closeSearchBtn = document.getElementById('close-search-btn');
     const fileInput = document.getElementById('file-input');
     const filePreviews = document.getElementById('file-previews');
     const emptyState = document.getElementById('empty-state');
+    const promptButtonsContainer = document.getElementById('prompt-buttons');
     
     // Initialize
     async function init() {
@@ -692,6 +806,15 @@
           
           themeColor = data.color || '#82002d';
           applyTheme(themeColor, data.text_color);
+          
+          // Render Prompt Buttons
+          if (data.prompts && data.prompts.length > 0) {
+            currentPrompts = data.prompts; // Store for clearChat
+            renderPromptButtons(data.prompts);
+          } else {
+            currentPrompts = [];
+            promptButtonsContainer.style.display = 'none';
+          }
           
           // Show file upload buttons if allowed
           allowFileUpload = data.allow_file_upload;
@@ -739,13 +862,25 @@
       return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
     }
     
+    // Render Prompt Buttons
+    function renderPromptButtons(prompts) {
+      promptButtonsContainer.innerHTML = '';
+      prompts.forEach(promptText => {
+        const btn = document.createElement('button');
+        btn.className = 'prompt-btn';
+        btn.textContent = promptText;
+        btn.onclick = () => sendMessage(promptText);
+        promptButtonsContainer.appendChild(btn);
+      });
+    }
+    
     // Notify parent (widget-loader) of size so container only covers VISIBLE UI.
     // Important: the outer `#chat-widget` can be fixed-positioned and/or contain hidden
     // sections; measuring it can produce an expanded-size box even when collapsed.
     function notifyParentSize(reason = 'manual', overrideHeight = undefined) {
       if (!chatWidgetContainer || window.parent === window) return;
       
-      const targetEl = isExpanded ? expandedView : collapsedView;
+      const targetEl = isFabVisible ? fabView : (isExpanded ? expandedView : collapsedView);
       if (!targetEl) return;
       
       const rect = targetEl.getBoundingClientRect();
@@ -754,7 +889,7 @@
 
       // If collapsed and expand button is visible (not hidden), add extra height for the button
       // which is positioned absolutely above the container (-50px)
-      if (!isExpanded && expandBtn && !expandBtn.classList.contains('hidden')) {
+      if (!isFabVisible && !isExpanded && expandBtn && !expandBtn.classList.contains('hidden')) {
         measuredHeight += 60;
       }
       
@@ -765,7 +900,8 @@
         type: 'SIZE',
         width: measuredWidth,
         height: overrideHeight !== undefined ? overrideHeight : measuredHeight,
-        expanded: isExpanded,
+        expanded: isExpanded, // Keep existing property for compatibility
+        fab: isFabVisible,
         fullscreen: isFullScreen,
         reason
       }, '*');
@@ -812,6 +948,39 @@
       notifyParentSize('fullscreen-toggle');
     }
 
+    // Open Widget (from FAB)
+    function openWidget() {
+      isFabVisible = false;
+      fabView.classList.add('hidden');
+      // Directly expand widget instead of showing collapsed view
+      expandWidget();
+      
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          notifyParentSize('open');
+        });
+      });
+    }
+
+    // Close Widget (to FAB) - triggered by minimize
+    function closeWidget() {
+      if (isFullScreen) {
+        toggleFullScreen();
+      }
+
+      isFabVisible = true;
+      isExpanded = false;
+      collapsedView.classList.add('hidden');
+      expandedView.classList.add('hidden');
+      fabView.classList.remove('hidden');
+      
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          notifyParentSize('close');
+        });
+      });
+    }
+
     // Expand widget
     function expandWidget() {
       isExpanded = true;
@@ -819,12 +988,8 @@
       collapsedView.classList.add('hidden');
       expandedView.classList.remove('hidden');
       
-      // Hide the expand button when expanded
-      if (expandBtn) {
-        expandBtn.classList.add('hidden');
-      }
-      
       messageInput.focus();
+      
       // Wait for DOM to fully render the expanded view before notifying parent
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
@@ -834,48 +999,44 @@
       });
     }
     
-    // Collapse widget
+    // Collapse widget - Legacy function kept if needed but unused in new flow
     function collapseWidget() {
-      if (isFullScreen) {
-        toggleFullScreen(); // Properly exit fullscreen state and reset icon
-      }
-      
-      isExpanded = false;
-      expandedView.classList.add('hidden');
-      collapsedView.classList.remove('hidden');
-      
-      // Show the expand button after first collapse (user now knows they can expand)
-      if (hasBeenExpandedOnce && expandBtn) {
-        expandBtn.classList.remove('hidden');
-      }
-      
-      searchInput.focus();
-      // Wait for DOM to fully render the collapsed view before notifying parent
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          notifyParentSize('collapsed');
-        });
-      });
+      // Logic moved to closeWidget
+      closeWidget();
     }
     
     // Clear chat
     function clearChat() {
       // Clear messages
-      chatMessages.innerHTML = '';
-      
-      // Show empty state
-      const emptyStateEl = document.createElement('div');
-      emptyStateEl.id = 'empty-state';
-      emptyStateEl.className = 'empty-state';
-      emptyStateEl.innerHTML = `
-        <div class="empty-state-icon">💬</div>
-        <div class="empty-state-text">
-          <strong>Start a conversation</strong><br />
-          Type a message below to get started
+      chatMessages.innerHTML = `
+        <div id="empty-state" class="empty-state">
+          <div class="empty-state-icon">💬</div>
+          <div class="empty-state-text">
+            <strong>Start a conversation</strong><br />
+            Type a message below or choose a prompt
+          </div>
         </div>
+        <div id="prompt-buttons" class="prompt-buttons-grid"></div>
       `;
-      chatMessages.appendChild(emptyStateEl);
       
+      // Re-assign container reference after innerHTML wipe
+      const newPromptContainer = document.getElementById('prompt-buttons');
+      
+      // Re-fetch prompts if possible or store them globally?
+      // Better to just reload init() or store prompts in a global var.
+      // Let's store prompts in a global variable 'currentPrompts'
+      if (typeof currentPrompts !== 'undefined' && currentPrompts.length > 0) {
+        // Re-render prompts
+        newPromptContainer.innerHTML = '';
+        currentPrompts.forEach(promptText => {
+          const btn = document.createElement('button');
+          btn.className = 'prompt-btn';
+          btn.textContent = promptText;
+          btn.onclick = () => sendMessage(promptText);
+          newPromptContainer.appendChild(btn);
+        });
+      }
+
       // Clear conversation
       if (conversationId) {
         fetch(`${API_BASE}/clear-conversation`, {
@@ -903,18 +1064,21 @@
         return;
       }
       
-      // Expand if not expanded
-      const wasCollapsed = !isExpanded;
-      if (wasCollapsed) {
+      // Ensure we are expanded (should always be true in this flow)
+      if (!isExpanded) {
         expandWidget();
-        // Wait a bit for the expansion to complete
         await new Promise(resolve => setTimeout(resolve, 50));
       }
       
       // Remove empty state if present
       const emptyStateEl = document.getElementById('empty-state');
       if (emptyStateEl) {
-        emptyStateEl.remove();
+        emptyStateEl.style.display = 'none'; // Hide instead of remove to toggle back if cleared
+      }
+      
+      // Hide prompt buttons
+      if (promptButtonsContainer) {
+        promptButtonsContainer.style.display = 'none';
       }
       
       // Upload files first if needed
@@ -955,6 +1119,15 @@
           uploadedFileIds.forEach(fileId => {
             formData.append('uploaded_files', fileId);
           });
+        }
+        
+        // Hide keyboard on mobile by blurring the input
+        if (window.innerWidth <= 480) {
+          if (isExpanded) {
+            messageInput.blur();
+          } else {
+            searchInput.blur();
+          }
         }
         
         const response = await fetch(`${API_BASE}/ask`, {
@@ -1217,10 +1390,12 @@
       }
     });
     
-    minimizeBtn.addEventListener('click', collapseWidget);
+    minimizeBtn.addEventListener('click', closeWidget);
     maximizeBtn.addEventListener('click', toggleFullScreen);
     clearBtn.addEventListener('click', clearChat);
-    expandBtn.addEventListener('click', expandWidget);
+    // expandBtn removed/hidden effectively
+    fabView.addEventListener('click', openWidget);
+    // closeSearchBtn logic not needed as search bar is bypassed
     
     // File upload
     attachBtnCollapsed.addEventListener('click', () => fileInput.click());
@@ -1244,4 +1419,5 @@
   </script>
 </body>
 </html>
+
 

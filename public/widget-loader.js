@@ -163,7 +163,7 @@
     container.appendChild(iframe);
     document.body.appendChild(container);
     
-    console.log('Chat Widget v0.21 loaded successfully');
+    console.log('Chat Widget v0.22 loaded successfully');
   };
   
   // Wait for DOM to be ready
