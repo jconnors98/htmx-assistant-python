@@ -59,6 +59,7 @@ reset_tokens_collection = db.get_collection("password_reset_tokens")
 scraped_content_collection = db.get_collection("scraped_content")
 scraping_jobs_collection = db.get_collection("scraping_jobs")
 document_projects_collection = db.get_collection("document_projects")
+blocked_pages_collection = db.get_collection("blocked_pages")
 
 localDevMode = config("LOCAL_DEV_MODE", default="false").lower()
 
@@ -666,6 +667,7 @@ def get_mode(mode):
         "intro": doc.get("intro", ""),
         "title": doc.get("title", ""),
         "allow_file_upload": doc.get("allow_file_upload", False),
+        "disable_widget_on_mobile": bool(doc.get("disable_widget_on_mobile", False)),
         "has_files": doc.get("has_files", False),
         "color": _normalize_color(doc.get("color"), DEFAULT_MODE_COLOR),
         "text_color": _normalize_text_color(doc.get("text_color"), DEFAULT_TEXT_COLOR),
@@ -734,6 +736,7 @@ def create_mode():
         "blocked_sites": data.get("blocked_sites", []),
         "allow_other_sites": data.get("allow_other_sites", True),
         "allow_file_upload": data.get("allow_file_upload", False),
+        "disable_widget_on_mobile": bool(data.get("disable_widget_on_mobile", False)),
         "has_files": False,
         "scrape_sites": data.get("scrape_sites", []),
         "scrape_frequency": data.get("scrape_frequency", "manual"),
@@ -777,6 +780,7 @@ def update_mode(mode_id):
         "blocked_sites": data.get("blocked_sites", doc.get("blocked_sites", [])),
         "allow_other_sites": data.get("allow_other_sites", doc.get("allow_other_sites", True)),
         "allow_file_upload": data.get("allow_file_upload", doc.get("allow_file_upload", False)),
+        "disable_widget_on_mobile": bool(data.get("disable_widget_on_mobile", doc.get("disable_widget_on_mobile", False))),
         "has_files": doc.get("has_files", False),
         "scrape_sites": data.get("scrape_sites", doc.get("scrape_sites", [])),
         "scrape_frequency": data.get("scrape_frequency", doc.get("scrape_frequency", "manual")),
@@ -2316,6 +2320,257 @@ def delete_site_content(mode_id, domain):
         return {"error": "Failed to start deletion", "details": str(e)}, 500
 
 
+@routes.get("/admin/scrape/blocked-pages/<mode_id>")
+@cognito_auth_required
+def get_blocked_pages(mode_id):
+    """List blocked page URLs for a mode (used by Mode Editor UI)."""
+    try:
+        query = {"_id": ObjectId(mode_id)}
+        if not request.user.get("is_super_admin"):
+            query["user_id"] = request.user["sub"]
+        mode_doc = modes_collection.find_one(query)
+        if not mode_doc:
+            return {"error": "Mode not found"}, 404
+
+        mode_name = mode_doc.get("name")
+        user_id = mode_doc.get("user_id")
+
+        docs = list(
+            blocked_pages_collection.find(
+                {"mode": mode_name, "user_id": user_id},
+                {"_id": 0, "mode": 0, "user_id": 0},
+            ).sort("blocked_at", -1)
+        )
+        # Ensure consistent fields
+        blocked_pages = []
+        for d in docs:
+            blocked_pages.append(
+                {
+                    "normalized_url": d.get("normalized_url"),
+                    "url": d.get("url") or d.get("original_url"),
+                    "title": d.get("title") or "Blocked Page",
+                    "blocked_at": d.get("blocked_at").isoformat() if d.get("blocked_at") else None,
+                }
+            )
+
+        return {
+            "mode_id": mode_id,
+            "mode": mode_name,
+            "blocked_pages": blocked_pages,
+            "count": len(blocked_pages),
+        }, 200
+    except Exception as e:  # noqa: BLE001
+        print(f"Error fetching blocked pages: {e}")
+        return {"error": "Failed to fetch blocked pages", "details": str(e)}, 500
+
+
+@routes.post("/admin/scrape/block-page/<mode_id>")
+@cognito_auth_required
+def block_page(mode_id):
+    """Block a scraped page URL for a mode and remove the page content."""
+    data = request.get_json(silent=True) or {}
+    content_id = (data.get("content_id") or "").strip()
+    url = (data.get("url") or "").strip()
+    normalized_url = (data.get("normalized_url") or "").strip()
+
+    if not content_id and not (url or normalized_url):
+        return {"error": "content_id or url is required"}, 400
+
+    query = {"_id": ObjectId(mode_id)}
+    if not request.user.get("is_super_admin"):
+        query["user_id"] = request.user["sub"]
+    mode_doc = modes_collection.find_one(query)
+    if not mode_doc:
+        return {"error": "Mode not found"}, 404
+    mode_name = mode_doc.get("name")
+    mode_owner_id = mode_doc.get("user_id")
+
+    # Resolve from content_id when possible (preferred, gives normalized_url)
+    scraped_doc = None
+    if content_id:
+        scraped_doc = scraped_content_collection.find_one({"_id": ObjectId(content_id)})
+        if not scraped_doc:
+            return {"error": "Content not found"}, 404
+        if scraped_doc.get("user_id") != mode_owner_id and not request.user.get("is_super_admin"):
+            return {"error": "Access denied"}, 403
+        if mode_name not in (scraped_doc.get("modes") or []):
+            return {"error": "Content does not belong to this mode"}, 400
+
+        normalized_url = scraped_doc.get("normalized_url") or normalized_url
+        url = scraped_doc.get("original_url") or scraped_doc.get("url") or url
+
+    if not normalized_url:
+        # Fall back to a best-effort normalization using the scraped_content document
+        # or treat original url as normalized if unavailable.
+        normalized_url = url
+
+    # Store in mode doc for fast skip during scraping
+    modes_collection.update_one(
+        {"_id": ObjectId(mode_id)},
+        {"$addToSet": {"blocked_page_urls": normalized_url}},
+    )
+
+    # Store display metadata in dedicated collection
+    now = datetime.utcnow()
+    try:
+        blocked_pages_collection.update_one(
+            {"mode": mode_name, "user_id": mode_owner_id, "normalized_url": normalized_url},
+            {
+                "$setOnInsert": {"blocked_at": now},
+                "$set": {"url": url, "title": (scraped_doc or {}).get("title") or None, "updated_at": now},
+            },
+            upsert=True,
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"Failed to upsert blocked page record: {e}")
+
+    # Queue deletion if we have a content record
+    job_id = None
+    if content_id:
+        try:
+            job_id = scraper_client.queue_delete_content(
+                content_id=content_id,
+                user_id=request.user["sub"],
+                mode_name=mode_name,
+            )
+        except Exception as e:  # noqa: BLE001
+            print(f"Failed to queue delete job for blocked page: {e}")
+
+    return {"status": "blocked", "normalized_url": normalized_url, "job_id": str(job_id) if job_id else None}, 200
+
+
+@routes.post("/admin/scrape/block-pages/<mode_id>")
+@cognito_auth_required
+def block_pages_bulk(mode_id):
+    """Bulk block multiple scraped pages for a mode and remove them."""
+    data = request.get_json(silent=True) or {}
+    content_ids = data.get("content_ids") or []
+    if not isinstance(content_ids, list) or not content_ids:
+        return {"error": "content_ids is required"}, 400
+
+    query = {"_id": ObjectId(mode_id)}
+    if not request.user.get("is_super_admin"):
+        query["user_id"] = request.user["sub"]
+    mode_doc = modes_collection.find_one(query)
+    if not mode_doc:
+        return {"error": "Mode not found"}, 404
+    mode_name = mode_doc.get("name")
+    mode_owner_id = mode_doc.get("user_id")
+
+    scraped_docs = list(scraped_content_collection.find({"_id": {"$in": [ObjectId(cid) for cid in content_ids]}}))
+    if not scraped_docs:
+        return {"error": "No content found"}, 404
+
+    normalized_urls = []
+    records = []
+    now = datetime.utcnow()
+    valid_content_ids = []
+
+    for d in scraped_docs:
+        if d.get("user_id") != mode_owner_id and not request.user.get("is_super_admin"):
+            continue
+        if mode_name not in (d.get("modes") or []):
+            continue
+        nurl = d.get("normalized_url") or (d.get("original_url") or d.get("url"))
+        ourl = d.get("original_url") or d.get("url")
+        if not nurl:
+            continue
+        normalized_urls.append(nurl)
+        valid_content_ids.append(str(d["_id"]))
+        records.append(
+            {
+                "mode": mode_name,
+                "user_id": mode_owner_id,
+                "normalized_url": nurl,
+                "url": ourl,
+                "title": d.get("title") or None,
+                "blocked_at": now,
+                "updated_at": now,
+            }
+        )
+
+    if not normalized_urls:
+        return {"error": "No eligible pages to block"}, 400
+
+    modes_collection.update_one(
+        {"_id": ObjectId(mode_id)},
+        {"$addToSet": {"blocked_page_urls": {"$each": normalized_urls}}},
+    )
+
+    try:
+        if records:
+            blocked_pages_collection.insert_many(records, ordered=False)
+    except Exception:
+        # Ignore duplicates/insert issues (we also store list in mode doc)
+        pass
+
+    job_ids = []
+    for cid in valid_content_ids:
+        try:
+            job_id = scraper_client.queue_delete_content(
+                content_id=cid,
+                user_id=request.user["sub"],
+                mode_name=mode_name,
+            )
+            job_ids.append(str(job_id))
+        except Exception as e:  # noqa: BLE001
+            print(f"Failed to queue delete for {cid}: {e}")
+
+    return {"status": "blocked", "count": len(normalized_urls), "job_ids": job_ids}, 200
+
+
+@routes.post("/admin/scrape/unblock-page/<mode_id>")
+@cognito_auth_required
+def unblock_page(mode_id):
+    """Unblock a page URL for a mode."""
+    data = request.get_json(silent=True) or {}
+    normalized_url = (data.get("normalized_url") or "").strip()
+    if not normalized_url:
+        return {"error": "normalized_url is required"}, 400
+
+    query = {"_id": ObjectId(mode_id)}
+    if not request.user.get("is_super_admin"):
+        query["user_id"] = request.user["sub"]
+    mode_doc = modes_collection.find_one(query)
+    if not mode_doc:
+        return {"error": "Mode not found"}, 404
+    mode_name = mode_doc.get("name")
+    mode_owner_id = mode_doc.get("user_id")
+
+    modes_collection.update_one(
+        {"_id": ObjectId(mode_id)},
+        {"$pull": {"blocked_page_urls": normalized_url}},
+    )
+    blocked_pages_collection.delete_one({"mode": mode_name, "user_id": mode_owner_id, "normalized_url": normalized_url})
+    return {"status": "unblocked", "normalized_url": normalized_url}, 200
+
+
+@routes.post("/admin/scrape/unblock-pages/<mode_id>")
+@cognito_auth_required
+def unblock_pages_bulk(mode_id):
+    """Bulk unblock page URLs for a mode."""
+    data = request.get_json(silent=True) or {}
+    normalized_urls = data.get("normalized_urls") or []
+    if not isinstance(normalized_urls, list) or not normalized_urls:
+        return {"error": "normalized_urls is required"}, 400
+
+    query = {"_id": ObjectId(mode_id)}
+    if not request.user.get("is_super_admin"):
+        query["user_id"] = request.user["sub"]
+    mode_doc = modes_collection.find_one(query)
+    if not mode_doc:
+        return {"error": "Mode not found"}, 404
+    mode_name = mode_doc.get("name")
+    mode_owner_id = mode_doc.get("user_id")
+
+    modes_collection.update_one(
+        {"_id": ObjectId(mode_id)},
+        {"$pullAll": {"blocked_page_urls": normalized_urls}},
+    )
+    blocked_pages_collection.delete_many({"mode": mode_name, "user_id": mode_owner_id, "normalized_url": {"$in": normalized_urls}})
+    return {"status": "unblocked", "count": len(normalized_urls)}, 200
+
+
 @routes.get("/admin/scrape/discovered-files/<mode_id>")
 @cognito_auth_required
 def get_discovered_files(mode_id):
@@ -2658,9 +2913,18 @@ def refresh_scraped_content(content_id):
     modes_list = doc.get("modes", [])
     mode = modes_list[0] if modes_list else doc.get("mode")
     user_id = doc.get("user_id")
+    normalized_url = doc.get("normalized_url") or url
     
     if not url or not mode:
         return {"error": "Invalid content document"}, 400
+
+    # Block check: prevent refresh if URL is blocked for this mode
+    try:
+        mode_doc = modes_collection.find_one({"name": mode, "user_id": user_id}, {"blocked_page_urls": 1})
+        if mode_doc and normalized_url and normalized_url in (mode_doc.get("blocked_page_urls") or []):
+            return {"error": "This page URL is blocked for this mode"}, 400
+    except Exception as e:  # noqa: BLE001
+        print(f"Blocked-page check failed: {e}")
     
     if SCRAPER_EXECUTION_MODE != "local" or scraping_service is None:
         job_id = scraper_client.queue_single_url_refresh(

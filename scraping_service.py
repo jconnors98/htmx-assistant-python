@@ -2398,6 +2398,9 @@ class ScrapingService:
         mode_doc = self.modes_collection.find_one({"name": mode_name})
         if not mode_doc:
             return {"error": "Mode not found", "success": False}
+
+        # Blocked page URLs for this mode (normalized_url values)
+        blocked_page_urls = set(mode_doc.get("blocked_page_urls", []) or [])
         
         scrape_sites = mode_doc.get("scrape_sites", [])
         if not scrape_sites:
@@ -2565,6 +2568,9 @@ class ScrapingService:
                         normalized_url = self._normalize_url(url)
                         if not normalized_url:
                             print(f"  ⚠️  Skipping invalid URL: {url}")
+                            continue
+                        if normalized_url in blocked_page_urls:
+                            print(f"  ⛔ Skipping blocked URL for mode '{mode_name}': {url}")
                             continue
                         if normalized_url in processed_urls:
                             print(f"\nSkipping duplicate URL (already processed): {url}")

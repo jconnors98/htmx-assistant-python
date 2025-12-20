@@ -350,8 +350,26 @@
                              </div>
                              
                              <div id="subtab-scraped-pages" class="p-0 bg-white overflow-y-auto flex-1 flex flex-col">
-                                <div class="p-3 border-b border-gray-200 sticky top-0 bg-white z-10">
+                               <div class="p-3 border-b border-gray-200 sticky top-0 bg-white z-10 space-y-2">
                                     <input type="text" id="filter-scraped-pages" placeholder="Search pages or sites..." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none">
+                                    <div class="flex flex-wrap items-center justify-between gap-2">
+                                      <label class="flex items-center gap-2 text-xs font-semibold text-gray-700 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 select-none">
+                                        <input type="checkbox" id="select-all-scraped-pages" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4" />
+                                        <span>Select all (filtered)</span>
+                                      </label>
+                                      <div class="flex flex-wrap items-center gap-2">
+                                        <span id="scraped-selected-count" class="text-xs text-gray-500 font-medium">No pages selected</span>
+                                        <button id="bulk-refresh-scraped-pages" class="px-3 py-2 bg-blue-600 text-white text-xs font-bold rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors" disabled>
+                                          Refresh selected
+                                        </button>
+                                        <button id="bulk-block-scraped-pages" class="px-3 py-2 bg-amber-600 text-white text-xs font-bold rounded hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors" disabled>
+                                          Block selected
+                                        </button>
+                                        <button id="bulk-delete-scraped-pages" class="px-3 py-2 bg-red-600 text-white text-xs font-bold rounded hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors" disabled>
+                                          Remove selected
+                                        </button>
+                                      </div>
+                                    </div>
                                 </div>
                                 <div id="scraped-sites-pages-combined" class="p-4 space-y-3 flex-1">
                                     <div class="text-center py-8 text-gray-400 text-sm">No content scraped yet.</div>
@@ -456,6 +474,10 @@
                         <input type="checkbox" id="mode-allow-upload" class="h-4 w-4 text-primary border-gray-300 rounded focus:ring-primary" />
                         <span class="ml-3 text-sm text-gray-700">Allow Users to Upload Files in Chat</span>
                      </label>
+                     <label class="flex items-center">
+                        <input type="checkbox" id="mode-disable-widget-mobile" class="h-4 w-4 text-primary border-gray-300 rounded focus:ring-primary" />
+                        <span class="ml-3 text-sm text-gray-700">Disable chat widget on mobile devices</span>
+                      </label>
                 </div>
              </div>
 
@@ -595,6 +617,7 @@
         document.getElementById('mode-priority-sites').checked = true;
         document.getElementById('mode-priority-files').checked = false;
         document.getElementById('mode-allow-upload').checked = false;
+        document.getElementById('mode-disable-widget-mobile').checked = false;
         colorInput.value = DEFAULT_THEME_COLOR;
         textColorInput.value = DEFAULT_TEXT_COLOR;
         updateClientUrl();
@@ -638,6 +661,7 @@
       const priority = (m.priority_source === 'files') ? 'files' : 'sites';
       document.getElementById('mode-priority-' + priority).checked = true;
       document.getElementById('mode-allow-upload').checked = !!m.allow_file_upload;
+      document.getElementById('mode-disable-widget-mobile').checked = !!m.disable_widget_on_mobile;
       
       // Enable Docs Tab
       const docTab = document.getElementById('tab-documents');
@@ -692,6 +716,7 @@
         allow_other_sites: document.getElementById('mode-allow-other').checked,
         priority_source: (document.querySelector('input[name="mode-priority-source"]:checked') || { value: 'sites' }).value,
         allow_file_upload: document.getElementById('mode-allow-upload').checked,
+        disable_widget_on_mobile: document.getElementById('mode-disable-widget-mobile').checked,
         scrape_sites: modeScrapeSites,
         scrape_frequency: document.getElementById('scrape-frequency').value,
         color: normalizeColor(colorInput.value),
@@ -836,29 +861,230 @@
     }
 
     // Scraped Sites and Content Logic (Combined)
+    // --------------------------------------------------------------------------
+    // Scraped Pages selection state + bulk actions
+    // --------------------------------------------------------------------------
+    const selectedScrapedPageIds = new Set();
+    const selectedBlockedPageUrls = new Set();
+
+    function isElementVisible(el) {
+      // Visible for our purposes: not display:none and not hidden by parent wrapper
+      if (!el) return false;
+      const style = window.getComputedStyle(el);
+      return style.display !== 'none' && style.visibility !== 'hidden';
+    }
+
+    function getVisibleScrapedPageCheckboxes(scopeEl = document) {
+      const checkboxes = Array.from(scopeEl.querySelectorAll('.scraped-page-checkbox'));
+      return checkboxes.filter(cb => {
+        const pageItem = cb.closest('.page-item');
+        const wrapper = cb.closest('.site-wrapper');
+        return pageItem && wrapper && isElementVisible(pageItem) && isElementVisible(wrapper);
+      });
+    }
+
+    function getAllScrapedPageCheckboxes(scopeEl = document) {
+      return Array.from(scopeEl.querySelectorAll('.scraped-page-checkbox'));
+    }
+
+    function updateGlobalScrapedBulkUI() {
+      const bulkRefreshBtn = document.getElementById('bulk-refresh-scraped-pages');
+      const bulkDeleteBtn = document.getElementById('bulk-delete-scraped-pages');
+      const selectAllCb = document.getElementById('select-all-scraped-pages');
+      const countEl = document.getElementById('scraped-selected-count');
+
+      if (!bulkRefreshBtn || !bulkDeleteBtn || !selectAllCb || !countEl) return;
+
+      // Buttons reflect total selected (even if currently filtered out)
+      const checkedCount = selectedScrapedPageIds.size;
+      bulkRefreshBtn.disabled = checkedCount === 0;
+      bulkDeleteBtn.disabled = checkedCount === 0;
+      bulkRefreshBtn.textContent = checkedCount > 0 ? `Refresh selected (${checkedCount})` : 'Refresh selected';
+      bulkDeleteBtn.textContent = checkedCount > 0 ? `Remove selected (${checkedCount})` : 'Remove selected';
+      countEl.textContent = checkedCount > 0 ? `${checkedCount} selected` : 'No pages selected';
+
+      // Global select-all reflects visible checkboxes (filtered view)
+      const visibleCbs = getVisibleScrapedPageCheckboxes();
+      const visibleTotal = visibleCbs.length;
+      const visibleChecked = visibleCbs.filter(cb => cb.checked).length;
+
+      if (visibleTotal === 0) {
+        selectAllCb.checked = false;
+        selectAllCb.indeterminate = false;
+        selectAllCb.disabled = true;
+      } else {
+        selectAllCb.disabled = false;
+        if (visibleChecked === visibleTotal) {
+          selectAllCb.checked = true;
+          selectAllCb.indeterminate = false;
+        } else if (visibleChecked > 0) {
+          selectAllCb.checked = false;
+          selectAllCb.indeterminate = true;
+        } else {
+          selectAllCb.checked = false;
+          selectAllCb.indeterminate = false;
+        }
+      }
+    }
+
+    function updateDomainSelectAllState(wrapper) {
+      const domainCb = wrapper?.querySelector('.domain-select-all');
+      if (!domainCb) return;
+      const visibleCbs = getVisibleScrapedPageCheckboxes(wrapper);
+      const total = visibleCbs.length;
+      const checked = visibleCbs.filter(cb => cb.checked).length;
+
+      if (total === 0) {
+        domainCb.checked = false;
+        domainCb.indeterminate = false;
+        domainCb.disabled = true;
+      } else {
+        domainCb.disabled = false;
+        if (checked === total) {
+          domainCb.checked = true;
+          domainCb.indeterminate = false;
+        } else if (checked > 0) {
+          domainCb.checked = false;
+          domainCb.indeterminate = true;
+        } else {
+          domainCb.checked = false;
+          domainCb.indeterminate = false;
+        }
+      }
+    }
+
+    function updateAllDomainSelectAllStates() {
+      document.querySelectorAll('.site-wrapper').forEach(w => updateDomainSelectAllState(w));
+    }
+
+    function getVisibleBlockedPageCheckboxes(scopeEl = document) {
+      const checkboxes = Array.from(scopeEl.querySelectorAll('.blocked-page-checkbox'));
+      return checkboxes.filter(cb => {
+        const pageItem = cb.closest('.page-item');
+        const wrapper = cb.closest('.site-wrapper');
+        return pageItem && wrapper && isElementVisible(pageItem) && isElementVisible(wrapper);
+      });
+    }
+
+    function updateBlockedSectionUI() {
+      const wrapper = document.querySelector('.site-wrapper[data-domain="blocked-pages"]');
+      if (!wrapper) return;
+      const selectAll = wrapper.querySelector('.blocked-domain-select-all');
+      const bulkBtn = wrapper.querySelector('.bulk-unblock-blocked-pages');
+      const countEl = wrapper.querySelector('.blocked-selected-count');
+
+      const visibleCbs = getVisibleBlockedPageCheckboxes(wrapper);
+      const visibleTotal = visibleCbs.length;
+      const visibleChecked = visibleCbs.filter(cb => cb.checked).length;
+
+      if (selectAll) {
+        if (visibleTotal === 0) {
+          selectAll.checked = false;
+          selectAll.indeterminate = false;
+          selectAll.disabled = true;
+        } else {
+          selectAll.disabled = false;
+          if (visibleChecked === visibleTotal) {
+            selectAll.checked = true;
+            selectAll.indeterminate = false;
+          } else if (visibleChecked > 0) {
+            selectAll.checked = false;
+            selectAll.indeterminate = true;
+          } else {
+            selectAll.checked = false;
+            selectAll.indeterminate = false;
+          }
+        }
+      }
+
+      const totalSelected = selectedBlockedPageUrls.size;
+      if (bulkBtn) {
+        bulkBtn.disabled = totalSelected === 0;
+        bulkBtn.textContent = totalSelected > 0 ? `Unblock selected (${totalSelected})` : 'Unblock selected';
+      }
+      if (countEl) {
+        countEl.textContent = totalSelected > 0 ? `${totalSelected} selected` : 'No blocked pages selected';
+      }
+    }
+
     async function loadScrapedSitesAndPages() {
       if (!modeId) return;
       
-      const [sitesRes, pagesRes] = await Promise.all([
+      const [sitesRes, pagesRes, blockedRes] = await Promise.all([
         fetch('/flask/admin/scrape/sites/' + modeId, {
           headers: { 'Authorization': 'Bearer ' + idToken }
         }),
         fetch('/flask/admin/scrape/status/' + modeId, {
           headers: { 'Authorization': 'Bearer ' + idToken }
+        }),
+        fetch('/flask/admin/scrape/blocked-pages/' + modeId, {
+          headers: { 'Authorization': 'Bearer ' + idToken }
         })
       ]);
       
-      if (handleUnauthorized(sitesRes) || handleUnauthorized(pagesRes)) return;
-      if (!sitesRes.ok || !pagesRes.ok) return;
+      if (handleUnauthorized(sitesRes) || handleUnauthorized(pagesRes) || handleUnauthorized(blockedRes)) return;
+      if (!sitesRes.ok || !pagesRes.ok || !blockedRes.ok) return;
       
       const sitesData = await sitesRes.json();
       const pagesData = await pagesRes.json();
+      const blockedData = await blockedRes.json();
       
       const container = document.getElementById('scraped-sites-pages-combined');
       container.innerHTML = '';
+
+      // Render Blocked Pages pseudo-domain first
+      const blockedPages = (blockedData && blockedData.blocked_pages) ? blockedData.blocked_pages : [];
+      const blockedWrapper = document.createElement('div');
+      blockedWrapper.className = 'bg-white rounded-lg border border-gray-200 overflow-hidden mb-3 site-wrapper';
+      blockedWrapper.dataset.domain = 'blocked-pages';
+      blockedWrapper.innerHTML = `
+        <div class="site-header p-3 bg-amber-50 cursor-pointer hover:bg-amber-100 transition-colors flex items-center justify-between" data-domain="blocked-pages">
+          <div class="flex items-center gap-3">
+               <svg class="expand-icon w-4 h-4 text-gray-400 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+               <div>
+                  <div class="text-sm font-semibold text-gray-900">Blocked Pages</div>
+                  <div class="text-xs text-gray-600">${blockedPages.length} blocked • excluded from future scrapes</div>
+               </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <label class="flex items-center gap-2 text-xs font-semibold text-amber-900 bg-white border border-amber-200 rounded-md px-2 py-1 select-none" onclick="event.stopPropagation()">
+              <input type="checkbox" class="blocked-domain-select-all rounded border-amber-300 text-amber-600 focus:ring-amber-500 w-4 h-4" />
+              <span>Select all (filtered)</span>
+            </label>
+            <span class="blocked-selected-count text-xs text-amber-900/70 font-medium hidden sm:inline">No blocked pages selected</span>
+            <button class="bulk-unblock-blocked-pages px-3 py-1.5 bg-amber-600 text-white text-xs font-bold rounded hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors" onclick="event.stopPropagation()" disabled>
+              Unblock selected
+            </button>
+          </div>
+        </div>
+        <div class="pages-container hidden border-t border-amber-100" data-domain="blocked-pages">
+          <div class="p-0">
+            ${blockedPages.length > 0 ? blockedPages.map(p => `
+              <div class="p-3 border-b border-amber-100 last:border-0 hover:bg-amber-50 flex justify-between items-start gap-3 page-item blocked-page-item" data-normalized-url="${p.normalized_url}">
+                <div class="flex items-start gap-3 min-w-0 flex-1">
+                  <div class="pt-0.5">
+                    <input type="checkbox" class="blocked-page-checkbox rounded border-amber-300 text-amber-600 focus:ring-amber-500 w-4 h-4 cursor-pointer" data-normalized-url="${p.normalized_url}" ${selectedBlockedPageUrls.has(p.normalized_url) ? 'checked' : ''} />
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <div class="text-sm font-medium text-gray-900 truncate search-target">${(p.title || 'Blocked Page')}</div>
+                    <div class="text-xs text-gray-600 truncate search-target">${p.url || p.normalized_url}</div>
+                  </div>
+                </div>
+                <div class="flex gap-1 shrink-0">
+                  <button class="unblock-page-btn text-amber-700 hover:bg-amber-100 p-1.5 rounded text-xs font-bold" data-normalized-url="${p.normalized_url}" title="Unblock">Unblock</button>
+                </div>
+              </div>
+            `).join('') : '<div class="p-3 text-xs text-gray-500 text-center">No blocked pages.</div>'}
+          </div>
+        </div>
+      `;
+      container.appendChild(blockedWrapper);
       
       if (!sitesData.sites || sitesData.sites.length === 0) {
-        container.innerHTML = '<div class="text-sm text-gray-400 text-center py-8">No sites scraped yet. Add URLs and click "Run Now".</div>';
+        container.innerHTML += '<div class="text-sm text-gray-400 text-center py-8">No sites scraped yet. Add URLs and click "Run Now".</div>';
+        // Setup blocked section interactions even if no sites
+        setupBlockedPagesInteractions();
+        applyScrapedPageFilter();
         return;
       }
       
@@ -894,21 +1120,33 @@
                     <div class="text-xs text-gray-500">${site.total_pages} pages • ${(site.total_words || 0).toLocaleString()} words</div>
                  </div>
             </div>
-            <button class="delete-site-btn text-red-500 hover:text-red-700 hover:bg-red-50 p-1.5 rounded" data-domain="${site.domain}" onclick="event.stopPropagation()">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-            </button>
+            <div class="flex items-center gap-3">
+              <label class="flex items-center gap-2 text-xs font-semibold text-gray-600 bg-white border border-gray-200 rounded-md px-2 py-1 select-none" onclick="event.stopPropagation()">
+                <input type="checkbox" class="domain-select-all rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4" data-domain="${site.domain}" />
+                <span>Select all (filtered)</span>
+              </label>
+              <button class="delete-site-btn text-red-500 hover:text-red-700 hover:bg-red-50 p-1.5 rounded" data-domain="${site.domain}" onclick="event.stopPropagation()">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+              </button>
+            </div>
           </div>
           <div class="pages-container hidden border-t border-gray-100" data-domain="${site.domain}">
             <div class="p-0">
               ${pages.length > 0 ? pages.map(page => `
                 <div class="p-3 border-b border-gray-100 last:border-0 hover:bg-gray-50 flex justify-between items-start gap-3 page-item" data-page-id="${page._id}">
-                  <div class="min-w-0 flex-1">
-                    <div class="text-sm font-medium text-blue-600 truncate cursor-pointer hover:underline search-target" onclick="window.open('${page.url}', '_blank')">${page.title || 'Untitled'}</div>
-                    <div class="text-xs text-gray-400 truncate search-target">${page.url}</div>
-                    <div class="text-xs text-gray-400 mt-1">${page.word_count || 0} words • ${page.scraped_at ? new Date(page.scraped_at).toLocaleDateString() : ''}</div>
+                  <div class="flex items-start gap-3 min-w-0 flex-1">
+                    <div class="pt-0.5">
+                      <input type="checkbox" class="scraped-page-checkbox rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer" data-page-id="${page._id}" ${selectedScrapedPageIds.has(page._id) ? 'checked' : ''} />
+                    </div>
+                    <div class="min-w-0 flex-1">
+                      <div class="text-sm font-medium text-blue-600 truncate cursor-pointer hover:underline search-target page-open-link" data-url="${page.url}">${page.title || 'Untitled'}</div>
+                      <div class="text-xs text-gray-400 truncate search-target">${page.url}</div>
+                      <div class="text-xs text-gray-400 mt-1">${page.word_count || 0} words • ${page.scraped_at ? new Date(page.scraped_at).toLocaleDateString() : ''}</div>
+                    </div>
                   </div>
-                  <div class="flex gap-1">
+                  <div class="flex gap-1 shrink-0">
                     <button class="refresh-btn text-blue-500 hover:bg-blue-50 p-1 rounded" data-id="${page._id}" title="Refresh"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg></button>
+                    <button class="block-page-btn text-amber-600 hover:bg-amber-50 p-1 rounded" data-id="${page._id}" title="Block"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 5.636l-12.728 12.728M6.343 6.343l11.314 11.314"></path></svg></button>
                     <button class="delete-page-btn text-red-500 hover:bg-red-50 p-1 rounded" data-id="${page._id}" title="Delete"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>
                   </div>
                 </div>
@@ -943,16 +1181,143 @@
           deleteSiteContent(btn.dataset.domain);
         };
       });
+
+      // Open page link
+      document.querySelectorAll('.page-open-link').forEach(el => {
+        el.onclick = (e) => {
+          e.stopPropagation();
+          const url = el.dataset.url;
+          if (url) window.open(url, '_blank');
+        };
+      });
+
+      // Checkbox behavior + row toggle
+      document.querySelectorAll('.page-item').forEach(item => {
+        item.onclick = (e) => {
+          if (e.target.tagName === 'BUTTON' || e.target.classList.contains('page-open-link') || e.target.type === 'checkbox') return;
+          const cb = item.querySelector('.scraped-page-checkbox');
+          if (!cb) return;
+          cb.checked = !cb.checked;
+          cb.dispatchEvent(new Event('change', { bubbles: true }));
+        };
+      });
+
+      document.querySelectorAll('.scraped-page-checkbox').forEach(cb => {
+        cb.onchange = (e) => {
+          e.stopPropagation();
+          const pageId = cb.dataset.pageId;
+          if (!pageId) return;
+          if (cb.checked) selectedScrapedPageIds.add(pageId);
+          else selectedScrapedPageIds.delete(pageId);
+          const wrapper = cb.closest('.site-wrapper');
+          if (wrapper) updateDomainSelectAllState(wrapper);
+          updateGlobalScrapedBulkUI();
+        };
+        cb.onclick = (e) => e.stopPropagation();
+      });
+
+      // Per-domain select all (filtered + domain)
+      document.querySelectorAll('.domain-select-all').forEach(domainCb => {
+        domainCb.onclick = (e) => e.stopPropagation();
+        domainCb.onchange = (e) => {
+          e.stopPropagation();
+          const wrapper = domainCb.closest('.site-wrapper');
+          if (!wrapper) return;
+          const visibleCbs = getVisibleScrapedPageCheckboxes(wrapper);
+          visibleCbs.forEach(cb => {
+            cb.checked = domainCb.checked;
+            const pageId = cb.dataset.pageId;
+            if (pageId) {
+              if (domainCb.checked) selectedScrapedPageIds.add(pageId);
+              else selectedScrapedPageIds.delete(pageId);
+            }
+          });
+          updateDomainSelectAllState(wrapper);
+          updateGlobalScrapedBulkUI();
+        };
+      });
       
       document.querySelectorAll('.refresh-btn').forEach(btn => {
         btn.onclick = () => refreshScrapedContent(btn.dataset.id);
       });
-      document.querySelectorAll('.delete-page-btn').forEach(btn => {
-        btn.onclick = () => deleteScrapedContent(btn.dataset.id);
+      document.querySelectorAll('.block-page-btn').forEach(btn => {
+        btn.onclick = () => blockScrapedPage(btn.dataset.id);
       });
+      document.querySelectorAll('.delete-page-btn').forEach(btn => {
+        btn.onclick = () => deleteScrapedContent(btn.dataset.id, true);
+      });
+
+      // Wire blocked pages section after render
+      setupBlockedPagesInteractions();
 
       // Apply filter if exists
       applyScrapedPageFilter();
+    }
+
+    function setupBlockedPagesInteractions() {
+      const wrapper = document.querySelector('.site-wrapper[data-domain="blocked-pages"]');
+      if (!wrapper) return;
+
+      // Expand/collapse is handled by the generic .site-header listener already.
+
+      // Row click toggles checkbox
+      wrapper.querySelectorAll('.blocked-page-item').forEach(item => {
+        item.onclick = (e) => {
+          if (e.target.tagName === 'BUTTON' || e.target.type === 'checkbox') return;
+          const cb = item.querySelector('.blocked-page-checkbox');
+          if (!cb) return;
+          cb.checked = !cb.checked;
+          cb.dispatchEvent(new Event('change', { bubbles: true }));
+        };
+      });
+
+      wrapper.querySelectorAll('.blocked-page-checkbox').forEach(cb => {
+        cb.onclick = (e) => e.stopPropagation();
+        cb.onchange = (e) => {
+          e.stopPropagation();
+          const nurl = cb.dataset.normalizedUrl;
+          if (!nurl) return;
+          if (cb.checked) selectedBlockedPageUrls.add(nurl);
+          else selectedBlockedPageUrls.delete(nurl);
+          updateBlockedSectionUI();
+        };
+      });
+
+      const selectAll = wrapper.querySelector('.blocked-domain-select-all');
+      if (selectAll) {
+        selectAll.onclick = (e) => e.stopPropagation();
+        selectAll.onchange = (e) => {
+          e.stopPropagation();
+          const visible = getVisibleBlockedPageCheckboxes(wrapper);
+          visible.forEach(cb => {
+            cb.checked = selectAll.checked;
+            const nurl = cb.dataset.normalizedUrl;
+            if (!nurl) return;
+            if (selectAll.checked) selectedBlockedPageUrls.add(nurl);
+            else selectedBlockedPageUrls.delete(nurl);
+          });
+          updateBlockedSectionUI();
+        };
+      }
+
+      wrapper.querySelectorAll('.unblock-page-btn').forEach(btn => {
+        btn.onclick = async (e) => {
+          e.stopPropagation();
+          await unblockBlockedPages([btn.dataset.normalizedUrl].filter(Boolean));
+        };
+      });
+
+      const bulkBtn = wrapper.querySelector('.bulk-unblock-blocked-pages');
+      if (bulkBtn) {
+        bulkBtn.onclick = async (e) => {
+          e.stopPropagation();
+          const urls = Array.from(selectedBlockedPageUrls);
+          if (urls.length === 0) return;
+          await unblockBlockedPages(urls);
+        };
+      }
+
+      updateBlockedSectionUI();
     }
 
     async function loadScrapedSites() {
@@ -995,24 +1360,27 @@
       }
     }
 
-    async function refreshScrapedContent(contentId) {
+    async function refreshScrapedContent(contentId, skipReload = false) {
       const res = await fetch('/flask/admin/scrape/refresh/' + contentId, {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + idToken }
       });
-      if (!handleUnauthorized(res) && res.ok) {
+      const ok = (!handleUnauthorized(res) && res.ok);
+      if (ok && !skipReload) {
         loadScrapedSitesAndPages();
       }
+      return ok;
     }
 
-    async function deleteScrapedContent(contentId) {
-      if (!confirm('Delete this page?')) return;
+    async function deleteScrapedContent(contentId, shouldConfirm = true, skipReload = false) {
+      if (shouldConfirm && !confirm('Delete this page?')) return;
       const res = await fetch('/flask/admin/scraped-content/' + contentId, {
         method: 'DELETE',
         headers: { 'Authorization': 'Bearer ' + idToken }
       });
       if (!handleUnauthorized(res) && res.ok) {
-        loadScrapedSitesAndPages();
+        selectedScrapedPageIds.delete(contentId);
+        if (!skipReload) loadScrapedSitesAndPages();
       }
     }
 
@@ -1481,6 +1849,7 @@
                 allow_other_sites: document.getElementById('mode-allow-other').checked,
                 priority_source: (document.querySelector('input[name="mode-priority-source"]:checked') || { value: 'sites' }).value,
                 allow_file_upload: document.getElementById('mode-allow-upload').checked,
+                disable_widget_on_mobile: document.getElementById('mode-disable-widget-mobile').checked,
                 scrape_sites: modeScrapeSites, // This is the key part
                 scrape_frequency: document.getElementById('scrape-frequency').value,
                 color: normalizeColor(document.getElementById('mode-color').value),
@@ -1870,6 +2239,11 @@
                 }
             });
 
+            // Special case: show the Blocked Pages wrapper even when empty and not searching
+            if (wrapper.dataset.domain === 'blocked-pages' && items.length === 0 && query === '') {
+                hasVisiblePages = true;
+            }
+
             if (hasVisiblePages) {
                 wrapper.style.display = '';
                 // Auto-expand if searching and matches found (and not empty query)
@@ -1882,6 +2256,11 @@
                 wrapper.style.display = 'none';
             }
         });
+
+        // Update select-all states based on newly-visible items
+        updateAllDomainSelectAllStates();
+        updateGlobalScrapedBulkUI();
+        updateBlockedSectionUI();
     }
 
     function applyDiscoveredFileFilter() {
@@ -1903,6 +2282,160 @@
 
     document.getElementById('filter-scraped-pages').addEventListener('input', applyScrapedPageFilter);
     document.getElementById('filter-discovered-files').addEventListener('input', applyDiscoveredFileFilter);
+
+    // --------------------------------------------------------------------------
+    // Scraped Pages bulk controls
+    // --------------------------------------------------------------------------
+    const selectAllScrapedPagesCb = document.getElementById('select-all-scraped-pages');
+    if (selectAllScrapedPagesCb) {
+      selectAllScrapedPagesCb.onclick = (e) => e.stopPropagation();
+      selectAllScrapedPagesCb.onchange = (e) => {
+        e.stopPropagation();
+        const visibleCbs = getVisibleScrapedPageCheckboxes();
+        visibleCbs.forEach(cb => {
+          cb.checked = selectAllScrapedPagesCb.checked;
+          const pageId = cb.dataset.pageId;
+          if (pageId) {
+            if (selectAllScrapedPagesCb.checked) selectedScrapedPageIds.add(pageId);
+            else selectedScrapedPageIds.delete(pageId);
+          }
+        });
+        updateAllDomainSelectAllStates();
+        updateGlobalScrapedBulkUI();
+      };
+    }
+
+    const bulkRefreshScrapedBtn = document.getElementById('bulk-refresh-scraped-pages');
+    if (bulkRefreshScrapedBtn) {
+      bulkRefreshScrapedBtn.onclick = async () => {
+        const ids = Array.from(selectedScrapedPageIds);
+        if (ids.length === 0) return;
+        bulkRefreshScrapedBtn.disabled = true;
+        const originalText = bulkRefreshScrapedBtn.textContent;
+        bulkRefreshScrapedBtn.textContent = 'Refreshing...';
+        try {
+          // Avoid reloading per item; do one reload at end
+          for (const id of ids) {
+            await refreshScrapedContent(id, true);
+          }
+          await loadScrapedSitesAndPages();
+        } finally {
+          bulkRefreshScrapedBtn.disabled = selectedScrapedPageIds.size === 0;
+          bulkRefreshScrapedBtn.textContent = originalText || 'Refresh selected';
+          updateGlobalScrapedBulkUI();
+        }
+      };
+    }
+
+    const bulkDeleteScrapedBtn = document.getElementById('bulk-delete-scraped-pages');
+    if (bulkDeleteScrapedBtn) {
+      bulkDeleteScrapedBtn.onclick = async () => {
+        const ids = Array.from(selectedScrapedPageIds);
+        if (ids.length === 0) return;
+        if (!confirm(`Remove ${ids.length} selected pages?`)) return;
+        bulkDeleteScrapedBtn.disabled = true;
+        const originalText = bulkDeleteScrapedBtn.textContent;
+        bulkDeleteScrapedBtn.textContent = 'Removing...';
+        try {
+          for (const id of ids) {
+            await deleteScrapedContent(id, false, true);
+          }
+          selectedScrapedPageIds.clear();
+          await loadScrapedSitesAndPages();
+        } finally {
+          bulkDeleteScrapedBtn.disabled = selectedScrapedPageIds.size === 0;
+          bulkDeleteScrapedBtn.textContent = originalText || 'Remove selected';
+          updateGlobalScrapedBulkUI();
+        }
+      };
+    }
+
+    // Initialize scraped bulk UI once
+    updateGlobalScrapedBulkUI();
+    updateBlockedSectionUI();
+
+    // Bulk block selected scraped pages
+    const bulkBlockScrapedBtn = document.getElementById('bulk-block-scraped-pages');
+    if (bulkBlockScrapedBtn) {
+      bulkBlockScrapedBtn.onclick = async () => {
+        const ids = Array.from(selectedScrapedPageIds);
+        if (ids.length === 0) return;
+        if (!confirm(`Block ${ids.length} selected pages? They will be removed and excluded from future scrapes.`)) return;
+        bulkBlockScrapedBtn.disabled = true;
+        const originalText = bulkBlockScrapedBtn.textContent;
+        bulkBlockScrapedBtn.textContent = 'Blocking...';
+        try {
+          const res = await fetch('/flask/admin/scrape/block-pages/' + modeId, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content_ids: ids })
+          });
+          if (handleUnauthorized(res)) return;
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            alert('Failed to block pages: ' + (err.error || 'Unknown error'));
+            return;
+          }
+          selectedScrapedPageIds.clear();
+          await loadScrapedSitesAndPages();
+        } finally {
+          bulkBlockScrapedBtn.disabled = selectedScrapedPageIds.size === 0;
+          bulkBlockScrapedBtn.textContent = originalText || 'Block selected';
+          updateGlobalScrapedBulkUI();
+        }
+      };
+    }
+
+    async function blockScrapedPage(contentId) {
+      if (!contentId) return;
+      if (!confirm('Block this page URL? It will be removed and ignored in future scrapes.')) return;
+      try {
+        const res = await fetch('/flask/admin/scrape/block-page/' + modeId, {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content_id: contentId })
+        });
+        if (handleUnauthorized(res)) return;
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          alert('Failed to block page: ' + (err.error || 'Unknown error'));
+          return;
+        }
+        selectedScrapedPageIds.delete(contentId);
+        await loadScrapedSitesAndPages();
+        updateGlobalScrapedBulkUI();
+      } catch (e) {
+        console.error(e);
+        alert('Failed to block page.');
+      }
+    }
+
+    async function unblockBlockedPages(normalizedUrls) {
+      const urls = (normalizedUrls || []).filter(Boolean);
+      if (urls.length === 0) return;
+      if (urls.length > 1) {
+        if (!confirm(`Unblock ${urls.length} page(s)? They may be scraped again in future runs.`)) return;
+      }
+      try {
+        const res = await fetch('/flask/admin/scrape/unblock-pages/' + modeId, {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ normalized_urls: urls })
+        });
+        if (handleUnauthorized(res)) return;
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          alert('Failed to unblock: ' + (err.error || 'Unknown error'));
+          return;
+        }
+        urls.forEach(u => selectedBlockedPageUrls.delete(u));
+        await loadScrapedSitesAndPages();
+        updateBlockedSectionUI();
+      } catch (e) {
+        console.error(e);
+        alert('Failed to unblock page(s).');
+      }
+    }
 
     // Refresh Button Logic
     document.getElementById('refresh-scraped-content').onclick = () => {

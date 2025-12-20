@@ -801,6 +801,42 @@
         const res = await fetch(`${API_BASE}/modes/${encodeURIComponent(mode)}`);
         if (res.ok) {
           const data = await res.json();
+
+          // If admin disabled the widget on mobile, suppress UI entirely.
+          const disableOnMobile = !!data.disable_widget_on_mobile;
+          const parentMobileParam = urlParams.get('parent_mobile'); // set by widget-loader.js
+          const uaMobile = (() => {
+            try {
+              if (navigator.userAgentData && typeof navigator.userAgentData.mobile === 'boolean') {
+                return navigator.userAgentData.mobile;
+              }
+            } catch (e) { /* ignore */ }
+            const ua = (navigator.userAgent || '').toLowerCase();
+            return /mobi|android|iphone|ipod|ipad/.test(ua);
+          })();
+          const isMobileDevice = parentMobileParam === '1'
+            ? true
+            : (parentMobileParam === '0' ? false : uaMobile);
+
+          if (disableOnMobile && isMobileDevice) {
+            // Hide the whole widget UI in the iframe
+            document.body.style.display = 'none';
+            // Tell the widget-loader (parent) to hide the container too
+            if (window.parent !== window) {
+              window.parent.postMessage({
+                source: 'chat-widget',
+                type: 'SIZE',
+                width: 0,
+                height: 0,
+                hidden: true,
+                expanded: false,
+                fab: false,
+                fullscreen: false,
+                reason: 'mobile-disabled'
+              }, '*');
+            }
+            return;
+          }
           
           // Set title and theme
           document.getElementById('widget-title').textContent = data.title || 'Assistant';

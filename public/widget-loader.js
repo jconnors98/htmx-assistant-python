@@ -24,6 +24,17 @@
     position: widgetScript.getAttribute('data-position') || 'bottom-right', // bottom-right, bottom-left, top-right, top-left
     baseUrl: widgetScript.getAttribute('data-base-url') || 'https://bcca.ai/flask'
   };
+
+  // Detect mobile device (not "small iframe"). Prefer UA-CH when available.
+  const isMobileDevice = (() => {
+    try {
+      if (navigator.userAgentData && typeof navigator.userAgentData.mobile === 'boolean') {
+        return navigator.userAgentData.mobile;
+      }
+    } catch (e) { /* ignore */ }
+    const ua = (navigator.userAgent || '').toLowerCase();
+    return /mobi|android|iphone|ipod|ipad/.test(ua);
+  })();
   
   // Validate required config
   if (!config.mode) {
@@ -63,7 +74,7 @@
     
     // Create iframe
     const iframe = document.createElement('iframe');
-    const widgetUrl = `${config.baseUrl}/chat-widget.html?mode=${encodeURIComponent(config.mode)}&theme=${encodeURIComponent(config.theme)}`;
+    const widgetUrl = `${config.baseUrl}/chat-widget.html?mode=${encodeURIComponent(config.mode)}&theme=${encodeURIComponent(config.theme)}&parent_mobile=${isMobileDevice ? '1' : '0'}`;
     
     iframe.src = widgetUrl;
     iframe.style.cssText = `
@@ -80,6 +91,11 @@
     
     // Helper to clamp and apply the container size without occupying extra space
     const applyContainerStyles = function() {
+      if (container.dataset.hidden === 'true') {
+        container.style.cssText = 'display: none;';
+        iframe.style.display = 'none';
+        return;
+      }
       if (window.innerWidth <= 480 || isFullscreen) {
       container.style.cssText = `
         position: fixed;
@@ -127,6 +143,14 @@
       const data = event.data || {};
       if (!data || data.source !== 'chat-widget' || data.type !== 'SIZE') return;
       if (widgetOrigin && event.origin !== widgetOrigin) return;
+
+      if (data.hidden === true) {
+        container.dataset.hidden = 'true';
+        applyContainerStyles();
+        return;
+      } else {
+        container.dataset.hidden = 'false';
+      }
       
       const reportedWidth = (typeof data.width === 'number' && !Number.isNaN(data.width))
         ? data.width
@@ -165,12 +189,35 @@
     
     console.log('Chat Widget v0.22 loaded successfully');
   };
+
+  // On mobile, try to pre-check mode settings to avoid any iframe flash.
+  // If the fetch fails (CORS/network), we fall back to creating the widget and
+  // let the iframe tell us to hide via postMessage.
+  const maybeCreateWidget = function() {
+    if (!isMobileDevice) {
+      createWidget();
+      return;
+    }
+    const modeUrl = `${config.baseUrl}/modes/${encodeURIComponent(config.mode)}`;
+    fetch(modeUrl, { method: 'GET' })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (data && data.disable_widget_on_mobile) {
+          // Do not create iframe/container at all.
+          return;
+        }
+        createWidget();
+      })
+      .catch(() => {
+        createWidget();
+      });
+  };
   
   // Wait for DOM to be ready
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', createWidget);
+    document.addEventListener('DOMContentLoaded', maybeCreateWidget);
   } else {
-    createWidget();
+    maybeCreateWidget();
   }
   
 })();
