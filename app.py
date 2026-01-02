@@ -2173,9 +2173,15 @@ def trigger_scrape(mode_id):
         # Trigger background scrape (non-blocking)
         job_id = scrape_scheduler.trigger_background_scrape(
             mode_name=mode_name,
-            user_id=request.user["sub"],
+            user_id=mode_doc.get("user_id") or request.user["sub"],
             mode_id=str(mode_doc["_id"]),
             scrape_sites=scrape_sites
+        )
+
+        # Update "last scrape" timestamp immediately when a run is initiated/queued
+        modes_collection.update_one(
+            {"_id": mode_doc["_id"]},
+            {"$set": {"last_scraped_at": datetime.utcnow()}},
         )
         
         # Return immediately with job ID
@@ -2933,6 +2939,16 @@ def refresh_scraped_content(content_id):
             mode_name=mode,
             user_id=user_id,
         )
+
+        # Update mode "last scrape" timestamp when a refresh is initiated/queued
+        try:
+            modes_collection.update_one(
+                {"name": mode, "user_id": user_id},
+                {"$set": {"last_scraped_at": datetime.utcnow()}},
+            )
+        except Exception as e:  # noqa: BLE001
+            print(f"Error updating last_scraped_at for mode refresh: {e}")
+
         return {
             "status": "queued",
             "job_id": str(job_id),
@@ -2976,6 +2992,15 @@ def refresh_scraped_content(content_id):
         openai_file_id = scraping_service.upload_to_vector_store(
             content, mode, url, title, scraped_at
         )
+
+        # Update mode "last scrape" timestamp after a successful refresh run
+        try:
+            modes_collection.update_one(
+                {"name": mode, "user_id": user_id},
+                {"$set": {"last_scraped_at": scraped_at}},
+            )
+        except Exception as e:  # noqa: BLE001
+            print(f"Error updating last_scraped_at after local refresh: {e}")
         
         # Update document
         scraped_content_collection.update_one(

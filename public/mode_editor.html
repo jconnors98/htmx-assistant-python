@@ -231,41 +231,48 @@
               </div>
             </div>
 
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
                 <!-- Branding -->
-                <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                    <h2 class="text-lg font-semibold text-gray-900 mb-4">Branding & Colors</h2>
-                    <div class="space-y-4">
-                        <div class="flex items-center gap-4">
-                            <div class="h-10 w-10 overflow-hidden rounded-lg border border-gray-200 shadow-sm relative">
+                <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-5 lg:col-span-1">
+                    <h2 class="text-lg font-semibold text-gray-900 mb-3">Branding & Colors</h2>
+                    <div class="space-y-3">
+                        <div class="flex items-start gap-3">
+                            <div class="h-10 w-10 overflow-hidden rounded-lg border border-gray-200 shadow-sm relative flex-none">
                                 <input id="mode-color" type="color" value="#82002d" class="absolute -top-2 -left-2 w-16 h-16 cursor-pointer p-0 border-0" />
                             </div>
-                            <div class="flex-1">
+                            <div class="min-w-0">
                                 <label class="block text-sm font-medium text-gray-900">Primary Color</label>
-                                <p class="text-xs text-gray-500">Used for buttons, headers, and accents.</p>
+                                <p class="text-xs text-gray-500 leading-snug">Used for buttons, headers, and accents.</p>
                             </div>
                         </div>
-                        <div class="flex items-center gap-4">
-                            <div class="h-10 w-10 overflow-hidden rounded-lg border border-gray-200 shadow-sm relative">
+                        <div class="flex items-start gap-3">
+                            <div class="h-10 w-10 overflow-hidden rounded-lg border border-gray-200 shadow-sm relative flex-none">
                                 <input id="mode-text-color" type="color" value="#ffffff" class="absolute -top-2 -left-2 w-16 h-16 cursor-pointer p-0 border-0" />
                             </div>
-                            <div class="flex-1">
+                            <div class="min-w-0">
                                 <label class="block text-sm font-medium text-gray-900">Button Text Color</label>
-                                <p class="text-xs text-gray-500">Usually white or a light contrasting color.</p>
+                                <p class="text-xs text-gray-500 leading-snug">Usually white or a light contrasting color.</p>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- Prompts -->
-                <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                    <h2 class="text-lg font-semibold text-gray-900 mb-4">Quick Prompts</h2>
-                    <p class="text-xs text-gray-500 mb-3">Suggested questions displayed to help users start a conversation.</p>
-                    <div class="bg-gray-50 rounded-xl border border-gray-200 p-4 min-h-[160px] flex flex-col cursor-text transition-colors focus-within:bg-white focus-within:ring-2 focus-within:ring-primary/10" onclick="document.getElementById('mode-prompt-input').focus()">
+                <!-- Prompts (wider) -->
+                <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6 lg:col-span-2">
+                    <div class="flex items-start justify-between gap-4">
+                        <div>
+                            <h2 class="text-lg font-semibold text-gray-900 mb-1">Quick Prompts</h2>
+                            <p class="text-xs text-gray-500">Suggested questions displayed to help users start a conversation.</p>
+                        </div>
+                        <div class="hidden sm:flex items-center gap-2 text-xs text-gray-400 font-medium whitespace-nowrap mt-1">
+                            <span class="bg-gray-200 px-1.5 py-0.5 rounded text-[10px]">↵</span> Enter to add
+                        </div>
+                    </div>
+                    <div class="mt-4 bg-gray-50 rounded-xl border border-gray-200 p-4 min-h-[170px] flex flex-col cursor-text transition-colors focus-within:bg-white focus-within:ring-2 focus-within:ring-primary/10" onclick="document.getElementById('mode-prompt-input').focus()">
                         <div id="mode-prompts" class="flex flex-wrap gap-2 mb-3"></div>
                         <div class="relative mt-auto">
                             <input id="mode-prompt-input" class="w-full bg-transparent text-base text-gray-800 placeholder-gray-400 outline-none py-2 border-none ring-0 focus:ring-0" placeholder="Type a prompt and press Enter..." />
-                            <div class="absolute right-0 top-2 text-xs text-gray-400 pointer-events-none font-medium flex items-center gap-1">
+                            <div class="sm:hidden absolute right-0 top-2 text-xs text-gray-400 pointer-events-none font-medium flex items-center gap-1">
                                 <span class="bg-gray-200 px-1.5 py-0.5 rounded text-[10px]">↵</span> Enter to add
                             </div>
                         </div>
@@ -1368,6 +1375,8 @@
       const ok = (!handleUnauthorized(res) && res.ok);
       if (ok && !skipReload) {
         loadScrapedSitesAndPages();
+        const lastEl = document.getElementById('last-scraped-at');
+        if (lastEl) lastEl.textContent = new Date().toLocaleString();
       }
       return ok;
     }

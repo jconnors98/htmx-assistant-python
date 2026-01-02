@@ -231,6 +231,14 @@ class ScrapeScheduler:
             scrape_sites = mode_doc.get("scrape_sites", [])
             if not scrape_sites:
                 raise ValueError("Mode has no configured scrape sites")
+            # Update timestamp when a run is initiated/queued
+            try:
+                self.modes_collection.update_one(
+                    {"_id": mode_doc.get("_id")},
+                    {"$set": {"last_scraped_at": datetime.utcnow()}},
+                )
+            except Exception as e:
+                print(f"Error updating last_scraped_at for immediate scrape: {e}")
             job_id = self.scraper_client.queue_mode_scrape(
                 mode_name=mode_name,
                 user_id=user_id,
@@ -250,6 +258,21 @@ class ScrapeScheduler:
         user_id = mode_doc.get("user_id")
         mode_id = str(mode_doc.get("_id"))
         scrape_sites = mode_doc.get("scrape_sites", [])
+
+        # Update timestamp when a scheduled/manual enqueue occurs
+        try:
+            if mode_doc.get("_id"):
+                self.modes_collection.update_one(
+                    {"_id": mode_doc.get("_id")},
+                    {"$set": {"last_scraped_at": datetime.utcnow()}},
+                )
+            else:
+                self.modes_collection.update_one(
+                    {"name": mode_name, "user_id": user_id},
+                    {"$set": {"last_scraped_at": datetime.utcnow()}},
+                )
+        except Exception as e:
+            print(f"Error updating last_scraped_at for enqueue ({trigger_label}) on mode '{mode_name}': {e}")
 
         auto_dispatch = self.scraper_client.is_remote
         job_id = self.scraper_client.queue_mode_scrape(
@@ -380,6 +403,15 @@ class ScrapeScheduler:
         ]
         if not normalized_sites:
             raise ValueError("No valid sites provided for scraping")
+
+        # Update timestamp when a manual background scrape is initiated/queued
+        try:
+            self.modes_collection.update_one(
+                {"_id": ObjectId(mode_id)},
+                {"$set": {"last_scraped_at": datetime.utcnow()}},
+            )
+        except Exception as e:
+            print(f"Error updating last_scraped_at for background scrape: {e}")
         
         job_id = self.scraper_client.queue_mode_scrape(
             mode_name=mode_name,
@@ -463,6 +495,20 @@ class ScrapeScheduler:
             mode_name=mode_name,
             base_domain=base_domain,
         )
+
+        # If verification is scoped to a specific mode, update its "last scrape" timestamp immediately.
+        # (Verification can re-scrape pages; this keeps the UI timestamp current even before completion.)
+        if mode_name:
+            try:
+                update_filter: Dict[str, Any] = {"name": mode_name}
+                if filters and isinstance(filters, dict) and filters.get("user_id"):
+                    update_filter["user_id"] = filters["user_id"]
+                self.modes_collection.update_many(
+                    update_filter,
+                    {"$set": {"last_scraped_at": datetime.utcnow()}},
+                )
+            except Exception as e:
+                print(f"Error updating last_scraped_at for verification enqueue: {e}")
         
         if not self.scraper_client.is_remote:
             self._start_local_verification_thread(job_id, batch_size, filters)
