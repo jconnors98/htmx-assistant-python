@@ -896,6 +896,7 @@
 
     function updateGlobalScrapedBulkUI() {
       const bulkRefreshBtn = document.getElementById('bulk-refresh-scraped-pages');
+      const bulkBlockBtn = document.getElementById('bulk-block-scraped-pages');
       const bulkDeleteBtn = document.getElementById('bulk-delete-scraped-pages');
       const selectAllCb = document.getElementById('select-all-scraped-pages');
       const countEl = document.getElementById('scraped-selected-count');
@@ -906,8 +907,10 @@
       const checkedCount = selectedScrapedPageIds.size;
       bulkRefreshBtn.disabled = checkedCount === 0;
       bulkDeleteBtn.disabled = checkedCount === 0;
+      if (bulkBlockBtn) bulkBlockBtn.disabled = checkedCount === 0;
       bulkRefreshBtn.textContent = checkedCount > 0 ? `Refresh selected (${checkedCount})` : 'Refresh selected';
       bulkDeleteBtn.textContent = checkedCount > 0 ? `Remove selected (${checkedCount})` : 'Remove selected';
+      if (bulkBlockBtn) bulkBlockBtn.textContent = checkedCount > 0 ? `Block selected (${checkedCount})` : 'Block selected';
       countEl.textContent = checkedCount > 0 ? `${checkedCount} selected` : 'No pages selected';
 
       // Global select-all reflects visible checkboxes (filtered view)
@@ -1038,6 +1041,19 @@
       
       const container = document.getElementById('scraped-sites-pages-combined');
       container.innerHTML = '';
+
+      function expandDomainWrapper(domain) {
+        const wrapper = document.querySelector(`.site-wrapper[data-domain="${domain}"]`);
+        if (!wrapper) return;
+        const pagesContainer = wrapper.querySelector(`.pages-container[data-domain="${domain}"]`) || wrapper.querySelector('.pages-container');
+        const expandIcon = wrapper.querySelector('.expand-icon');
+        if (pagesContainer && pagesContainer.classList.contains('hidden')) {
+          pagesContainer.classList.remove('hidden');
+        }
+        if (expandIcon) {
+          expandIcon.style.transform = 'rotate(90deg)';
+        }
+      }
 
       // Render Blocked Pages pseudo-domain first
       const blockedPages = (blockedData && blockedData.blocked_pages) ? blockedData.blocked_pages : [];
@@ -1256,6 +1272,12 @@
 
       // Wire blocked pages section after render
       setupBlockedPagesInteractions();
+
+      // If there's only one scraped domain, auto-expand it so the user immediately sees its pages.
+      // (Exclude the "blocked-pages" pseudo-domain; it's rendered separately above.)
+      if (sitesData.sites && sitesData.sites.length === 1) {
+        expandDomainWrapper(sitesData.sites[0].domain);
+      }
 
       // Apply filter if exists
       applyScrapedPageFilter();
