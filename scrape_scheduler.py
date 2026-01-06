@@ -7,7 +7,7 @@ Uses APScheduler to run daily/weekly scraping tasks.
 
 import threading
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -136,9 +136,21 @@ class ScrapeScheduler:
                 
                 # Check if we should scrape (avoid duplicate scrapes within 20 hours)
                 last_scraped = mode_doc.get("last_scraped_at")
-                if last_scraped and (datetime.utcnow() - last_scraped) < timedelta(hours=20):
-                    print(f"Skipping {mode_name} - scraped recently")
-                    continue
+                if last_scraped:
+                    try:
+                        if isinstance(last_scraped, str):
+                            parsed = datetime.fromisoformat(last_scraped.replace("Z", "+00:00"))
+                            if parsed.tzinfo is not None:
+                                parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+                            last_scraped = parsed
+                        if (datetime.utcnow() - last_scraped) < timedelta(hours=20):
+                            print(f"Skipping {mode_name} - scraped recently")
+                            continue
+                    except Exception as e:
+                        print(
+                            f"WARNING: invalid last_scraped_at for mode '{mode_name}' "
+                            f"(value={last_scraped!r}): {e}. Will proceed with enqueue."
+                        )
                 
                 print(f"Queueing daily scrape for mode: {mode_name}")
                 try:
@@ -169,9 +181,21 @@ class ScrapeScheduler:
                 
                 # Check if we should scrape (avoid duplicate scrapes within 6 days)
                 last_scraped = mode_doc.get("last_scraped_at")
-                if last_scraped and (datetime.utcnow() - last_scraped) < timedelta(days=6):
-                    print(f"Skipping {mode_name} - scraped recently")
-                    continue
+                if last_scraped:
+                    try:
+                        if isinstance(last_scraped, str):
+                            parsed = datetime.fromisoformat(last_scraped.replace("Z", "+00:00"))
+                            if parsed.tzinfo is not None:
+                                parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+                            last_scraped = parsed
+                        if (datetime.utcnow() - last_scraped) < timedelta(days=6):
+                            print(f"Skipping {mode_name} - scraped recently")
+                            continue
+                    except Exception as e:
+                        print(
+                            f"WARNING: invalid last_scraped_at for mode '{mode_name}' "
+                            f"(value={last_scraped!r}): {e}. Will proceed with enqueue."
+                        )
                 
                 print(f"Queueing weekly scrape for mode: {mode_name}")
                 
@@ -259,20 +283,51 @@ class ScrapeScheduler:
         mode_id = str(mode_doc.get("_id"))
         scrape_sites = mode_doc.get("scrape_sites", [])
 
-        # Update timestamp when a scheduled/manual enqueue occurs
+        # Update timestamp when a scheduled/manual enqueue occurs.
+        # Be defensive here: depending on where mode_doc came from, `_id` can be an ObjectId or a str.
+        # If the filter doesn't match, update_one() will silently do nothing unless we check the result.
+        now = datetime.utcnow()
         try:
-            if mode_doc.get("_id"):
-                self.modes_collection.update_one(
-                    {"_id": mode_doc.get("_id")},
-                    {"$set": {"last_scraped_at": datetime.utcnow()}},
+            update_filters: List[Dict[str, Any]] = []
+
+            raw_id = mode_doc.get("_id")
+            if raw_id:
+                update_filters.append({"_id": raw_id})
+                if isinstance(raw_id, str):
+                    try:
+                        update_filters.append({"_id": ObjectId(raw_id)})
+                    except Exception:
+                        # Not a valid ObjectId string; ignore.
+                        pass
+
+            # Always include a stable fallback (mode names are unique per user).
+            if mode_name and user_id:
+                update_filters.append({"name": mode_name, "user_id": user_id})
+
+            matched = 0
+            modified = 0
+            for f in update_filters:
+                result = self.modes_collection.update_one(f, {"$set": {"last_scraped_at": now}})
+                matched = max(matched, int(getattr(result, "matched_count", 0) or 0))
+                modified = max(modified, int(getattr(result, "modified_count", 0) or 0))
+                if getattr(result, "matched_count", 0):
+                    break
+
+            if matched == 0:
+                print(
+                    f"[{trigger_label}] WARNING: failed to update last_scraped_at for mode "
+                    f"'{mode_name}' (user_id='{user_id}'); no documents matched. "
+                    f"_id={raw_id!r}"
                 )
             else:
-                self.modes_collection.update_one(
-                    {"name": mode_name, "user_id": user_id},
-                    {"$set": {"last_scraped_at": datetime.utcnow()}},
+                print(
+                    f"[{trigger_label}] updated last_scraped_at for mode '{mode_name}' "
+                    f"(matched={matched}, modified={modified})"
                 )
         except Exception as e:
-            print(f"Error updating last_scraped_at for enqueue ({trigger_label}) on mode '{mode_name}': {e}")
+            print(
+                f"Error updating last_scraped_at for enqueue ({trigger_label}) on mode '{mode_name}': {e}"
+            )
 
         auto_dispatch = self.scraper_client.is_remote
         job_id = self.scraper_client.queue_mode_scrape(
