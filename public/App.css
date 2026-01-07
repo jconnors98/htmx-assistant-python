@@ -5,6 +5,21 @@
   --text-color: #ffffff;
 }
 
+/* Prevent flash of unstyled content */
+.hidden-until-ready {
+  opacity: 0;
+  transition: opacity 0.3s ease-in;
+}
+
+.hidden-until-ready.ready {
+  opacity: 1;
+}
+
+/* Tailwind utility compatibility (also used by our JS toggles). */
+.hidden {
+  display: none !important;
+}
+
 /* Base Layout */
 body {
   margin: 0;
@@ -13,16 +28,137 @@ body {
   color: #222;
 }
 
+.no-tailwind #app-container {
+  display: block;
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 24px 16px;
+}
+
+.no-tailwind #app-container > div {
+  background: #fff;
+  border-radius: 24px;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.15);
+  overflow: hidden;
+}
+
+.no-tailwind #chat-experience,
+.no-tailwind #doc-intel-panel {
+  margin-top: 24px;
+}
+
+.no-tailwind #doc-intel-workspace {
+  padding: 16px;
+}
+
+.no-tailwind #doc-intel-summary,
+.no-tailwind #docintel-search-results,
+.no-tailwind #docintel-package-ui,
+.no-tailwind #doc-intel-workspace-messages {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 12px;
+  background: #fff;
+}
+
+.no-tailwind .docintel-step-btn {
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  color: #111827;
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.no-tailwind .docintel-step-btn[aria-selected="true"] {
+  background: var(--theme-color);
+  color: var(--text-color);
+  border-color: var(--theme-color);
+}
+
+.no-tailwind #docintel-search-query,
+.no-tailwind #docintel-search-trade,
+.no-tailwind #docintel-package-scope {
+  width: 100%;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 16px;
+}
+
+.no-tailwind #docintel-search-btn,
+.no-tailwind #docintel-propose-btn,
+.no-tailwind #docintel-upload-open {
+  background: var(--theme-color);
+  color: var(--text-color);
+  border: none;
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.no-tailwind #docintel-upload-start {
+  background: #fff;
+  color: #111827;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.no-tailwind #docintel-search-btn:hover,
+.no-tailwind #docintel-propose-btn:hover,
+.no-tailwind #docintel-upload-open:hover {
+  background: var(--theme-color-hover);
+}
+
+.no-tailwind #docintel-upload-start:hover {
+  background: #f9fafb;
+}
+
+/* Additional doc-intel fallback styles */
+.no-tailwind #doc-intel-panel {
+  display: block !important;
+}
+
+.no-tailwind .docintel-step-panel {
+  padding: 16px;
+}
+
+.no-tailwind .docintel-step-panel.hidden {
+  display: none !important;
+}
+
+.no-tailwind #doc-intel-packages {
+  padding: 12px;
+}
+
+.no-tailwind table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.no-tailwind table th,
+.no-tailwind table td {
+  padding: 8px;
+  text-align: left;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.no-tailwind table th {
+  font-weight: 700;
+  background: #f9fafb;
+}
+
 .container {
   max-width: 800px;
   margin: 0 auto;
   padding: 2rem 1rem;
 }
-
-.hidden-until-ready {
-  display: none;
-}
-
 
 /* Headline */
 h1 {
@@ -598,4 +734,36 @@ button.secondary:hover {
     width: 100%;
   }
 
+}
+
+/* ------------------------------------------------------------ */
+/* Document Intelligence Workspace helpers (scoped + minimal)     */
+/* ------------------------------------------------------------ */
+
+.docintel-step-btn {
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.docintel-step-btn[aria-selected="true"] {
+  background-color: var(--theme-color);
+  color: var(--text-color);
+  border-color: var(--theme-color);
+}
+
+/* Used by the package file picker UI */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 10px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #f3f4f6;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 999px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
 }

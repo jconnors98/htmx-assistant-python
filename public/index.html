@@ -4,12 +4,15 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>TalentCentral Assistant</title>
-  <link rel="stylesheet" href="App.css" />
+  <!-- Support both prod (/) and localDevMode (/flask) mounting paths -->
+  <link rel="stylesheet" href="/App.css" />
+  <link rel="stylesheet" href="/flask/App.css" />
   <script src="https://unpkg.com/htmx.org@1.9.5"></script>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
-    // Default colors - will be updated dynamically
-    let tailwindConfig = {
+    // Configure Tailwind immediately (the CDN version accepts config before it fully loads)
+    tailwind = tailwind || {};
+    tailwind.config = {
       theme: {
         extend: {
           colors: {
@@ -46,9 +49,7 @@
         }
       }
     };
-    
-    // Initialize Tailwind with default config
-    tailwind.config = tailwindConfig;
+    window.tailwindConfig = tailwind.config;
     
     // Function to update Tailwind colors dynamically
     function updateTailwindColors(primaryColor, textColor) {
@@ -65,16 +66,19 @@
       document.documentElement.style.setProperty("--tw-primary-dark", primaryDark);
       
       // For CDN Tailwind, we need to update the config and re-initialize
-      // This approach works better with the CDN version
       try {
-        tailwindConfig.theme.extend.colors.primary = normalizedPrimary;
-        tailwindConfig.theme.extend.colors['primary-light'] = primaryLight;
-        tailwindConfig.theme.extend.colors['primary-dark'] = primaryDark;
-        
-        // Re-initialize Tailwind with new colors
-        tailwind.config = tailwindConfig;
+        if (window.tailwindConfig) {
+          window.tailwindConfig.theme.extend.colors.primary = normalizedPrimary;
+          window.tailwindConfig.theme.extend.colors['primary-light'] = primaryLight;
+          window.tailwindConfig.theme.extend.colors['primary-dark'] = primaryDark;
+          
+          // Re-initialize Tailwind with new colors
+          if (typeof tailwind !== 'undefined') {
+            tailwind.config = window.tailwindConfig;
+          }
+        }
       } catch (error) {
-        console.log('Tailwind config update completed via CSS custom properties');
+        console.log('Tailwind config update:', error);
       }
     }
   </script>
@@ -94,92 +98,94 @@
 
       <!-- Main Content Area -->
       <div class="p-8">
-        <!-- Chat Window -->
-        <div id="chat-window" class="mb-8">
-          <div id="chat-box" class="chat-box min-h-[250px] max-h-[350px] overflow-y-auto p-6 bg-gray-50 rounded-2xl border border-gray-200">
-            <div id="prompt-buttons" class="prompt-buttons"></div>
+        <div id="chat-experience">
+          <!-- Chat Window -->
+          <div id="chat-window" class="mb-8">
+            <div id="chat-box" class="chat-box min-h-[250px] max-h-[350px] overflow-y-auto p-6 bg-gray-50 rounded-2xl border border-gray-200">
+              <div id="prompt-buttons" class="prompt-buttons"></div>
+            </div>
+            <!-- Separator line -->
+            <div class="border-t border-gray-200 mt-4"></div>
           </div>
-          <!-- Separator line -->
-          <div class="border-t border-gray-200 mt-4"></div>
-        </div>
 
-        <!-- Chat Form -->
-        <form id="chat-form" onsubmit="handleFormSubmit(event)" class="space-y-4">
-          <!-- Modern Unified Input Bar -->
-          <div class="relative">
-            <!-- Main Input Container with Gradient Border -->
-            <div class="bg-gradient-to-r from-primary/10 to-primary-light/10 p-[2px] rounded-2xl">
-              <div class="bg-white rounded-2xl overflow-hidden">
-                <!-- Mode Indicator -->
-                <div id="input-mode-indicator" class="hidden flex items-center gap-3 px-4 py-2 bg-blue-50 border-b border-blue-100 text-sm text-blue-800 transition-all duration-200">
-                  <span id="input-mode-icon" class="text-lg"></span>
-                  <div class="flex-1 font-medium" id="input-mode-text"></div>
-                  <button type="button" onclick="resetInputMode()" class="p-1 hover:bg-blue-100 rounded-full text-blue-600 transition-colors" title="Cancel mode">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-                  </button>
-                </div>
-                
-                <div class="flex items-center">
-                  <!-- Upload Button - Integrated -->
-                  <button type="button" class="upload-toggle-btn flex-shrink-0 h-10 w-8 sm:h-12 sm:w-12 md:h-14 md:w-14 flex items-center justify-center text-gray-600 hover:text-primary hover:bg-primary/5 transition-all duration-200" id="upload-toggle-btn" onclick="toggleUploadArea()" title="Attach files">
-                    <svg class="w-5 h-5 sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="currentColor">
-                      <path d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5c0-1.38 1.12-2.5 2.5-2.5s2.5 1.12 2.5 2.5v10.5c0 .55-.45 1-1 1s-1-.45-1-1V6H10v9.5c0 1.38 1.12 2.5 2.5 2.5s2.5-1.12 2.5-2.5V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z"/>
-                    </svg>
-                  </button>
-                  
-                  <!-- Vertical Separator -->
-                  <div class="h-8 w-px bg-gray-200"></div>
-                  
-                  <!-- Textarea -->
-                  <div class="flex-1 px-4">
-                    <textarea
-                      id="message"
-                      name="message"
-                      placeholder="Type your message..."
-                      rows="1"
-                      required
-                      disabled
-                      class="w-full py-3.5 border-0 bg-transparent focus:outline-none resize-none text-base leading-relaxed placeholder-gray-400"
-                    ></textarea>
+          <!-- Chat Form -->
+          <form id="chat-form" onsubmit="handleFormSubmit(event)" class="space-y-4">
+            <!-- Modern Unified Input Bar -->
+            <div class="relative">
+              <!-- Main Input Container with Gradient Border -->
+              <div class="bg-gradient-to-r from-primary/10 to-primary-light/10 p-[2px] rounded-2xl">
+                <div class="bg-white rounded-2xl overflow-hidden">
+                  <!-- Mode Indicator -->
+                  <div id="input-mode-indicator" class="hidden flex items-center gap-3 px-4 py-2 bg-blue-50 border-b border-blue-100 text-sm text-blue-800 transition-all duration-200">
+                    <span id="input-mode-icon" class="text-lg"></span>
+                    <div class="flex-1 font-medium" id="input-mode-text"></div>
+                    <button type="button" onclick="resetInputMode()" class="p-1 hover:bg-blue-100 rounded-full text-blue-600 transition-colors" title="Cancel mode">
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
                   </div>
                   
-                  <!-- Send Button - Sleek Integrated -->
-                  <button id="send-btn" type="submit" disabled class="flex-shrink-0 h-14 px-6 bg-gradient-to-r from-primary to-primary-light hover:from-primary-light hover:to-primary text-white font-medium transition-all duration-200 flex items-center justify-center gap-2 m-1 rounded-xl">
-                    <span class="text-sm font-semibold">Send</span>
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-                      <path stroke-linecap="round" stroke-linejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6"></path>
-                    </svg>
-                  </button>
+                  <div class="flex items-center">
+                    <!-- Upload Button - Integrated -->
+                    <button type="button" class="upload-toggle-btn flex-shrink-0 h-10 w-8 sm:h-12 sm:w-12 md:h-14 md:w-14 flex items-center justify-center text-gray-600 hover:text-primary hover:bg-primary/5 transition-all duration-200" id="upload-toggle-btn" onclick="toggleUploadArea()" title="Attach files">
+                      <svg class="w-5 h-5 sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5c0-1.38 1.12-2.5 2.5-2.5s2.5 1.12 2.5 2.5v10.5c0 .55-.45 1-1 1s-1-.45-1-1V6H10v9.5c0 1.38 1.12 2.5 2.5 2.5s2.5-1.12 2.5-2.5V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z"/>
+                      </svg>
+                    </button>
+                    
+                    <!-- Vertical Separator -->
+                    <div class="h-8 w-px bg-gray-200"></div>
+                    
+                    <!-- Textarea -->
+                    <div class="flex-1 px-4">
+                      <textarea
+                        id="message"
+                        name="message"
+                        placeholder="Type your message..."
+                        rows="1"
+                        required
+                        disabled
+                        class="w-full py-3.5 border-0 bg-transparent focus:outline-none resize-none text-base leading-relaxed placeholder-gray-400"
+                      ></textarea>
+                    </div>
+                    
+                    <!-- Send Button - Sleek Integrated -->
+                    <button id="send-btn" type="submit" disabled class="flex-shrink-0 h-14 px-6 bg-gradient-to-r from-primary to-primary-light hover:from-primary-light hover:to-primary text-white font-medium transition-all duration-200 flex items-center justify-center gap-2 m-1 rounded-xl">
+                      <span class="text-sm font-semibold">Send</span>
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6"></path>
+                      </svg>
+                    </button>
+                  </div>
                 </div>
               </div>
+              
+              <!-- Character/Status Indicator (optional enhancement) -->
+              <div class="absolute -bottom-5 right-0 text-xs text-gray-400 hidden" id="char-count"></div>
             </div>
             
-            <!-- Character/Status Indicator (optional enhancement) -->
-            <div class="absolute -bottom-5 right-0 text-xs text-gray-400 hidden" id="char-count"></div>
-          </div>
-          
-          <!-- Secondary Actions - Streamlined -->
-          <div class="flex justify-center gap-3 pt-2">
-            <button type="button" onclick="scrollToTop()" class="scroll-top-btn px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-1.5" title="Scroll to top">
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7"></path>
-              </svg>
-              <span>Top</span>
-            </button>
+            <!-- Secondary Actions - Streamlined -->
+            <div class="flex justify-center gap-3 pt-2">
+              <button type="button" onclick="scrollToTop()" class="scroll-top-btn px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-1.5" title="Scroll to top">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7"></path>
+                </svg>
+                <span>Top</span>
+              </button>
+              
+              <button type="button" onclick="clearChat()" class="clear-chat-btn px-4 py-2 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-1.5" title="Clear chat">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                </svg>
+                <span>Clear</span>
+              </button>
+            </div>
             
-            <button type="button" onclick="clearChat()" class="clear-chat-btn px-4 py-2 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-1.5" title="Clear chat">
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
-              </svg>
-              <span>Clear</span>
-            </button>
-          </div>
-          
-          <input type="hidden" id="mode" name="mode" />
-          <input type="hidden" id="conversation_id" name="conversation_id" />
-          <input type="hidden" id="response_id" name="response_id" />
-          <input type="hidden" id="doc_intel_session_id" name="doc_intel_session_id" />
-        </form>
+            <input type="hidden" id="mode" name="mode" />
+            <input type="hidden" id="conversation_id" name="conversation_id" />
+            <input type="hidden" id="response_id" name="response_id" />
+            <input type="hidden" id="doc_intel_session_id" name="doc_intel_session_id" />
+          </form>
+        </div>
 
         <!-- Upload Area -->
         <div class="upload-area mt-8" id="upload-area" style="display: none;">
@@ -200,40 +206,203 @@
           <div class="uploaded-files mt-6 space-y-3" id="uploaded-files"></div>
         </div>
 
-        <div id="doc-intel-panel" class="mt-12 space-y-6 hidden">
-          <div class="bg-white rounded-2xl shadow-soft border border-gray-100 p-6 space-y-4">
-            <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div id="doc-intel-panel" class="mt-8 hidden">
+          <div class="bg-white rounded-2xl shadow-medium border border-gray-100 p-8 space-y-6" id="doc-intel-workspace">
+            <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
               <div>
-                <p class="text-sm font-medium uppercase tracking-wide text-primary mb-1">Construction Document Intelligence</p>
-                <h2 class="text-2xl font-semibold text-gray-900">Ask the assistant to do the heavy lifting</h2>
-                <p class="text-sm text-gray-500 mt-1">Upload plan sets, ask natural-language questions, and let the AI build packages automatically.</p>
+                <p class="text-sm font-medium uppercase tracking-wide text-primary mb-2">Document Workspace</p>
+                <h2 class="text-3xl font-bold text-gray-900 mb-2">Upload → Search → Build Your Bid Package</h2>
+                <p class="text-base text-gray-600 mt-1">Upload the plan set (a ZIP is best). We'll tag the files so you can find your trade quickly and download a package.</p>
               </div>
-              <button type="button" id="doc-intel-refresh" class="px-4 py-2 rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-medium">Refresh Summary</button>
+              <div class="flex gap-2 flex-shrink-0">
+                <button type="button" id="doc-intel-refresh" class="px-4 py-2 rounded-xl border border-gray-300 text-gray-700 hover:bg-gray-50 hover:border-gray-400 text-sm font-medium transition-all duration-200 shadow-sm">
+                  <svg class="w-4 h-4 inline-block mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                  Refresh
+                </button>
+              </div>
             </div>
-            <div id="doc-intel-summary" class="text-sm text-gray-600 bg-gray-50 rounded-xl p-4">
-              Document intelligence summary will appear here.
+
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+              <div class="lg:col-span-2">
+                <div id="doc-intel-summary" class="text-sm text-gray-600 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl p-6 border border-gray-200 shadow-sm">
+                  <div class="flex items-center gap-2">
+                    <svg class="animate-spin h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                    <span>Loading project status…</span>
+                  </div>
+                </div>
+              </div>
+              <div class="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-xl p-5 text-sm text-blue-900 shadow-sm">
+                <div class="flex items-start gap-2 mb-3">
+                  <svg class="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"></path></svg>
+                  <div>
+                    <p class="font-bold mb-3 text-base text-blue-900">What this can / can't do</p>
+                    <ul class="space-y-2">
+                      <li class="flex items-start gap-2">
+                        <span class="text-green-600 font-bold text-lg leading-none">✓</span>
+                        <span><span class="font-semibold">Can:</span> find specs/drawings for your scope, and build a downloadable package.</span>
+                      </li>
+                      <li class="flex items-start gap-2">
+                        <span class="text-red-600 font-bold text-lg leading-none">✗</span>
+                        <span><span class="font-semibold">Can't:</span> guarantee completeness, price the job, or replace your review of the plans.</span>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
             </div>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <button type="button" data-doc-action="upload" class="flex flex-col gap-1 rounded-2xl border border-gray-100 bg-gray-50 px-4 py-5 text-left shadow-sm hover:border-primary hover:bg-white hover:shadow-md transition-all duration-200">
-                <span class="text-xl">📁</span>
-                <span class="text-sm font-semibold text-gray-900">Upload project files</span>
-                <span class="text-xs text-gray-500">Supports ZIP, PDF, images, Word, Excel, CSV.</span>
-              </button>
-              <button type="button" data-doc-action="search" class="flex flex-col gap-1 rounded-2xl border border-gray-100 bg-gray-50 px-4 py-5 text-left shadow-sm hover:border-primary hover:bg-white hover:shadow-md transition-all duration-200">
-                <span class="text-xl">🔎</span>
-                <span class="text-sm font-semibold text-gray-900">Search documents</span>
-                <span class="text-xs text-gray-500">Ask “show me all electrical references”.</span>
-              </button>
-              <button type="button" data-doc-action="package" class="flex flex-col gap-1 rounded-2xl border border-gray-100 bg-gray-50 px-4 py-5 text-left shadow-sm hover:border-primary hover:bg-white hover:shadow-md transition-all duration-200">
-                <span class="text-xl">📦</span>
-                <span class="text-sm font-semibold text-gray-900">Build bid package</span>
-                <span class="text-xs text-gray-500">E.g. “Build a mechanical bid package”.</span>
-              </button>
+
+            <div id="doc-intel-workspace-messages" class="hidden rounded-xl border-l-4 border-blue-500 bg-blue-50 p-4 text-sm text-blue-900 shadow-sm animate-fade-in">
+              <div class="flex items-start gap-3">
+                <svg class="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"></path></svg>
+                <span class="flex-1"></span>
+              </div>
             </div>
-            <div>
-              <h3 class="text-sm font-semibold text-gray-700 mb-2">Recent Packages</h3>
-              <div id="doc-intel-packages" class="space-y-2 text-sm text-gray-600">
-                <p class="text-gray-500">No packages yet.</p>
+
+            <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between border-t border-b border-gray-200 py-4">
+              <div class="flex flex-col sm:flex-row gap-2 flex-1" role="tablist" aria-label="Document workspace steps">
+                <button type="button" class="docintel-step-btn px-5 py-3 rounded-xl border-2 border-gray-300 text-sm font-bold hover:bg-gray-50 hover:border-gray-400 transition-all duration-200 shadow-sm" data-step="upload" aria-selected="false">
+                  <span class="inline-flex items-center gap-2">
+                    <span class="flex items-center justify-center w-6 h-6 rounded-full bg-gray-200 text-xs font-bold">1</span>
+                    Upload
+                  </span>
+                </button>
+                <button type="button" class="docintel-step-btn px-5 py-3 rounded-xl border-2 border-gray-300 text-sm font-bold hover:bg-gray-50 hover:border-gray-400 transition-all duration-200 shadow-sm" data-step="search" aria-selected="false">
+                  <span class="inline-flex items-center gap-2">
+                    <span class="flex items-center justify-center w-6 h-6 rounded-full bg-gray-200 text-xs font-bold">2</span>
+                    Search
+                  </span>
+                </button>
+                <button type="button" class="docintel-step-btn px-5 py-3 rounded-xl border-2 border-gray-300 text-sm font-bold hover:bg-gray-50 hover:border-gray-400 transition-all duration-200 shadow-sm" data-step="package" aria-selected="false">
+                  <span class="inline-flex items-center gap-2">
+                    <span class="flex items-center justify-center w-6 h-6 rounded-full bg-gray-200 text-xs font-bold">3</span>
+                    Build Package
+                  </span>
+                </button>
+              </div>
+              <div class="text-xs text-gray-500 flex items-center gap-1">
+                <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"></path></svg>
+                Session saved in browser
+              </div>
+            </div>
+
+            <div id="docintel-step-upload" class="docintel-step-panel space-y-6 animate-fade-in">
+              <div class="bg-gradient-to-br from-gray-50 to-white border-2 border-gray-300 rounded-2xl p-6 shadow-sm">
+                <div class="flex items-start gap-3 mb-4">
+                  <div class="flex-shrink-0 w-10 h-10 bg-primary rounded-xl flex items-center justify-center">
+                    <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+                  </div>
+                  <div class="flex-1">
+                    <p class="font-bold text-gray-900 text-lg mb-2">Step 1: Upload project files</p>
+                    <p class="text-sm text-gray-600 leading-relaxed">Upload PDFs or a ZIP of the plan set. You can also upload images (JPG/PNG). After upload finishes, we'll process and tag files for search.</p>
+                  </div>
+                </div>
+                <div class="mt-4 flex flex-col sm:flex-row gap-3">
+                  <button type="button" id="docintel-upload-open" class="px-6 py-3 rounded-xl bg-gradient-to-r from-primary to-primary-light text-white text-sm font-bold hover:from-primary-light hover:to-primary shadow-md hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg>
+                    Choose / Drop Files
+                  </button>
+                  <button type="button" id="docintel-upload-start" class="px-6 py-3 rounded-xl border-2 border-gray-300 bg-white text-gray-700 text-sm font-bold hover:bg-gray-50 hover:border-gray-400 shadow-sm transition-all duration-200 flex items-center justify-center gap-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+                    Start Upload
+                  </button>
+                </div>
+                <div class="mt-4 flex items-start gap-2 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                  <svg class="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path></svg>
+                  <p class="text-xs text-yellow-800">Heads up: big plan sets can take a few minutes to process. If your file count doesn't change, press Refresh.</p>
+                </div>
+              </div>
+              <div class="bg-white border-2 border-gray-200 rounded-2xl p-6 shadow-sm">
+                <p class="font-bold text-gray-900 mb-4 text-lg flex items-center gap-2">
+                  <svg class="w-5 h-5 text-gray-600" fill="currentColor" viewBox="0 0 20 20"><path d="M9 2a2 2 0 00-2 2v8a2 2 0 002 2h6a2 2 0 002-2V6.414A2 2 0 0016.414 5L14 2.586A2 2 0 0012.586 2H9z"></path><path d="M3 8a2 2 0 012-2v10h8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z"></path></svg>
+                  Recent Packages
+                </p>
+                <div id="doc-intel-packages" class="space-y-3 text-sm text-gray-600">
+                  <p class="text-gray-400 italic">No packages yet.</p>
+                </div>
+              </div>
+            </div>
+
+            <div id="docintel-step-search" class="docintel-step-panel space-y-6 hidden animate-fade-in">
+              <div class="bg-gradient-to-br from-gray-50 to-white border-2 border-gray-300 rounded-2xl p-6 shadow-sm space-y-4">
+                <div class="flex items-start gap-3 mb-3">
+                  <div class="flex-shrink-0 w-10 h-10 bg-primary rounded-xl flex items-center justify-center">
+                    <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                  </div>
+                  <div class="flex-1">
+                    <p class="font-bold text-gray-900 text-lg">Step 2: Search documents</p>
+                  </div>
+                </div>
+                <div class="flex flex-col md:flex-row gap-3">
+                  <input id="docintel-search-query" type="text" class="w-full md:flex-1 px-4 py-3 rounded-xl border-2 border-gray-300 text-base focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent shadow-sm" placeholder="What do you need? (example: mechanical specs, door schedule, HVAC)" />
+                  <select id="docintel-search-trade" class="w-full md:w-56 px-4 py-3 rounded-xl border-2 border-gray-300 text-base focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent shadow-sm">
+                    <option value="">All trades</option>
+                    <option value="mechanical">Mechanical</option>
+                    <option value="electrical">Electrical</option>
+                    <option value="plumbing">Plumbing</option>
+                    <option value="civil">Civil</option>
+                    <option value="structural">Structural</option>
+                    <option value="architectural">Architectural</option>
+                  </select>
+                  <button type="button" id="docintel-search-btn" class="px-6 py-3 rounded-xl bg-gradient-to-r from-primary to-primary-light text-white text-sm font-bold hover:from-primary-light hover:to-primary shadow-md hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2 whitespace-nowrap">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                    Search
+                  </button>
+                </div>
+                <div>
+                  <p class="text-xs text-gray-500 mb-2 font-medium">Quick searches:</p>
+                  <div class="flex flex-wrap gap-2">
+                    <button type="button" class="docintel-suggest px-4 py-2 rounded-full bg-white border-2 border-gray-300 text-sm font-medium hover:border-primary hover:bg-primary hover:text-white transition-all duration-200 shadow-sm" data-query="mechanical specifications">🔧 Mechanical specs</button>
+                    <button type="button" class="docintel-suggest px-4 py-2 rounded-full bg-white border-2 border-gray-300 text-sm font-medium hover:border-primary hover:bg-primary hover:text-white transition-all duration-200 shadow-sm" data-query="electrical specifications">⚡ Electrical specs</button>
+                    <button type="button" class="docintel-suggest px-4 py-2 rounded-full bg-white border-2 border-gray-300 text-sm font-medium hover:border-primary hover:bg-primary hover:text-white transition-all duration-200 shadow-sm" data-query="plumbing schedule">🚰 Plumbing schedule</button>
+                    <button type="button" class="docintel-suggest px-4 py-2 rounded-full bg-white border-2 border-gray-300 text-sm font-medium hover:border-primary hover:bg-primary hover:text-white transition-all duration-200 shadow-sm" data-query="HVAC">❄️ HVAC</button>
+                    <button type="button" class="docintel-suggest px-4 py-2 rounded-full bg-white border-2 border-gray-300 text-sm font-medium hover:border-primary hover:bg-primary hover:text-white transition-all duration-200 shadow-sm" data-query="controls">🎛️ Controls</button>
+                  </div>
+                </div>
+                <div class="flex items-start gap-2 bg-blue-50 border border-blue-200 rounded-lg p-3">
+                  <svg class="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"></path></svg>
+                  <p class="text-xs text-blue-800">If you get zero results, try a shorter phrase (example: "specs", "schedule") or upload more files.</p>
+                </div>
+              </div>
+              <div id="docintel-search-results" class="bg-white border-2 border-gray-200 rounded-2xl p-6 shadow-sm min-h-[200px]">
+                <div class="flex items-center justify-center h-32 text-gray-400">
+                  <div class="text-center">
+                    <svg class="w-16 h-16 mx-auto mb-3 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                    <p class="text-sm">Search results will appear here.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div id="docintel-step-package" class="docintel-step-panel space-y-6 hidden animate-fade-in">
+              <div class="bg-gradient-to-br from-gray-50 to-white border-2 border-gray-300 rounded-2xl p-6 shadow-sm space-y-4">
+                <div class="flex items-start gap-3 mb-3">
+                  <div class="flex-shrink-0 w-10 h-10 bg-primary rounded-xl flex items-center justify-center">
+                    <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"></path></svg>
+                  </div>
+                  <div class="flex-1">
+                    <p class="font-bold text-gray-900 text-lg mb-2">Step 3: Build a bid package</p>
+                    <p class="text-sm text-gray-600 leading-relaxed">Tell us your scope (example: "mechanical", "plumbing", "level 2 lighting"). We'll suggest files—then you confirm what's included.</p>
+                  </div>
+                </div>
+                <div class="flex flex-col md:flex-row gap-3">
+                  <input id="docintel-package-scope" type="text" class="w-full md:flex-1 px-4 py-3 rounded-xl border-2 border-gray-300 text-base focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent shadow-sm" placeholder="Scope / trade (example: mechanical)" />
+                  <button type="button" id="docintel-propose-btn" class="px-6 py-3 rounded-xl bg-gradient-to-r from-primary to-primary-light text-white text-sm font-bold hover:from-primary-light hover:to-primary shadow-md hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2 whitespace-nowrap">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path></svg>
+                    Propose Package
+                  </button>
+                </div>
+                <div class="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  <svg class="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"></path></svg>
+                  <p class="text-xs text-amber-800">You will always confirm files before we build the PDF. This does not price the job.</p>
+                </div>
+              </div>
+              <div id="docintel-package-ui" class="bg-white border-2 border-gray-200 rounded-2xl p-6 shadow-sm min-h-[200px]">
+                <div class="flex items-center justify-center h-32 text-gray-400">
+                  <div class="text-center">
+                    <svg class="w-16 h-16 mx-auto mb-3 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"></path></svg>
+                    <p class="text-sm">Package builder will appear here.</p>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -264,12 +433,22 @@
     const urlParams = new URLSearchParams(window.location.search);
     const mode = urlParams.get("mode");
     let chatForm, introEl, fileInput, uploadArea, uploadDropzone, uploadedFiles, uploadToggleBtn, appContainer;
+    let chatExperienceEl;
     let selectedFiles = [];
     let uploadAreaVisible = false;
     let uploadedFileIds = [];
     let isUploading = false;
     let currentInputMode = 'chat'; // 'chat', 'doc_search', 'doc_package'
     let docIntelEnabled = false;
+    let docIntelLastUploadOk = false;
+    let docIntelMessagesEl;
+    let docIntelStepButtons = [];
+    let docIntelStepPanels = {};
+    let docIntelCurrentStep = 'upload';
+    let docIntelSearchQueryEl, docIntelSearchTradeEl, docIntelSearchBtnEl, docIntelSearchResultsEl;
+    let docIntelUploadOpenBtnEl, docIntelUploadStartBtnEl;
+    let docIntelProposeBtnEl, docIntelPackageScopeEl, docIntelPackageUiEl;
+    let docIntelCachedSummary = null;
     let docIntelPanel, docIntelSummaryEl, docIntelPackagesEl;
     let docIntelRefreshBtn, docIntelActionButtons, docIntelSessionInput;
     let docIntelHandlersInitialized = false;
@@ -314,6 +493,7 @@
 
     // Initialize DOM elements after DOM is loaded
     function initializeElements() {
+      chatExperienceEl = document.getElementById("chat-experience");
       chatForm = document.getElementById("chat-form");
       introEl = document.getElementById("intro");
       fileInput = document.getElementById("file");
@@ -328,6 +508,22 @@
       docIntelRefreshBtn = document.getElementById("doc-intel-refresh");
       docIntelActionButtons = document.querySelectorAll("[data-doc-action]");
       docIntelSessionInput = document.getElementById("doc_intel_session_id");
+      docIntelMessagesEl = document.getElementById("doc-intel-workspace-messages");
+      docIntelStepButtons = Array.from(document.querySelectorAll(".docintel-step-btn"));
+      docIntelStepPanels = {
+        upload: document.getElementById("docintel-step-upload"),
+        search: document.getElementById("docintel-step-search"),
+        package: document.getElementById("docintel-step-package"),
+      };
+      docIntelUploadOpenBtnEl = document.getElementById("docintel-upload-open");
+      docIntelUploadStartBtnEl = document.getElementById("docintel-upload-start");
+      docIntelSearchQueryEl = document.getElementById("docintel-search-query");
+      docIntelSearchTradeEl = document.getElementById("docintel-search-trade");
+      docIntelSearchBtnEl = document.getElementById("docintel-search-btn");
+      docIntelSearchResultsEl = document.getElementById("docintel-search-results");
+      docIntelProposeBtnEl = document.getElementById("docintel-propose-btn");
+      docIntelPackageScopeEl = document.getElementById("docintel-package-scope");
+      docIntelPackageUiEl = document.getElementById("docintel-package-ui");
       if (docIntelSessionInput) {
         docIntelSessionInput.value = docIntelSessionId;
       }
@@ -428,13 +624,43 @@
     async function init() {
         initializeElements(); // Initialize DOM elements first
         
+        // Wait for Tailwind library to load
+        let tailwindReady = false;
+        let attempts = 0;
+        while (!tailwindReady && attempts < 20) {
+          try {
+            tailwindReady = isTailwindActive() && typeof tailwind !== 'undefined';
+          } catch (e) {
+            tailwindReady = false;
+          }
+          if (!tailwindReady) {
+            await new Promise(resolve => setTimeout(resolve, 50));
+            attempts++;
+          }
+        }
+        
+        console.log('Tailwind library loaded:', tailwindReady);
+        
+        // Now wait for Tailwind to process all classes in the DOM
+        const tailwindProcessed = await waitForTailwindProcessing();
+        
+        try {
+          // If Tailwind isn't applying (CSP blocked / script not executing), enable CSS fallback.
+          const tailwindIsActive = isTailwindActive();
+          console.log('Tailwind active:', tailwindIsActive, 'processed:', tailwindProcessed);
+          document.documentElement.classList.toggle('no-tailwind', !tailwindIsActive || !tailwindProcessed);
+        } catch (e) {
+          console.error('Tailwind check error:', e);
+          document.documentElement.classList.add('no-tailwind');
+        }
+        
         if (!mode) {
           const messageEl = document.getElementById("message");
           if (messageEl) {
             messageEl.placeholder = "Mode is required in the URL.";
           }
           if (appContainer) {
-          appContainer.classList.remove("hidden-until-ready");
+            appContainer.classList.add("ready");
           }
           // Adjust layout for no upload button
           adjustInputLayout(false);
@@ -478,13 +704,15 @@
               promptButtonsEl.innerHTML = html;
             }
             
+            docIntelEnabled = !!data.doc_intelligence_enabled;
+
             // Adjust layout based on upload button visibility
-            adjustInputLayout(data.allow_file_upload);
+            // DocIntel modes require upload regardless of allow_file_upload.
+            adjustInputLayout(data.allow_file_upload || docIntelEnabled);
             
-            if (data.allow_file_upload) {
+            if (data.allow_file_upload || docIntelEnabled) {
               setupFileUpload();
             }
-            docIntelEnabled = !!data.doc_intelligence_enabled;
             if (docIntelPanel) {
               if (docIntelEnabled) {
                 showDocIntelPanel();
@@ -505,13 +733,64 @@
           introEl.textContent = "Unable to load mode settings.";
           }
         } finally {
+          // Show the app with a smooth fade-in
           if (appContainer) {
-          appContainer.classList.remove("hidden-until-ready");
+            // For doc-intel mode, wait a bit longer to ensure styles are fully applied
+            const delay = docIntelEnabled ? 200 : 50;
+            setTimeout(() => {
+              console.log('Making app visible');
+              appContainer.classList.add("ready");
+            }, delay);
           }
         }
     }
 
     document.addEventListener("DOMContentLoaded", init);
+
+    function isTailwindActive() {
+      // Tailwind defines `.hidden { display: none }`. This is a reliable quick check.
+      const el = document.createElement('div');
+      el.className = 'hidden';
+      el.style.position = 'absolute';
+      el.style.left = '-9999px';
+      document.body.appendChild(el);
+      const display = window.getComputedStyle(el).display;
+      el.remove();
+      return display === 'none';
+    }
+
+    // Wait for Tailwind to process all classes in the DOM
+    async function waitForTailwindProcessing() {
+      // Create a test element with multiple Tailwind classes
+      const testEl = document.createElement('div');
+      testEl.className = 'flex justify-center items-center bg-blue-500 rounded-lg p-4 shadow-md';
+      testEl.style.position = 'absolute';
+      testEl.style.left = '-9999px';
+      document.body.appendChild(testEl);
+      
+      let processed = false;
+      let attempts = 0;
+      const maxAttempts = 30; // 1.5 seconds max
+      
+      while (!processed && attempts < maxAttempts) {
+        const styles = window.getComputedStyle(testEl);
+        // Check if multiple Tailwind classes are applied
+        processed = (
+          styles.display === 'flex' &&
+          styles.justifyContent === 'center' &&
+          styles.padding !== '0px'
+        );
+        
+        if (!processed) {
+          await new Promise(resolve => setTimeout(resolve, 50));
+          attempts++;
+        }
+      }
+      
+      testEl.remove();
+      console.log('Tailwind processing complete:', processed, 'attempts:', attempts);
+      return processed;
+    }
 
     // Submit a prompt
     function submitPrompt(text) {
@@ -758,6 +1037,7 @@
     }
 
     function handleFiles(files) {
+      docIntelLastUploadOk = false;
       selectedFiles = Array.from(files);
       displaySelectedFiles();
     }
@@ -769,13 +1049,14 @@
       }
       
       uploadedFiles.innerHTML = '';
+      const hasUploaded = docIntelEnabled ? docIntelLastUploadOk : uploadedFileIds.length > 0;
       selectedFiles.forEach((file, index) => {
         const filePreview = document.createElement('div');
         filePreview.className = 'file-preview';
         
         const fileIcon = getFileIcon(file.type);
         const fileName = file.name.length > 20 ? file.name.substring(0, 20) + '...' : file.name;
-        const isUploaded = uploadedFileIds.length > 0;
+        const isUploaded = hasUploaded;
         const uploadedCheck = isUploaded ? '<span class="file-uploaded">✓</span>' : '';
         filePreview.innerHTML = `
           <span class="file-icon">${fileIcon}</span>
@@ -792,7 +1073,7 @@
       });
 
       // Add explicit upload button if there are files selected but not uploaded
-      if (selectedFiles.length > 0 && uploadedFileIds.length < selectedFiles.length && !isUploading) {
+      if (selectedFiles.length > 0 && !hasUploaded && !isUploading) {
         const uploadBtnContainer = document.createElement('div');
         uploadBtnContainer.className = 'mt-3 text-right';
         uploadBtnContainer.innerHTML = `
@@ -834,6 +1115,7 @@
     function clearSelectedFiles() {
       selectedFiles = [];
       uploadedFileIds = [];
+      docIntelLastUploadOk = false;
       displaySelectedFiles();
       if (fileInput) {
       fileInput.value = '';
@@ -874,6 +1156,10 @@
             try {
               const response = JSON.parse(xhr.responseText);
               uploadedFileIds = response.file_ids || [];
+              if (docIntelEnabled) {
+                docIntelLastUploadOk = true;
+                showDocIntelWorkspaceMessage("✅ Upload finished. Processing files now… (this may take a moment)");
+              }
               console.log('uploadedFileIds', uploadedFileIds);
               hideProgress();
               isUploading = false;
@@ -926,6 +1212,8 @@
     }
 
     function toggleUploadArea() {
+      // In doc-intel workspace, we manage upload visibility by step. Keep toggling off
+      // from clearing selection (it confuses users who are mid-upload).
       uploadAreaVisible = !uploadAreaVisible;
       
       if (uploadAreaVisible) {
@@ -948,49 +1236,194 @@
         if (uploadToggleBtn) {
         uploadToggleBtn.classList.remove('active');
         }
-        // Clear selected files when hiding
-        clearSelectedFiles();
+        // Clear selected files when hiding (chat-only flow)
+        if (!docIntelEnabled) {
+          clearSelectedFiles();
+        }
       }
     }
 
+    function showDocIntelWorkspaceMessage(text) {
+      if (!docIntelMessagesEl) return;
+      docIntelMessagesEl.classList.remove('hidden');
+      const contentSpan = docIntelMessagesEl.querySelector('span.flex-1');
+      if (contentSpan) {
+        contentSpan.textContent = text;
+      } else {
+        docIntelMessagesEl.textContent = text;
+      }
+    }
+
+    // Backward-compatible helper used by legacy doc-intel chat-mode paths.
     function appendDocIntelMessage(text) {
-      const chatBox = document.getElementById("chat-box");
-      if (!chatBox) return;
-      const entry = document.createElement("div");
-      entry.className = "chat-entry assistant";
-      const bubble = document.createElement("div");
-      bubble.className = "bubble";
-      bubble.textContent = text;
-      entry.appendChild(bubble);
-      chatBox.appendChild(entry);
-      chatBox.scrollTop = chatBox.scrollHeight;
-      if (docIntelEnabled) {
-        loadDocIntelSummary();
+      showDocIntelWorkspaceMessage(text);
+    }
+
+    function clearDocIntelWorkspaceMessage() {
+      if (!docIntelMessagesEl) return;
+      docIntelMessagesEl.classList.add('hidden');
+      docIntelMessagesEl.textContent = '';
+    }
+
+    function setChatExperienceVisible(visible) {
+      if (!chatExperienceEl) return;
+      chatExperienceEl.style.display = visible ? '' : 'none';
+    }
+
+    function setUploadAreaVisible(visible) {
+      uploadAreaVisible = !!visible;
+      if (uploadArea) {
+        uploadArea.style.display = uploadAreaVisible ? 'block' : 'none';
+      }
+      if (uploadToggleBtn) {
+        uploadToggleBtn.classList.toggle('active', uploadAreaVisible);
+      }
+    }
+
+    function setDocIntelStep(step) {
+      docIntelCurrentStep = step;
+      const steps = ['upload', 'search', 'package'];
+      steps.forEach((s) => {
+        const panel = docIntelStepPanels[s];
+        if (panel) {
+          panel.classList.toggle('hidden', s !== step);
+        }
+      });
+
+      docIntelStepButtons.forEach((btn) => {
+        const isSelected = btn.getAttribute('data-step') === step;
+        btn.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+        
+        // Update button styling for selected/unselected state
+        if (isSelected) {
+          btn.classList.add('bg-gradient-to-r', 'from-primary', 'to-primary-light', 'text-white', 'border-primary', 'shadow-md');
+          btn.classList.remove('bg-white', 'text-gray-700', 'border-gray-300');
+          
+          // Update number badge
+          const badge = btn.querySelector('.rounded-full');
+          if (badge) {
+            badge.classList.remove('bg-gray-200', 'text-gray-700');
+            badge.classList.add('bg-white', 'text-primary');
+          }
+        } else {
+          btn.classList.remove('bg-gradient-to-r', 'from-primary', 'to-primary-light', 'text-white', 'border-primary', 'shadow-md');
+          btn.classList.add('bg-white', 'text-gray-700');
+          
+          // Update number badge
+          const badge = btn.querySelector('.rounded-full');
+          if (badge) {
+            badge.classList.add('bg-gray-200', 'text-gray-700');
+            badge.classList.remove('bg-white', 'text-primary');
+          }
+        }
+      });
+
+      // Keep the upload UI simple: only show upload area on the Upload step.
+      setUploadAreaVisible(step === 'upload');
+
+      if (step === 'search' && docIntelSearchQueryEl) {
+        setTimeout(() => docIntelSearchQueryEl.focus(), 10);
+      }
+      if (step === 'package' && docIntelPackageScopeEl) {
+        setTimeout(() => docIntelPackageScopeEl.focus(), 10);
       }
     }
 
     function showDocIntelPanel() {
+      console.log('showDocIntelPanel called');
       if (!docIntelPanel) {
+        console.error('docIntelPanel not found');
         return;
       }
+      // Workspace-only for doc-intel enabled modes
+      setChatExperienceVisible(false);
       docIntelPanel.classList.remove('hidden');
-      if (!docIntelHandlersInitialized) {
-        setupDocIntelHandlers();
-        docIntelHandlersInitialized = true;
-      }
-      loadDocIntelSummary();
+      console.log('Doc intel panel shown, hidden class removed');
+      
+      // Force a small delay to ensure Tailwind processes the now-visible panel
+      setTimeout(() => {
+        if (!docIntelHandlersInitialized) {
+          setupDocIntelHandlers();
+          docIntelHandlersInitialized = true;
+        }
+        setDocIntelStep('upload');
+        loadDocIntelSummary();
+      }, 100);
     }
 
     function setupDocIntelHandlers() {
       if (docIntelRefreshBtn) {
         docIntelRefreshBtn.addEventListener('click', loadDocIntelSummary);
       }
-      if (docIntelActionButtons && docIntelActionButtons.length) {
-        docIntelActionButtons.forEach((button) => {
+
+      // Workspace stepper
+      if (docIntelStepButtons && docIntelStepButtons.length) {
+        docIntelStepButtons.forEach((button) => {
           button.addEventListener('click', () => {
-            const action = button.getAttribute('data-doc-action');
-            handleDocIntelAction(action);
+            const step = button.getAttribute('data-step');
+            if (step) setDocIntelStep(step);
           });
+        });
+      }
+
+      // Upload controls
+      if (docIntelUploadOpenBtnEl) {
+        docIntelUploadOpenBtnEl.addEventListener('click', () => {
+          setDocIntelStep('upload');
+          if (fileInput) fileInput.click();
+        });
+      }
+      if (docIntelUploadStartBtnEl) {
+        docIntelUploadStartBtnEl.addEventListener('click', () => {
+          setDocIntelStep('upload');
+          if (!selectedFiles.length) {
+            showDocIntelWorkspaceMessage("Select files first, then click Start Upload.");
+            return;
+          }
+          clearDocIntelWorkspaceMessage();
+          uploadFiles().catch((err) => {
+            console.error(err);
+            showDocIntelWorkspaceMessage("❌ Upload failed. Please try again.");
+          });
+        });
+      }
+
+      // Search controls
+      if (docIntelSearchBtnEl) {
+        docIntelSearchBtnEl.addEventListener('click', () => docIntelSearch());
+      }
+      if (docIntelSearchQueryEl) {
+        docIntelSearchQueryEl.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            docIntelSearch();
+          }
+        });
+      }
+      const suggestButtons = Array.from(document.querySelectorAll('.docintel-suggest'));
+      if (suggestButtons.length) {
+        suggestButtons.forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const q = btn.getAttribute('data-query') || '';
+            if (docIntelSearchQueryEl) {
+              docIntelSearchQueryEl.value = q;
+            }
+            setDocIntelStep('search');
+            docIntelSearch();
+          });
+        });
+      }
+
+      // Package controls
+      if (docIntelProposeBtnEl) {
+        docIntelProposeBtnEl.addEventListener('click', () => docIntelProposePackage());
+      }
+      if (docIntelPackageScopeEl) {
+        docIntelPackageScopeEl.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            docIntelProposePackage();
+          }
         });
       }
     }
@@ -1018,91 +1451,247 @@
 
     function renderDocIntelSummary(summary) {
       if (!docIntelSummaryEl) return;
+      docIntelCachedSummary = summary;
       if (!summary.project_id) {
-        docIntelSummaryEl.textContent = 'No documents ingested yet.';
+        docIntelSummaryEl.innerHTML = `
+          <div class="flex items-center justify-center h-full min-h-[120px]">
+            <div class="text-center">
+              <svg class="w-16 h-16 mx-auto mb-3 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+              <p class="font-bold text-gray-900 text-lg mb-2">No project files yet</p>
+              <p class="text-sm text-gray-600">Start with <span class="font-bold text-primary">Step 1: Upload</span>. Once files are processed, you can search and build packages.</p>
+            </div>
+          </div>
+        `;
         if (docIntelPackagesEl) {
-          docIntelPackagesEl.innerHTML = '<p class="text-gray-500 text-sm">No packages yet.</p>';
+          docIntelPackagesEl.innerHTML = '<p class="text-gray-400 italic text-sm">No packages yet.</p>';
         }
+        setDocIntelStep('upload');
         return;
       }
       docIntelSummaryEl.innerHTML = `
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-center">
-          <div class="p-3 rounded-xl bg-white shadow-sm border border-gray-100">
-            <p class="text-xs uppercase tracking-wide text-gray-500">Files Processed</p>
-            <p class="text-2xl font-semibold text-gray-900">${summary.file_count}</p>
+          <div class="p-4 rounded-xl bg-gradient-to-br from-blue-50 to-blue-100 shadow-sm border-2 border-blue-200 hover:shadow-md transition-all duration-200">
+            <svg class="w-8 h-8 mx-auto mb-2 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+            <p class="text-xs uppercase tracking-wide text-blue-700 font-bold mb-1">Files Processed</p>
+            <p class="text-3xl font-bold text-blue-900">${summary.file_count}</p>
           </div>
-          <div class="p-3 rounded-xl bg-white shadow-sm border border-gray-100">
-            <p class="text-xs uppercase tracking-wide text-gray-500">Packages Built</p>
-            <p class="text-2xl font-semibold text-gray-900">${summary.package_count}</p>
+          <div class="p-4 rounded-xl bg-gradient-to-br from-green-50 to-green-100 shadow-sm border-2 border-green-200 hover:shadow-md transition-all duration-200">
+            <svg class="w-8 h-8 mx-auto mb-2 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"></path></svg>
+            <p class="text-xs uppercase tracking-wide text-green-700 font-bold mb-1">Packages Built</p>
+            <p class="text-3xl font-bold text-green-900">${summary.package_count}</p>
           </div>
-          <div class="p-3 rounded-xl bg-white shadow-sm border border-gray-100">
-            <p class="text-xs uppercase tracking-wide text-gray-500">Last Updated</p>
-            <p class="text-sm font-medium text-gray-900">${summary.updated_at || 'n/a'}</p>
+          <div class="p-4 rounded-xl bg-gradient-to-br from-purple-50 to-purple-100 shadow-sm border-2 border-purple-200 hover:shadow-md transition-all duration-200">
+            <svg class="w-8 h-8 mx-auto mb-2 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            <p class="text-xs uppercase tracking-wide text-purple-700 font-bold mb-1">Last Updated</p>
+            <p class="text-sm font-bold text-purple-900">${summary.updated_at || 'n/a'}</p>
           </div>
         </div>
       `;
+      // If they already uploaded, guide to search by default.
+      if ((summary.file_count || 0) > 0 && docIntelCurrentStep === 'upload') {
+        setDocIntelStep('search');
+      }
     }
 
     function renderDocIntelPackages(packages) {
       if (!docIntelPackagesEl) return;
       if (!packages.length) {
-        docIntelPackagesEl.innerHTML = '<p class="text-gray-500 text-sm">No packages yet.</p>';
+        docIntelPackagesEl.innerHTML = '<p class="text-gray-400 italic text-sm">No packages yet.</p>';
         return;
       }
       docIntelPackagesEl.innerHTML = packages.map(pkg => {
         const fileType = pkg.output_zip_path ? 'zip' : 'pdf';
         const downloadUrl = pkg.download_url || `/flask/doc-intel/package/${pkg.package_id}?mode=${encodeURIComponent(mode)}&session_id=${encodeURIComponent(docIntelSessionId)}&file_type=${fileType}`;
+        const icon = fileType === 'zip' ? '🗜️' : '📄';
         return `
-          <div class="flex items-center justify-between bg-gray-50 rounded-xl px-4 py-3 border border-gray-100">
-            <div>
-              <p class="text-sm font-medium text-gray-900">${pkg.title}</p>
-              <p class="text-xs text-gray-500">${fileType.toUpperCase()} • ${pkg.created_at || ''}</p>
+          <div class="flex items-center justify-between bg-gradient-to-r from-gray-50 to-white rounded-xl px-4 py-3 border-2 border-gray-200 hover:border-primary hover:shadow-md transition-all duration-200">
+            <div class="flex items-center gap-3">
+              <div class="text-2xl">${icon}</div>
+              <div>
+                <p class="text-sm font-semibold text-gray-900">${pkg.title}</p>
+                <p class="text-xs text-gray-500">${fileType.toUpperCase()} • ${pkg.created_at || ''}</p>
+              </div>
             </div>
-            <a href="${downloadUrl}" target="_blank" rel="noopener" class="text-sm font-semibold text-primary hover:text-primary-light">Download</a>
+            <a href="${downloadUrl}" target="_blank" rel="noopener" class="px-4 py-2 bg-gradient-to-r from-primary to-primary-light text-white rounded-lg text-xs font-bold hover:from-primary-light hover:to-primary shadow-sm hover:shadow-md transition-all duration-200 flex items-center gap-1 whitespace-nowrap">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+              Download
+            </a>
           </div>
         `;
       }).join('');
     }
 
     function handleDocIntelAction(action) {
+      // Legacy entry point; keep for backward compatibility if old buttons reappear.
       if (!docIntelEnabled) {
-        appendDocIntelMessage("Document intelligence is not enabled for this mode.");
+        showDocIntelWorkspaceMessage("Document intelligence is not enabled for this mode.");
         return;
       }
-      if (action === 'upload') {
-        if (!uploadAreaVisible) {
-          toggleUploadArea();
-        }
-        if (uploadAreaVisible) {
-           appendDocIntelMessage("📁 Please upload your project files (PDF drawings, ZIP archives). I'll analyze them once uploaded.");
-        }
-        return;
-      }
-      if (action === 'search') {
-        setInputMode('doc_search');
-        return;
-      }
-      if (action === 'package') {
-        setInputMode('doc_package');
-        return;
-      }
+      if (action === 'upload') return setDocIntelStep('upload');
+      if (action === 'search') return setDocIntelStep('search');
+      if (action === 'package') return setDocIntelStep('package');
     }
 
     function appendDocIntelHtmlMessage(htmlContent) {
-      const chatBox = document.getElementById("chat-box");
-      if (!chatBox) return;
-      const entry = document.createElement("div");
-      entry.className = "chat-entry assistant";
-      const bubble = document.createElement("div");
-      bubble.className = "bubble";
-      bubble.style.maxWidth = "100%";
-      bubble.innerHTML = htmlContent;
-      entry.appendChild(bubble);
-      chatBox.appendChild(entry);
-      chatBox.scrollTop = chatBox.scrollHeight;
+      if (!docIntelPackageUiEl) return;
+      docIntelPackageUiEl.innerHTML = htmlContent;
       if (docIntelEnabled) {
         loadDocIntelSummary();
       }
+    }
+
+    async function docIntelSearch() {
+      setDocIntelStep('search');
+      clearDocIntelWorkspaceMessage();
+
+      const query = (docIntelSearchQueryEl?.value || '').trim();
+      const trade = (docIntelSearchTradeEl?.value || '').trim().toLowerCase();
+
+      if (!query) {
+        showDocIntelWorkspaceMessage("Type what you need (example: mechanical specs), then click Search.");
+        return;
+      }
+
+      if (!docIntelSessionId) {
+        showDocIntelWorkspaceMessage("Missing session. Please refresh the page and try again.");
+        return;
+      }
+
+      if (!docIntelSearchResultsEl) return;
+      docIntelSearchResultsEl.innerHTML = '<p class="text-sm text-gray-500">Searching…</p>';
+
+      try {
+        const params = new URLSearchParams({
+          mode: mode || '',
+          session_id: docIntelSessionId,
+          query
+        });
+        if (trade) params.set('trade', trade);
+
+        const res = await fetch(`/flask/doc-intel/search?${params.toString()}`);
+        const body = await res.json();
+        if (!res.ok) {
+          docIntelSearchResultsEl.innerHTML = `<p class="text-sm text-red-600">${body.error || 'Search failed.'}</p>`;
+          return;
+        }
+        renderDocIntelSearchResults(body.results || [], query);
+      } catch (err) {
+        console.error(err);
+        docIntelSearchResultsEl.innerHTML = '<p class="text-sm text-red-600">Search failed. Please try again.</p>';
+      }
+    }
+
+    function renderDocIntelSearchResults(results, query) {
+      if (!docIntelSearchResultsEl) return;
+      if (!results || !results.length) {
+        docIntelSearchResultsEl.innerHTML = `
+          <div class="flex items-center justify-center h-48">
+            <div class="text-center">
+              <svg class="w-20 h-20 mx-auto mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+              <p class="font-bold text-gray-900 text-lg mb-2">No matches found</p>
+              <p class="text-sm text-gray-600">Try a shorter phrase (example: "specs", "schedule", "mechanical"), or upload more files.</p>
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      const rows = results.slice(0, 50).map((hit, index) => {
+        const doc = hit.document || {};
+        const name = doc.original_filename || 'Unnamed';
+        const trades = (doc.trade_tags || []).join(', ') || '—';
+        const topics = (doc.topics || []).join(', ') || '—';
+        const type = doc.is_drawing ? 'Drawing' : (doc.is_spec ? 'Spec' : 'Document');
+        const icon = doc.is_drawing ? '📐' : (doc.is_spec ? '📋' : '📄');
+        const bgClass = index % 2 === 0 ? 'bg-gray-50' : 'bg-white';
+        return `
+          <tr class="${bgClass} hover:bg-blue-50 transition-colors">
+            <td class="py-3 px-4 align-top">
+              <div class="flex items-start gap-2">
+                <span class="text-xl">${icon}</span>
+                <div>
+                  <div class="font-semibold text-gray-900">${escapeHtmlSafe(name)}</div>
+                  <div class="text-xs text-gray-500 mt-0.5 inline-block px-2 py-0.5 rounded-full bg-gray-200">${type}</div>
+                </div>
+              </div>
+            </td>
+            <td class="py-3 px-4 text-sm text-gray-700 align-top">
+              ${trades !== '—' ? `<span class="inline-block px-2 py-1 rounded-md bg-blue-100 text-blue-800 text-xs font-medium">${escapeHtmlSafe(trades)}</span>` : '<span class="text-gray-400">—</span>'}
+            </td>
+            <td class="py-3 px-4 text-sm text-gray-700 align-top">${escapeHtmlSafe(topics)}</td>
+          </tr>
+        `;
+      }).join('');
+
+      docIntelSearchResultsEl.innerHTML = `
+        <div class="flex items-center justify-between gap-3 mb-4 pb-4 border-b-2 border-gray-200">
+          <div class="flex items-center gap-2">
+            <svg class="w-5 h-5 text-green-600" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path></svg>
+            <p class="text-base text-gray-700"><span class="font-bold text-gray-900 text-lg">${results.length}</span> matches for <span class="font-bold text-gray-900">"${escapeHtmlSafe(query)}"</span></p>
+          </div>
+          <p class="text-xs text-gray-500 bg-gray-100 px-3 py-1 rounded-full">Showing up to 50</p>
+        </div>
+        <div class="overflow-x-auto rounded-xl border-2 border-gray-200">
+          <table class="min-w-full text-left">
+            <thead>
+              <tr class="text-xs uppercase tracking-wide text-gray-600 bg-gray-100 border-b-2 border-gray-200">
+                <th class="py-3 px-4 font-bold">File</th>
+                <th class="py-3 px-4 font-bold">Trade tags</th>
+                <th class="py-3 px-4 font-bold">Topics</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    async function docIntelProposePackage() {
+      setDocIntelStep('package');
+      clearDocIntelWorkspaceMessage();
+
+      const scope = (docIntelPackageScopeEl?.value || '').trim();
+      if (!scope) {
+        showDocIntelWorkspaceMessage("Type your scope/trade (example: mechanical), then click Propose Package.");
+        return;
+      }
+
+      if (!docIntelPackageUiEl) return;
+      docIntelPackageUiEl.innerHTML = '<p class="text-sm text-gray-500">Building a file list…</p>';
+
+      try {
+        const payload = {
+          mode: document.getElementById('mode').value,
+          session_id: docIntelSessionId,
+          trade: scope,
+          instructions: scope
+        };
+        const res = await fetch('/flask/doc-intel/propose-package', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) {
+          docIntelPackageUiEl.innerHTML = `<p class="text-sm text-red-600">${escapeHtmlSafe(data.error || 'Failed to propose package.')}</p>`;
+          return;
+        }
+        renderFileSelectionUI(data, payload);
+      } catch (err) {
+        console.error(err);
+        docIntelPackageUiEl.innerHTML = '<p class="text-sm text-red-600">Failed to propose package. Please try again.</p>';
+      }
+    }
+
+    function escapeHtmlSafe(value) {
+      return String(value || '')
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
     }
 
     function renderFileSelectionUI(proposal, originalRequest) {
@@ -1122,41 +1711,58 @@
         }
 
         let html = `
-            <div id="${containerId}" class="w-full bg-white rounded-lg text-left">
-                <div class="mb-3 border-b pb-2">
-                    <h3 class="font-bold text-gray-800 text-lg">📦 Build Package: ${trade ? escapeHtml(trade.toUpperCase()) : 'General'}</h3>
-                    <p class="text-sm text-gray-600">Select files to include in the package.</p>
+            <div id="${containerId}" class="w-full bg-gradient-to-br from-white to-gray-50 rounded-2xl text-left border-2 border-gray-300 shadow-lg p-6">
+                <div class="mb-6 pb-4 border-b-2 border-gray-200">
+                    <div class="flex items-center gap-3 mb-2">
+                        <div class="w-12 h-12 bg-gradient-to-br from-primary to-primary-light rounded-xl flex items-center justify-center">
+                            <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"></path></svg>
+                        </div>
+                        <div>
+                            <h3 class="font-bold text-gray-900 text-2xl">Build Package: ${trade ? escapeHtml(trade.toUpperCase()) : 'General'}</h3>
+                            <p class="text-sm text-gray-600">Select files to include in the package.</p>
+                        </div>
+                    </div>
                 </div>
                 
-                <div class="mb-3">
-                    <input type="text" placeholder="Filter files..." 
-                        class="w-full px-3 py-2 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-800"
-                        onkeyup="filterPackageFiles('${containerId}', this.value)"
-                    />
+                <div class="mb-4">
+                    <div class="relative">
+                        <svg class="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                        <input type="text" placeholder="Filter files..." 
+                            class="w-full pl-10 pr-4 py-3 border-2 border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent text-gray-800 shadow-sm"
+                            onkeyup="filterPackageFiles('${containerId}', this.value)"
+                        />
+                    </div>
                 </div>
                 
-                <div class="max-h-96 overflow-y-auto border rounded-md mb-4 custom-scrollbar">
-                    <div class="bg-gray-100 px-3 py-2 font-semibold text-sm flex justify-between items-center sticky top-0 border-b z-10">
-                        <span class="text-gray-700">Relevant Files (${relevantCount})</span>
-                        <button type="button" class="text-blue-600 text-xs hover:underline font-medium" onclick="toggleAllFiles('${containerId}', 'relevant')">Toggle All</button>
+                <div class="max-h-96 overflow-y-auto border-2 border-gray-300 rounded-xl mb-6 custom-scrollbar bg-white shadow-inner">
+                    <div class="bg-gradient-to-r from-green-100 to-green-50 px-4 py-3 font-bold text-sm flex justify-between items-center sticky top-0 border-b-2 border-green-200 z-10 shadow-sm">
+                        <span class="text-green-900 flex items-center gap-2">
+                            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path></svg>
+                            Relevant Files (${relevantCount})
+                        </span>
+                        <button type="button" class="px-3 py-1 bg-green-600 text-white text-xs hover:bg-green-700 rounded-lg font-bold transition-colors shadow-sm" onclick="toggleAllFiles('${containerId}', 'relevant')">Toggle All</button>
                     </div>
                     <ul class="divide-y divide-gray-200 bg-white" data-group="relevant">
-                        ${relevant.length ? relevant.map(f => renderFileCheckbox(f, true)).join('') : '<li class="p-3 text-sm text-gray-500 italic">No relevant files found.</li>'}
+                        ${relevant.length ? relevant.map(f => renderFileCheckbox(f, true)).join('') : '<li class="p-4 text-sm text-gray-500 italic text-center">No relevant files found.</li>'}
                     </ul>
 
-                    <div class="bg-gray-100 px-3 py-2 font-semibold text-sm flex justify-between items-center sticky top-0 border-y z-10 mt-2">
-                        <span class="text-gray-700">Other Files (${otherCount})</span>
-                        <button type="button" class="text-blue-600 text-xs hover:underline font-medium" onclick="toggleAllFiles('${containerId}', 'other')">Toggle All</button>
+                    <div class="bg-gradient-to-r from-gray-100 to-gray-50 px-4 py-3 font-bold text-sm flex justify-between items-center sticky top-0 border-y-2 border-gray-300 z-10 mt-2 shadow-sm">
+                        <span class="text-gray-700 flex items-center gap-2">
+                            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clip-rule="evenodd"></path></svg>
+                            Other Files (${otherCount})
+                        </span>
+                        <button type="button" class="px-3 py-1 bg-gray-600 text-white text-xs hover:bg-gray-700 rounded-lg font-bold transition-colors shadow-sm" onclick="toggleAllFiles('${containerId}', 'other')">Toggle All</button>
                     </div>
                     <ul class="divide-y divide-gray-200 bg-white" data-group="other">
-                         ${other.length ? other.map(f => renderFileCheckbox(f, false)).join('') : '<li class="p-3 text-sm text-gray-500 italic">No other files.</li>'}
+                         ${other.length ? other.map(f => renderFileCheckbox(f, false)).join('') : '<li class="p-4 text-sm text-gray-500 italic text-center">No other files.</li>'}
                     </ul>
                 </div>
 
-                <div class="flex justify-end gap-2 pt-2 border-t">
-                    <button type="button" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-md text-sm transition-colors" onclick="cancelPackage('${containerId}')">Cancel</button>
-                    <button type="button" class="px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 shadow-sm transition-colors" 
+                <div class="flex justify-end gap-3 pt-4 border-t-2 border-gray-200">
+                    <button type="button" class="px-6 py-3 text-gray-700 bg-white hover:bg-gray-100 border-2 border-gray-300 rounded-xl text-sm font-bold transition-all duration-200 shadow-sm hover:shadow-md" onclick="cancelPackage('${containerId}')">Cancel</button>
+                    <button type="button" class="px-6 py-3 bg-gradient-to-r from-primary to-primary-light text-white rounded-xl text-sm font-bold hover:from-primary-light hover:to-primary shadow-md hover:shadow-lg transition-all duration-200 flex items-center gap-2" 
                         onclick="submitPackageBuild('${containerId}', '${trade ? escapeHtml(trade) : ''}', '${originalRequest.session_id}', '${escapeHtml(originalRequest.instructions || '')}')">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
                         Build Package
                     </button>
                 </div>
@@ -1170,12 +1776,16 @@
         const icon = getFileIcon(file.mime_type || '');
         const isChecked = checked ? 'checked' : '';
         const safeName = file.original_filename.replace(/"/g, '&quot;');
+        const tags = file.trade_tags && file.trade_tags.length ? file.trade_tags : [];
         return `
-            <li class="px-3 py-2 hover:bg-gray-50 flex items-center gap-3 transition-colors">
-                <input type="checkbox" value="${file.file_id}" class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer" ${isChecked}>
-                <div class="flex-1 min-w-0 cursor-pointer" onclick="this.previousElementSibling.click()">
-                    <p class="text-sm font-medium text-gray-900 truncate" title="${safeName}">${icon} ${safeName}</p>
-                    <p class="text-xs text-gray-500 truncate">${file.trade_tags && file.trade_tags.length ? file.trade_tags.join(', ') : 'No tags'}</p>
+            <li class="px-4 py-3 hover:bg-blue-50 flex items-center gap-3 transition-all duration-200 cursor-pointer group" onclick="event.target.tagName !== 'INPUT' && this.querySelector('input[type=checkbox]').click()">
+                <input type="checkbox" value="${file.file_id}" class="h-5 w-5 rounded-md border-2 border-gray-300 text-primary focus:ring-2 focus:ring-primary cursor-pointer" ${isChecked} onclick="event.stopPropagation()">
+                <div class="text-2xl flex-shrink-0">${icon}</div>
+                <div class="flex-1 min-w-0">
+                    <p class="text-sm font-semibold text-gray-900 truncate group-hover:text-primary transition-colors" title="${safeName}">${safeName}</p>
+                    <div class="flex items-center gap-1.5 mt-1">
+                        ${tags.length > 0 ? tags.map(tag => `<span class="inline-block px-2 py-0.5 rounded-md bg-blue-100 text-blue-800 text-xs font-medium">${tag}</span>`).join('') : '<span class="text-xs text-gray-400 italic">No tags</span>'}
+                    </div>
                 </div>
             </li>
         `;
@@ -1246,13 +1856,14 @@
                  btn.disabled = false;
              } else {
                  container.innerHTML = `
-                    <div class="text-center p-6 bg-green-50 rounded-lg">
-                        <div class="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-green-100 mb-3">
-                            <svg class="h-6 w-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                    <div class="text-center p-8 bg-gradient-to-br from-green-50 to-green-100 rounded-2xl border-2 border-green-300 shadow-lg">
+                        <div class="mx-auto flex items-center justify-center h-20 w-20 rounded-full bg-gradient-to-br from-green-400 to-green-600 mb-4 shadow-lg animate-pulse-soft">
+                            <svg class="h-10 w-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path></svg>
                         </div>
-                        <h3 class="text-lg font-medium text-gray-900">Package Built Successfully!</h3>
-                        <p class="mt-1 text-sm text-gray-500 mb-4">${data.package.title}</p>
-                        <a href="${data.package.download_url}" target="_blank" class="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                        <h3 class="text-2xl font-bold text-gray-900 mb-2">Package Built Successfully!</h3>
+                        <p class="text-base text-gray-700 mb-6 font-medium">${data.package.title}</p>
+                        <a href="${data.package.download_url}" target="_blank" class="inline-flex items-center gap-2 px-6 py-3 border-2 border-transparent shadow-md text-base font-bold rounded-xl text-white bg-gradient-to-r from-primary to-primary-light hover:from-primary-light hover:to-primary hover:shadow-lg transition-all duration-200">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
                             Download PDF
                         </a>
                     </div>

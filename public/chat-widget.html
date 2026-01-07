@@ -837,6 +837,25 @@
             }
             return;
           }
+
+          // Doc-intel modes use the dedicated Document Workspace UI (index.html) and should not show the chat widget.
+          if (data && data.doc_intelligence_enabled) {
+            document.body.style.display = 'none';
+            if (window.parent !== window) {
+              window.parent.postMessage({
+                source: 'chat-widget',
+                type: 'SIZE',
+                width: 0,
+                height: 0,
+                hidden: true,
+                expanded: false,
+                fab: false,
+                fullscreen: false,
+                reason: 'doc-intel-enabled'
+              }, '*');
+            }
+            return;
+          }
           
           // Set title and theme
           document.getElementById('widget-title').textContent = data.title || 'Assistant';
