@@ -184,12 +184,13 @@
             <input type="hidden" id="conversation_id" name="conversation_id" />
             <input type="hidden" id="response_id" name="response_id" />
             <input type="hidden" id="doc_intel_session_id" name="doc_intel_session_id" />
+          <!-- Shared hidden file input (used by both chat upload + doc-intel upload) -->
+          <input type="file" id="file" name="file" style="display:none" accept="*/*" />
           </form>
         </div>
 
-        <!-- Upload Area -->
+        <!-- Upload Area (chat modes only; doc-intel uses the Step 1 upload panel) -->
         <div class="upload-area mt-8" id="upload-area" style="display: none;">
-          <input type="file" id="file" name="file" style="display:none" accept="*/*" />
           <div class="upload-dropzone bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-dashed border-blue-300 rounded-xl p-12 text-center hover:border-blue-400 hover:bg-blue-100 transition-all duration-200 cursor-pointer" id="upload-dropzone">
             <div class="upload-icon text-6xl mb-6">📎</div>
             <div class="upload-text">
@@ -305,6 +306,20 @@
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
                     Start Upload
                   </button>
+                </div>
+                <!-- Doc-Intel upload status + progress -->
+                <div class="mt-4 space-y-3">
+                  <div id="docintel-upload-dropzone" class="bg-white border-2 border-dashed border-gray-300 rounded-xl p-5 text-center hover:border-primary hover:bg-primary/5 transition-all duration-200 cursor-pointer">
+                    <p class="text-sm font-semibold text-gray-900">Drop files here</p>
+                    <p class="text-xs text-gray-600 mt-1">PDF / ZIP / images supported</p>
+                  </div>
+                  <div id="docintel-upload-progress" class="hidden">
+                    <div class="bg-gray-200 rounded-full h-3 overflow-hidden">
+                      <div id="docintel-progress-fill" class="bg-gradient-to-r from-primary to-primary-light h-full transition-all duration-300" style="width: 0%"></div>
+                    </div>
+                    <div id="docintel-progress-text" class="text-sm text-gray-600 mt-2 text-center">Uploading…</div>
+                  </div>
+                  <div id="docintel-uploaded-files" class="space-y-2"></div>
                 </div>
                 <div class="mt-4 flex items-start gap-2 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
                   <svg class="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path></svg>
@@ -452,6 +467,8 @@
     let docIntelPanel, docIntelSummaryEl, docIntelPackagesEl;
     let docIntelRefreshBtn, docIntelActionButtons, docIntelSessionInput;
     let docIntelHandlersInitialized = false;
+    let docIntelUploadDropzoneEl, docIntelUploadedFilesEl;
+    let docIntelUploadProgressEl, docIntelProgressFillEl, docIntelProgressTextEl;
     const DOC_INTEL_SESSION_KEY = `docIntelSessionId:${mode || 'default'}`;
     let docIntelSessionId = sessionStorage.getItem(DOC_INTEL_SESSION_KEY);
     if (!docIntelSessionId) {
@@ -517,6 +534,11 @@
       };
       docIntelUploadOpenBtnEl = document.getElementById("docintel-upload-open");
       docIntelUploadStartBtnEl = document.getElementById("docintel-upload-start");
+      docIntelUploadDropzoneEl = document.getElementById("docintel-upload-dropzone");
+      docIntelUploadedFilesEl = document.getElementById("docintel-uploaded-files");
+      docIntelUploadProgressEl = document.getElementById("docintel-upload-progress");
+      docIntelProgressFillEl = document.getElementById("docintel-progress-fill");
+      docIntelProgressTextEl = document.getElementById("docintel-progress-text");
       docIntelSearchQueryEl = document.getElementById("docintel-search-query");
       docIntelSearchTradeEl = document.getElementById("docintel-search-trade");
       docIntelSearchBtnEl = document.getElementById("docintel-search-btn");
@@ -1003,13 +1025,14 @@
     }
 
     function setupFileUpload() {
-      if (!uploadDropzone || !fileInput) {
+      const dropzone = docIntelEnabled ? docIntelUploadDropzoneEl : uploadDropzone;
+      if (!dropzone || !fileInput) {
         console.warn('Upload elements not found');
         return;
       }
       
       // Click to upload
-      uploadDropzone.addEventListener('click', () => {
+      dropzone.addEventListener('click', () => {
         fileInput.click();
       });
 
@@ -1019,19 +1042,19 @@
       });
 
       // Drag and drop
-      uploadDropzone.addEventListener('dragover', (e) => {
+      dropzone.addEventListener('dragover', (e) => {
         e.preventDefault();
-        uploadDropzone.classList.add('drag-over');
+        dropzone.classList.add('drag-over');
       });
 
-      uploadDropzone.addEventListener('dragleave', (e) => {
+      dropzone.addEventListener('dragleave', (e) => {
         e.preventDefault();
-        uploadDropzone.classList.remove('drag-over');
+        dropzone.classList.remove('drag-over');
       });
 
-      uploadDropzone.addEventListener('drop', (e) => {
+      dropzone.addEventListener('drop', (e) => {
         e.preventDefault();
-        uploadDropzone.classList.remove('drag-over');
+        dropzone.classList.remove('drag-over');
         handleFiles(e.dataTransfer.files);
       });
     }
@@ -1043,12 +1066,13 @@
     }
 
     function displaySelectedFiles() {
-      if (!uploadedFiles) {
+      const filesContainer = docIntelEnabled ? docIntelUploadedFilesEl : uploadedFiles;
+      if (!filesContainer) {
         console.warn('Uploaded files container not found');
         return;
       }
       
-      uploadedFiles.innerHTML = '';
+      filesContainer.innerHTML = '';
       const hasUploaded = docIntelEnabled ? docIntelLastUploadOk : uploadedFileIds.length > 0;
       selectedFiles.forEach((file, index) => {
         const filePreview = document.createElement('div');
@@ -1069,7 +1093,7 @@
           </button>
         `;
         
-        uploadedFiles.appendChild(filePreview);
+        filesContainer.appendChild(filePreview);
       });
 
       // Add explicit upload button if there are files selected but not uploaded
@@ -1082,7 +1106,7 @@
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
           </button>
         `;
-        uploadedFiles.appendChild(uploadBtnContainer);
+        filesContainer.appendChild(uploadBtnContainer);
       }
     }
     
@@ -1195,6 +1219,12 @@
 
     function showProgress() {
       console.log('showProgress');
+      if (docIntelEnabled && docIntelUploadProgressEl && docIntelProgressFillEl && docIntelProgressTextEl) {
+        docIntelUploadProgressEl.classList.remove('hidden');
+        docIntelProgressFillEl.style.width = '0%';
+        docIntelProgressTextEl.textContent = 'Uploading...';
+        return;
+      }
       document.getElementById('upload-progress').style.display = 'block';
       document.getElementById('progress-fill').style.width = '0%';
       document.getElementById('progress-text').textContent = 'Uploading...';
@@ -1202,12 +1232,21 @@
 
     function updateProgress(percent) {
       console.log('updateProgress');
+      if (docIntelEnabled && docIntelUploadProgressEl && docIntelProgressFillEl && docIntelProgressTextEl) {
+        docIntelProgressFillEl.style.width = percent + '%';
+        docIntelProgressTextEl.textContent = `Uploading... ${Math.round(percent)}%`;
+        return;
+      }
       document.getElementById('progress-fill').style.width = percent + '%';
       document.getElementById('progress-text').textContent = `Uploading... ${Math.round(percent)}%`;
     }
 
     function hideProgress() {
       console.log('hideProgress');
+      if (docIntelEnabled && docIntelUploadProgressEl) {
+        docIntelUploadProgressEl.classList.add('hidden');
+        return;
+      }
       document.getElementById('upload-progress').style.display = 'none';
     }
 
@@ -1318,8 +1357,7 @@
         }
       });
 
-      // Keep the upload UI simple: only show upload area on the Upload step.
-      setUploadAreaVisible(step === 'upload');
+      // Doc-intel has its own upload UI inside Step 1; never toggle the legacy top upload area.
 
       if (step === 'search' && docIntelSearchQueryEl) {
         setTimeout(() => docIntelSearchQueryEl.focus(), 10);
@@ -1429,23 +1467,31 @@
     }
 
     async function loadDocIntelSummary() {
-      if (!docIntelEnabled || !docIntelSummaryEl) {
+      if (!docIntelEnabled) {
         return;
       }
-      docIntelSummaryEl.textContent = 'Loading project summary...';
+      if (docIntelSummaryEl) {
+        docIntelSummaryEl.textContent = 'Loading project summary...';
+      }
       try {
         const params = new URLSearchParams({ mode, session_id: docIntelSessionId });
         const res = await fetch(`/flask/doc-intel/summary?${params.toString()}`);
         const body = await res.json();
         if (!res.ok) {
-          docIntelSummaryEl.textContent = body.error || 'Unable to load summary.';
+          if (docIntelSummaryEl) {
+            docIntelSummaryEl.textContent = body.error || 'Unable to load summary.';
+          }
           return;
         }
-        renderDocIntelSummary(body);
+        if (docIntelSummaryEl) {
+          renderDocIntelSummary(body);
+        }
         renderDocIntelPackages(body.packages || []);
       } catch (error) {
         console.error('loadDocIntelSummary', error);
-        docIntelSummaryEl.textContent = 'Unable to load summary.';
+        if (docIntelSummaryEl) {
+          docIntelSummaryEl.textContent = 'Unable to load summary.';
+        }
       }
     }
 
