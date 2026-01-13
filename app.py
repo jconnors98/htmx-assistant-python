@@ -12,6 +12,7 @@ import bleach
 from decouple import config
 from openai import OpenAI
 from pymongo import MongoClient
+from pymongo import ReturnDocument
 from pymongo.server_api import ServerApi
 from bson import ObjectId
 import boto3
@@ -98,6 +99,28 @@ DOC_INTEL_ALLOWED_EXTENSIONS = set(
     if ext.strip()
 )
 DOC_INTEL_EXPIRY_MINUTES = int(config("DOC_INTEL_EXPIRY_MINUTES", default="30"))
+
+def _log_access_denied(action: str, *, mode_id=None, content_id=None, mode_owner_id=None, content_owner_id=None, extra=None):
+    """Log consistent auth debug info to help diagnose 403s (especially mixed user_id types in Mongo)."""
+    try:
+        req_user = getattr(request, "user", {}) or {}
+        req_sub = req_user.get("sub")
+        is_super = bool(req_user.get("is_super_admin"))
+        logger.warning(
+            "ACCESS_DENIED action=%s req_sub=%s req_is_super=%s mode_id=%s content_id=%s mode_owner_id=%s mode_owner_type=%s content_owner_id=%s content_owner_type=%s extra=%s",
+            action,
+            str(req_sub),
+            is_super,
+            str(mode_id) if mode_id is not None else None,
+            str(content_id) if content_id is not None else None,
+            str(mode_owner_id) if mode_owner_id is not None else None,
+            type(mode_owner_id).__name__ if mode_owner_id is not None else None,
+            str(content_owner_id) if content_owner_id is not None else None,
+            type(content_owner_id).__name__ if content_owner_id is not None else None,
+            extra,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ACCESS_DENIED_LOG_FAILED action=%s error=%s", action, str(exc))
 
 
 def _merge_doc_intel_settings(settings):
@@ -681,10 +704,14 @@ def get_mode(mode):
 def list_modes_admin():
     docs = []
     print("Listing modes for user:", request.user["sub"])
-    query = {}
-    if not request.user.get("is_super_admin"):
-        query["user_id"] = request.user["sub"]
-    for d in modes_collection.find(query):
+    if request.user.get("is_super_admin"):
+        cursor = modes_collection.find({})
+    else:
+        # String-safe match on user_id (avoid false negatives from mixed stored types).
+        cursor = modes_collection.aggregate([
+            {"$match": {"$expr": {"$eq": [{"$toString": "$user_id"}, str(request.user.get("sub"))]}}}
+        ])
+    for d in cursor:
         d["_id"] = str(d["_id"])
         d.pop("user_id", None)
         d["priority_source"] = _get_priority_source(d)
@@ -699,12 +726,17 @@ def list_modes_admin():
 @routes.get("/admin/modes/<mode_id>")
 @cognito_auth_required
 def get_mode_admin(mode_id):
-    query = {"_id": ObjectId(mode_id)}
-    if not request.user.get("is_super_admin"):
-        query["user_id"] = request.user["sub"]
-    doc = modes_collection.find_one(query)
+    try:
+        mode_obj_id = ObjectId(mode_id)
+    except Exception:  # noqa: BLE001
+        return {"error": "Invalid mode id"}, 400
+
+    doc = modes_collection.find_one({"_id": mode_obj_id})
     if not doc:
         return {"error": "Not found"}, 404
+    if not request.user.get("is_super_admin"):
+        if not doc.get("user_id") or str(doc.get("user_id")) != str(request.user.get("sub")):
+            return {"error": "Access denied"}, 403
     doc["_id"] = str(doc["_id"])
     doc["priority_source"] = _get_priority_source(doc)
     doc.pop("prioritize_files", None)
@@ -763,12 +795,17 @@ def create_mode():
 @routes.put("/admin/modes/<mode_id>")
 @cognito_auth_required
 def update_mode(mode_id):
-    query = {"_id": ObjectId(mode_id)}
-    if not request.user.get("is_super_admin"):
-        query["user_id"] = request.user["sub"]
-    doc = modes_collection.find_one(query)
+    try:
+        mode_obj_id = ObjectId(mode_id)
+    except Exception:  # noqa: BLE001
+        return {"error": "Invalid mode id"}, 400
+
+    doc = modes_collection.find_one({"_id": mode_obj_id})
     if not doc:
         return {"error": "Not found"}, 404
+    if not request.user.get("is_super_admin"):
+        if not doc.get("user_id") or str(doc.get("user_id")) != str(request.user.get("sub")):
+            return {"error": "Access denied"}, 403
     data = request.get_json() or {}
     update = {
         "title": data.get("title", doc.get("title", "")),
@@ -810,20 +847,27 @@ def update_mode(mode_id):
 @routes.delete("/admin/modes/<mode_id>")
 @cognito_auth_required
 def delete_mode(mode_id):
-    query = {"_id": ObjectId(mode_id)}
-    if not request.user.get("is_super_admin"):
-        query["user_id"] = request.user["sub"]
-    doc = modes_collection.find_one(query)
+    try:
+        mode_obj_id = ObjectId(mode_id)
+    except Exception:  # noqa: BLE001
+        return {"error": "Invalid mode id"}, 400
+
+    doc = modes_collection.find_one({"_id": mode_obj_id})
     if not doc:
         return {"error": "Not found"}, 404
+    if not request.user.get("is_super_admin"):
+        if not doc.get("user_id") or str(doc.get("user_id")) != str(request.user.get("sub")):
+            return {"error": "Access denied"}, 403
     
     mode_name = doc.get("name")
+    mode_owner_id = doc.get("user_id")
     
     # Delete all associated documents
     if mode_name:
         doc_query = {"mode": mode_name}
         if not request.user.get("is_super_admin"):
-            doc_query["user_id"] = request.user["sub"]
+            # Use the stored owner id (string-safe access is handled above).
+            doc_query["user_id"] = mode_owner_id
         
         # Find and delete all documents for this mode
         documents = list(documents_collection.find(doc_query))
@@ -1644,13 +1688,18 @@ def superadmin_overview_page():
 @cognito_auth_required
 def list_documents_admin():
     mode = (request.args.get("mode") or "").strip()
-    query = {}
-    if not request.user.get("is_super_admin"):
-        query["user_id"] = request.user["sub"]
-    if mode:
-        query["mode"] = mode
     docs = []
-    for d in documents_collection.find(query):
+    if request.user.get("is_super_admin"):
+        query = {}
+        if mode:
+            query["mode"] = mode
+        cursor = documents_collection.find(query)
+    else:
+        pipeline = [{"$match": {"$expr": {"$eq": [{"$toString": "$user_id"}, str(request.user.get("sub"))]}}}]
+        if mode:
+            pipeline.insert(0, {"$match": {"mode": mode}})
+        cursor = documents_collection.aggregate(pipeline)
+    for d in cursor:
         d["_id"] = str(d["_id"])
         docs.append(d)
     return {"documents": docs}
@@ -1667,10 +1716,19 @@ def create_document():
     s3_key = None
     openai_file_id = None
 
-    mode_query = {"name": mode} if mode else None
-    if mode_query and not request.user.get("is_super_admin"):
-        mode_query["user_id"] = request.user["sub"]
-    mode_doc = modes_collection.find_one(mode_query) if mode_query else None
+    mode_doc = None
+    if mode:
+        if request.user.get("is_super_admin"):
+            mode_doc = modes_collection.find_one({"name": mode})
+        else:
+            mode_doc = next(
+                modes_collection.aggregate([
+                    {"$match": {"name": mode}},
+                    {"$match": {"$expr": {"$eq": [{"$toString": "$user_id"}, str(request.user.get("sub"))]}}},
+                    {"$limit": 1},
+                ]),
+                None,
+            )
     mode_owner_id = (mode_doc or {}).get("user_id", request.user["sub"])
     allowed_tags = mode_doc.get("tags", []) if mode_doc else []
     if tag and tag not in allowed_tags:
@@ -1729,12 +1787,17 @@ def create_document():
 @routes.delete("/admin/documents/<doc_id>")
 @cognito_auth_required
 def delete_document(doc_id):
-    query = {"_id": ObjectId(doc_id)}
-    if not request.user.get("is_super_admin"):
-        query["user_id"] = request.user["sub"]
-    doc = documents_collection.find_one(query)
+    try:
+        doc_obj_id = ObjectId(doc_id)
+    except Exception:  # noqa: BLE001
+        return {"error": "Invalid document id"}, 400
+
+    doc = documents_collection.find_one({"_id": doc_obj_id})
     if not doc:
         return {"error": "Not found"}, 404
+    if not request.user.get("is_super_admin"):
+        if not doc.get("user_id") or str(doc.get("user_id")) != str(request.user.get("sub")):
+            return {"error": "Access denied"}, 403
     key = doc.get("s3_key")
     if key:
         try:
@@ -1757,10 +1820,12 @@ def delete_document(doc_id):
     
     # Check if there are any remaining files for this mode
     if doc.get("mode"):
-        mode_query = {"name": doc["mode"]}
-        if not request.user.get("is_super_admin"):
-            mode_query["user_id"] = request.user["sub"]
-        mode_doc = modes_collection.find_one(mode_query)
+        # Find the mode owned by the same owner as the document (mode names can repeat across users).
+        mode_doc = None
+        for candidate in modes_collection.find({"name": doc["mode"]}, {"_id": 1, "user_id": 1}):
+            if str(candidate.get("user_id")) == str(doc.get("user_id")):
+                mode_doc = candidate
+                break
         
         if mode_doc:
             # Count remaining documents with files for this mode
@@ -1782,12 +1847,17 @@ def delete_document(doc_id):
 @routes.get("/admin/documents/<doc_id>/download")
 @cognito_auth_required
 def download_document(doc_id):
-    query = {"_id": ObjectId(doc_id)}
-    if not request.user.get("is_super_admin"):
-        query["user_id"] = request.user["sub"]
-    doc = documents_collection.find_one(query)
+    try:
+        doc_obj_id = ObjectId(doc_id)
+    except Exception:  # noqa: BLE001
+        return {"error": "Invalid document id"}, 400
+
+    doc = documents_collection.find_one({"_id": doc_obj_id})
     if not doc:
         return {"error": "Not found"}, 404
+    if not request.user.get("is_super_admin"):
+        if not doc.get("user_id") or str(doc.get("user_id")) != str(request.user.get("sub")):
+            return {"error": "Access denied"}, 403
     
     s3_key = doc.get("s3_key")
     if not s3_key:
@@ -2155,13 +2225,17 @@ def doc_intel_build_package_selection():
 @cognito_auth_required
 def trigger_scrape(mode_id):
     """Manually trigger scraping for a specific mode (runs in background)."""
-    query = {"_id": ObjectId(mode_id)}
-    if not request.user.get("is_super_admin"):
-        query["user_id"] = request.user["sub"]
-    
-    mode_doc = modes_collection.find_one(query)
+    try:
+        mode_obj_id = ObjectId(mode_id)
+    except Exception:  # noqa: BLE001
+        return {"error": "Invalid mode id"}, 400
+
+    mode_doc = modes_collection.find_one({"_id": mode_obj_id})
     if not mode_doc:
         return {"error": "Mode not found"}, 404
+    if not request.user.get("is_super_admin"):
+        if not mode_doc.get("user_id") or str(mode_doc.get("user_id")) != str(request.user.get("sub")):
+            return {"error": "Access denied"}, 403
     
     mode_name = mode_doc.get("name")
     scrape_sites = mode_doc.get("scrape_sites", [])
@@ -2173,7 +2247,7 @@ def trigger_scrape(mode_id):
         # Trigger background scrape (non-blocking)
         job_id = scrape_scheduler.trigger_background_scrape(
             mode_name=mode_name,
-            user_id=mode_doc.get("user_id") or request.user["sub"],
+            user_id=str(mode_doc.get("user_id") or request.user.get("sub") or ""),
             mode_id=str(mode_doc["_id"]),
             scrape_sites=scrape_sites
         )
@@ -2202,13 +2276,17 @@ def trigger_scrape(mode_id):
 @cognito_auth_required
 def get_scrape_status(mode_id):
     """Get scraping status and history for a mode."""
-    query = {"_id": ObjectId(mode_id)}
-    if not request.user.get("is_super_admin"):
-        query["user_id"] = request.user["sub"]
-    
-    mode_doc = modes_collection.find_one(query)
+    try:
+        mode_obj_id = ObjectId(mode_id)
+    except Exception:  # noqa: BLE001
+        return {"error": "Invalid mode id"}, 400
+
+    mode_doc = modes_collection.find_one({"_id": mode_obj_id})
     if not mode_doc:
         return {"error": "Mode not found"}, 404
+    if not request.user.get("is_super_admin"):
+        if not mode_doc.get("user_id") or str(mode_doc.get("user_id")) != str(request.user.get("sub")):
+            return {"error": "Access denied"}, 403
     
     mode_name = mode_doc.get("name")
     
@@ -2242,13 +2320,17 @@ def get_scrape_status(mode_id):
 def get_scraped_sites(mode_id):
     """Get all scraped sites (grouped by domain) for a mode."""
     try:
-        query = {"_id": ObjectId(mode_id)}
-        if not request.user.get("is_super_admin"):
-            query["user_id"] = request.user["sub"]
-        
-        mode_doc = modes_collection.find_one(query)
+        try:
+            mode_obj_id = ObjectId(mode_id)
+        except Exception:  # noqa: BLE001
+            return {"error": "Invalid mode id"}, 400
+
+        mode_doc = modes_collection.find_one({"_id": mode_obj_id})
         if not mode_doc:
             return {"error": "Mode not found"}, 404
+        if not request.user.get("is_super_admin"):
+            if not mode_doc.get("user_id") or str(mode_doc.get("user_id")) != str(request.user.get("sub")):
+                return {"error": "Access denied"}, 403
         
         mode_name = mode_doc.get("name")
         
@@ -2286,13 +2368,17 @@ def get_scraped_sites(mode_id):
 def delete_site_content(mode_id, domain):
     """Delete all scraped content from a specific site for a mode (runs in background)."""
     try:
-        query = {"_id": ObjectId(mode_id)}
-        if not request.user.get("is_super_admin"):
-            query["user_id"] = request.user["sub"]
-        
-        mode_doc = modes_collection.find_one(query)
+        try:
+            mode_obj_id = ObjectId(mode_id)
+        except Exception:  # noqa: BLE001
+            return {"error": "Invalid mode id"}, 400
+
+        mode_doc = modes_collection.find_one({"_id": mode_obj_id})
         if not mode_doc:
             return {"error": "Mode not found"}, 404
+        if not request.user.get("is_super_admin"):
+            if not mode_doc.get("user_id") or str(mode_doc.get("user_id")) != str(request.user.get("sub")):
+                return {"error": "Access denied"}, 403
         
         mode_name = mode_doc.get("name")
         
@@ -2310,7 +2396,7 @@ def delete_site_content(mode_id, domain):
             mode_id=mode_id,
             mode_name=mode_name,
             domain=domain,
-            user_id=request.user.get("sub") if not request.user.get("is_super_admin") else "superadmin",
+            user_id=str(mode_doc.get("user_id") or request.user.get("sub") or ""),
             auto_dispatch=True
         )
         
@@ -2331,15 +2417,20 @@ def delete_site_content(mode_id, domain):
 def get_blocked_pages(mode_id):
     """List blocked page URLs for a mode (used by Mode Editor UI)."""
     try:
-        query = {"_id": ObjectId(mode_id)}
-        if not request.user.get("is_super_admin"):
-            query["user_id"] = request.user["sub"]
-        mode_doc = modes_collection.find_one(query)
+        try:
+            mode_obj_id = ObjectId(mode_id)
+        except Exception:  # noqa: BLE001
+            return {"error": "Invalid mode id"}, 400
+
+        mode_doc = modes_collection.find_one({"_id": mode_obj_id})
         if not mode_doc:
             return {"error": "Mode not found"}, 404
 
         mode_name = mode_doc.get("name")
         user_id = mode_doc.get("user_id")
+        if not request.user.get("is_super_admin"):
+            if not user_id or str(user_id) != str(request.user.get("sub")):
+                return {"error": "Access denied"}, 403
 
         docs = list(
             blocked_pages_collection.find(
@@ -2382,23 +2473,36 @@ def block_page(mode_id):
     if not content_id and not (url or normalized_url):
         return {"error": "content_id or url is required"}, 400
 
-    query = {"_id": ObjectId(mode_id)}
-    if not request.user.get("is_super_admin"):
-        query["user_id"] = request.user["sub"]
-    mode_doc = modes_collection.find_one(query)
+    try:
+        mode_obj_id = ObjectId(mode_id)
+    except Exception:  # noqa: BLE001
+        return {"error": "Invalid mode id"}, 400
+
+    mode_doc = modes_collection.find_one({"_id": mode_obj_id})
     if not mode_doc:
         return {"error": "Mode not found"}, 404
     mode_name = mode_doc.get("name")
     mode_owner_id = mode_doc.get("user_id")
+    if not request.user.get("is_super_admin"):
+        if not mode_owner_id or str(mode_owner_id) != str(request.user.get("sub")):
+            _log_access_denied(
+                "block_page_mode_owner_mismatch",
+                mode_id=mode_id,
+                mode_owner_id=mode_owner_id,
+            )
+            return {"error": "Access denied"}, 403
 
     # Resolve from content_id when possible (preferred, gives normalized_url)
     scraped_doc = None
     if content_id:
-        scraped_doc = scraped_content_collection.find_one({"_id": ObjectId(content_id)})
+        try:
+            content_obj_id = ObjectId(content_id)
+        except Exception:  # noqa: BLE001
+            return {"error": "Invalid content id"}, 400
+
+        scraped_doc = scraped_content_collection.find_one({"_id": content_obj_id})
         if not scraped_doc:
             return {"error": "Content not found"}, 404
-        if scraped_doc.get("user_id") != mode_owner_id and not request.user.get("is_super_admin"):
-            return {"error": "Access denied"}, 403
         if mode_name not in (scraped_doc.get("modes") or []):
             return {"error": "Content does not belong to this mode"}, 400
 
@@ -2412,7 +2516,7 @@ def block_page(mode_id):
 
     # Store in mode doc for fast skip during scraping
     modes_collection.update_one(
-        {"_id": ObjectId(mode_id)},
+        {"_id": mode_obj_id},
         {"$addToSet": {"blocked_page_urls": normalized_url}},
     )
 
@@ -2430,17 +2534,33 @@ def block_page(mode_id):
     except Exception as e:  # noqa: BLE001
         print(f"Failed to upsert blocked page record: {e}")
 
-    # Queue deletion if we have a content record
+    # IMPORTANT: Blocking is per-mode. Detach the page from THIS mode without impacting other modes.
+    # Only delete the underlying scraped_content document if it is no longer used by any mode.
     job_id = None
-    if content_id:
-        try:
-            job_id = scraper_client.queue_delete_content(
-                content_id=content_id,
-                user_id=request.user["sub"],
-                mode_name=mode_name,
+    try:
+        if content_id and scraped_doc:
+            updated = scraped_content_collection.find_one_and_update(
+                {"_id": content_obj_id},
+                {"$pull": {"modes": mode_name}},
+                return_document=ReturnDocument.AFTER,
             )
-        except Exception as e:  # noqa: BLE001
-            print(f"Failed to queue delete job for blocked page: {e}")
+            if updated and not (updated.get("modes") or []):
+                try:
+                    job_id = scraper_client.queue_delete_content(
+                        content_id=content_id,
+                        user_id=str(request.user.get("sub") or ""),
+                        mode_name=None,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    print(f"Failed to queue delete job for orphaned blocked page: {e}")
+        elif normalized_url:
+            # Best-effort detach when the UI blocks by URL (no content_id provided)
+            scraped_content_collection.update_many(
+                {"normalized_url": normalized_url, "modes": mode_name},
+                {"$pull": {"modes": mode_name}},
+            )
+    except Exception as e:  # noqa: BLE001
+        print(f"Failed to detach blocked page from mode: {e}")
 
     return {"status": "blocked", "normalized_url": normalized_url, "job_id": str(job_id) if job_id else None}, 200
 
@@ -2454,16 +2574,32 @@ def block_pages_bulk(mode_id):
     if not isinstance(content_ids, list) or not content_ids:
         return {"error": "content_ids is required"}, 400
 
-    query = {"_id": ObjectId(mode_id)}
-    if not request.user.get("is_super_admin"):
-        query["user_id"] = request.user["sub"]
-    mode_doc = modes_collection.find_one(query)
+    try:
+        mode_obj_id = ObjectId(mode_id)
+    except Exception:  # noqa: BLE001
+        return {"error": "Invalid mode id"}, 400
+
+    mode_doc = modes_collection.find_one({"_id": mode_obj_id})
     if not mode_doc:
         return {"error": "Mode not found"}, 404
     mode_name = mode_doc.get("name")
     mode_owner_id = mode_doc.get("user_id")
+    if not request.user.get("is_super_admin"):
+        if not mode_owner_id or str(mode_owner_id) != str(request.user.get("sub")):
+            _log_access_denied(
+                "block_pages_bulk_mode_owner_mismatch",
+                mode_id=mode_id,
+                mode_owner_id=mode_owner_id,
+                extra={"count": len(content_ids) if isinstance(content_ids, list) else None},
+            )
+            return {"error": "Access denied"}, 403
 
-    scraped_docs = list(scraped_content_collection.find({"_id": {"$in": [ObjectId(cid) for cid in content_ids]}}))
+    try:
+        content_obj_ids = [ObjectId(cid) for cid in content_ids]
+    except Exception:  # noqa: BLE001
+        return {"error": "Invalid content id in content_ids"}, 400
+
+    scraped_docs = list(scraped_content_collection.find({"_id": {"$in": content_obj_ids}}))
     if not scraped_docs:
         return {"error": "No content found"}, 404
 
@@ -2473,8 +2609,6 @@ def block_pages_bulk(mode_id):
     valid_content_ids = []
 
     for d in scraped_docs:
-        if d.get("user_id") != mode_owner_id and not request.user.get("is_super_admin"):
-            continue
         if mode_name not in (d.get("modes") or []):
             continue
         nurl = d.get("normalized_url") or (d.get("original_url") or d.get("url"))
@@ -2499,7 +2633,7 @@ def block_pages_bulk(mode_id):
         return {"error": "No eligible pages to block"}, 400
 
     modes_collection.update_one(
-        {"_id": ObjectId(mode_id)},
+        {"_id": mode_obj_id},
         {"$addToSet": {"blocked_page_urls": {"$each": normalized_urls}}},
     )
 
@@ -2510,17 +2644,28 @@ def block_pages_bulk(mode_id):
         # Ignore duplicates/insert issues (we also store list in mode doc)
         pass
 
+    # IMPORTANT: per-mode block. Detach each page from THIS mode; delete only if orphaned.
     job_ids = []
     for cid in valid_content_ids:
         try:
-            job_id = scraper_client.queue_delete_content(
-                content_id=cid,
-                user_id=request.user["sub"],
-                mode_name=mode_name,
+            content_obj_id = ObjectId(cid)
+            updated = scraped_content_collection.find_one_and_update(
+                {"_id": content_obj_id},
+                {"$pull": {"modes": mode_name}},
+                return_document=ReturnDocument.AFTER,
             )
-            job_ids.append(str(job_id))
+            if updated and not (updated.get("modes") or []):
+                try:
+                    job_id = scraper_client.queue_delete_content(
+                        content_id=cid,
+                        user_id=str(request.user.get("sub") or ""),
+                        mode_name=None,
+                    )
+                    job_ids.append(str(job_id))
+                except Exception as e:  # noqa: BLE001
+                    print(f"Failed to queue delete for orphaned content {cid}: {e}")
         except Exception as e:  # noqa: BLE001
-            print(f"Failed to queue delete for {cid}: {e}")
+            print(f"Failed to detach block for {cid}: {e}")
 
     return {"status": "blocked", "count": len(normalized_urls), "job_ids": job_ids}, 200
 
@@ -2534,17 +2679,22 @@ def unblock_page(mode_id):
     if not normalized_url:
         return {"error": "normalized_url is required"}, 400
 
-    query = {"_id": ObjectId(mode_id)}
-    if not request.user.get("is_super_admin"):
-        query["user_id"] = request.user["sub"]
-    mode_doc = modes_collection.find_one(query)
+    try:
+        mode_obj_id = ObjectId(mode_id)
+    except Exception:  # noqa: BLE001
+        return {"error": "Invalid mode id"}, 400
+
+    mode_doc = modes_collection.find_one({"_id": mode_obj_id})
     if not mode_doc:
         return {"error": "Mode not found"}, 404
     mode_name = mode_doc.get("name")
     mode_owner_id = mode_doc.get("user_id")
+    if not request.user.get("is_super_admin"):
+        if not mode_owner_id or str(mode_owner_id) != str(request.user.get("sub")):
+            return {"error": "Access denied"}, 403
 
     modes_collection.update_one(
-        {"_id": ObjectId(mode_id)},
+        {"_id": mode_obj_id},
         {"$pull": {"blocked_page_urls": normalized_url}},
     )
     blocked_pages_collection.delete_one({"mode": mode_name, "user_id": mode_owner_id, "normalized_url": normalized_url})
@@ -2560,17 +2710,22 @@ def unblock_pages_bulk(mode_id):
     if not isinstance(normalized_urls, list) or not normalized_urls:
         return {"error": "normalized_urls is required"}, 400
 
-    query = {"_id": ObjectId(mode_id)}
-    if not request.user.get("is_super_admin"):
-        query["user_id"] = request.user["sub"]
-    mode_doc = modes_collection.find_one(query)
+    try:
+        mode_obj_id = ObjectId(mode_id)
+    except Exception:  # noqa: BLE001
+        return {"error": "Invalid mode id"}, 400
+
+    mode_doc = modes_collection.find_one({"_id": mode_obj_id})
     if not mode_doc:
         return {"error": "Mode not found"}, 404
     mode_name = mode_doc.get("name")
     mode_owner_id = mode_doc.get("user_id")
+    if not request.user.get("is_super_admin"):
+        if not mode_owner_id or str(mode_owner_id) != str(request.user.get("sub")):
+            return {"error": "Access denied"}, 403
 
     modes_collection.update_one(
-        {"_id": ObjectId(mode_id)},
+        {"_id": mode_obj_id},
         {"$pullAll": {"blocked_page_urls": normalized_urls}},
     )
     blocked_pages_collection.delete_many({"mode": mode_name, "user_id": mode_owner_id, "normalized_url": {"$in": normalized_urls}})
@@ -2582,13 +2737,17 @@ def unblock_pages_bulk(mode_id):
 def get_discovered_files(mode_id):
     """Get all discovered downloadable files for a mode."""
     try:
-        query = {"_id": ObjectId(mode_id)}
-        if not request.user.get("is_super_admin"):
-            query["user_id"] = request.user["sub"]
-        
-        mode_doc = modes_collection.find_one(query)
+        try:
+            mode_obj_id = ObjectId(mode_id)
+        except Exception:  # noqa: BLE001
+            return {"error": "Invalid mode id"}, 400
+
+        mode_doc = modes_collection.find_one({"_id": mode_obj_id})
         if not mode_doc:
             return {"error": "Mode not found"}, 404
+        if not request.user.get("is_super_admin"):
+            if not mode_doc.get("user_id") or str(mode_doc.get("user_id")) != str(request.user.get("sub")):
+                return {"error": "Access denied"}, 403
         
         mode_name = mode_doc.get("name")
         
@@ -2622,13 +2781,17 @@ def get_discovered_files(mode_id):
 def add_discovered_file(mode_id):
     """Download and add a discovered file to the mode's documents."""
     try:
-        query = {"_id": ObjectId(mode_id)}
-        if not request.user.get("is_super_admin"):
-            query["user_id"] = request.user["sub"]
-        
-        mode_doc = modes_collection.find_one(query)
+        try:
+            mode_obj_id = ObjectId(mode_id)
+        except Exception:  # noqa: BLE001
+            return {"error": "Invalid mode id"}, 400
+
+        mode_doc = modes_collection.find_one({"_id": mode_obj_id})
         if not mode_doc:
             return {"error": "Mode not found"}, 404
+        if not request.user.get("is_super_admin"):
+            if not mode_doc.get("user_id") or str(mode_doc.get("user_id")) != str(request.user.get("sub")):
+                return {"error": "Access denied"}, 403
         
         mode_name = mode_doc.get("name")
         data = request.get_json()
@@ -2647,6 +2810,10 @@ def add_discovered_file(mode_id):
         
         if file_doc.get("mode") != mode_name:
             return {"error": "File does not belong to this mode"}, 403
+
+        if not request.user.get("is_super_admin"):
+            if not file_doc.get("user_id") or str(file_doc.get("user_id")) != str(mode_doc.get("user_id")):
+                return {"error": "Access denied"}, 403
         
         # Check if already added
         if file_doc.get("status") == "added":
@@ -2855,15 +3022,17 @@ def delete_discovered_file(file_id):
 def list_scraped_content():
     """List all scraped content, optionally filtered by mode."""
     mode = request.args.get("mode", "").strip()
-    
-    query = {}
-    if not request.user.get("is_super_admin"):
-        query["user_id"] = request.user["sub"]
-    
-    if mode:
-        query["modes"] = mode  # Updated for new schema with modes array
-    
-    content_docs = list(scraped_content_collection.find(query))
+
+    if request.user.get("is_super_admin"):
+        query = {}
+        if mode:
+            query["modes"] = mode  # Updated for new schema with modes array
+        content_docs = list(scraped_content_collection.find(query))
+    else:
+        pipeline = [{"$match": {"$expr": {"$eq": [{"$toString": "$user_id"}, str(request.user.get("sub"))]}}}]
+        if mode:
+            pipeline.insert(0, {"$match": {"modes": mode}})
+        content_docs = list(scraped_content_collection.aggregate(pipeline))
     
     scraped_content = []
     for doc in content_docs:
@@ -2891,13 +3060,17 @@ def list_scraped_content():
 @cognito_auth_required
 def delete_scraped_content(content_id):
     """Delete scraped content (runs in background)."""
-    query = {"_id": ObjectId(content_id)}
-    if not request.user.get("is_super_admin"):
-        query["user_id"] = request.user["sub"]
-    
-    doc = scraped_content_collection.find_one(query)
+    try:
+        content_obj_id = ObjectId(content_id)
+    except Exception:  # noqa: BLE001
+        return {"error": "Invalid content id"}, 400
+
+    doc = scraped_content_collection.find_one({"_id": content_obj_id})
     if not doc:
         return {"error": "Content not found"}, 404
+    if not request.user.get("is_super_admin"):
+        if not doc.get("user_id") or str(doc.get("user_id")) != str(request.user.get("sub")):
+            return {"error": "Access denied"}, 403
     
     job_id = scraper_client.queue_delete_content(
         content_id=content_id,
@@ -2921,13 +3094,17 @@ def delete_scraped_content(content_id):
 @cognito_auth_required
 def refresh_scraped_content(content_id):
     """Re-scrape a specific URL."""
-    query = {"_id": ObjectId(content_id)}
-    if not request.user.get("is_super_admin"):
-        query["user_id"] = request.user["sub"]
-    
-    doc = scraped_content_collection.find_one(query)
+    try:
+        content_obj_id = ObjectId(content_id)
+    except Exception:  # noqa: BLE001
+        return {"error": "Invalid content id"}, 400
+
+    doc = scraped_content_collection.find_one({"_id": content_obj_id})
     if not doc:
         return {"error": "Content not found"}, 404
+    if not request.user.get("is_super_admin"):
+        if not doc.get("user_id") or str(doc.get("user_id")) != str(request.user.get("sub")):
+            return {"error": "Access denied"}, 403
     
     # Support both old and new schema
     url = doc.get("original_url") or doc.get("url")
@@ -2940,9 +3117,13 @@ def refresh_scraped_content(content_id):
         return {"error": "Invalid content document"}, 400
 
     # Block check: prevent refresh if URL is blocked for this mode
+    mode_doc_for_owner = None
     try:
-        mode_doc = modes_collection.find_one({"name": mode, "user_id": user_id}, {"blocked_page_urls": 1})
-        if mode_doc and normalized_url and normalized_url in (mode_doc.get("blocked_page_urls") or []):
+        for candidate in modes_collection.find({"name": mode}, {"blocked_page_urls": 1, "user_id": 1}):
+            if str(candidate.get("user_id")) == str(user_id):
+                mode_doc_for_owner = candidate
+                break
+        if mode_doc_for_owner and normalized_url and normalized_url in (mode_doc_for_owner.get("blocked_page_urls") or []):
             return {"error": "This page URL is blocked for this mode"}, 400
     except Exception as e:  # noqa: BLE001
         print(f"Blocked-page check failed: {e}")
@@ -2957,10 +3138,11 @@ def refresh_scraped_content(content_id):
 
         # Update mode "last scrape" timestamp when a refresh is initiated/queued
         try:
-            modes_collection.update_one(
-                {"name": mode, "user_id": user_id},
-                {"$set": {"last_scraped_at": datetime.utcnow()}},
-            )
+            if mode_doc_for_owner and mode_doc_for_owner.get("_id"):
+                modes_collection.update_one(
+                    {"_id": mode_doc_for_owner["_id"]},
+                    {"$set": {"last_scraped_at": datetime.utcnow()}},
+                )
         except Exception as e:  # noqa: BLE001
             print(f"Error updating last_scraped_at for mode refresh: {e}")
 
@@ -3010,10 +3192,11 @@ def refresh_scraped_content(content_id):
 
         # Update mode "last scrape" timestamp after a successful refresh run
         try:
-            modes_collection.update_one(
-                {"name": mode, "user_id": user_id},
-                {"$set": {"last_scraped_at": scraped_at}},
-            )
+            if mode_doc_for_owner and mode_doc_for_owner.get("_id"):
+                modes_collection.update_one(
+                    {"_id": mode_doc_for_owner["_id"]},
+                    {"$set": {"last_scraped_at": scraped_at}},
+                )
         except Exception as e:  # noqa: BLE001
             print(f"Error updating last_scraped_at after local refresh: {e}")
         
@@ -3052,13 +3235,17 @@ def refresh_scraped_content(content_id):
 def get_scrape_job_status(job_id):
     """Get the status of a specific scraping job."""
     try:
-        query = {"_id": ObjectId(job_id)}
-        if not request.user.get("is_super_admin"):
-            query["user_id"] = request.user["sub"]
-        
-        job = scraping_jobs_collection.find_one(query)
+        try:
+            job_obj_id = ObjectId(job_id)
+        except Exception:  # noqa: BLE001
+            return {"error": "Invalid job id"}, 400
+
+        job = scraping_jobs_collection.find_one({"_id": job_obj_id})
         if not job:
             return {"error": "Job not found"}, 404
+        if not request.user.get("is_super_admin"):
+            if not job.get("user_id") or str(job.get("user_id")) != str(request.user.get("sub")):
+                return {"error": "Access denied"}, 403
         
         return {
             "_id": str(job["_id"]),
@@ -3083,16 +3270,18 @@ def list_scrape_jobs():
     """List all scraping jobs for the user (recent first)."""
     try:
         mode_name = request.args.get("mode", "").strip()
-        
-        query = {}
-        if not request.user.get("is_super_admin"):
-            query["user_id"] = request.user["sub"]
-        
-        if mode_name:
-            query["mode_name"] = mode_name
-        
-        # Get recent jobs (last 50)
-        jobs = list(scraping_jobs_collection.find(query).sort("created_at", -1).limit(50))
+
+        if request.user.get("is_super_admin"):
+            query = {}
+            if mode_name:
+                query["mode_name"] = mode_name
+            jobs = list(scraping_jobs_collection.find(query).sort("created_at", -1).limit(50))
+        else:
+            pipeline = [{"$match": {"$expr": {"$eq": [{"$toString": "$user_id"}, str(request.user.get("sub"))]}}}]
+            if mode_name:
+                pipeline.insert(0, {"$match": {"mode_name": mode_name}})
+            pipeline.extend([{"$sort": {"created_at": -1}}, {"$limit": 50}])
+            jobs = list(scraping_jobs_collection.aggregate(pipeline))
         
         return {
             "jobs": [{
@@ -3118,21 +3307,23 @@ def get_active_scrape_jobs(mode_id):
     """Get all active (in_progress or queued) scraping jobs for a specific mode."""
     try:
         # Get the mode to verify access
-        mode_query = {"_id": ObjectId(mode_id)}
-        if not request.user.get("is_super_admin"):
-            mode_query["user_id"] = request.user["sub"]
-        
-        mode = modes_collection.find_one(mode_query)
+        try:
+            mode_obj_id = ObjectId(mode_id)
+        except Exception:  # noqa: BLE001
+            return {"error": "Invalid mode id"}, 400
+
+        mode = modes_collection.find_one({"_id": mode_obj_id})
         if not mode:
             return {"error": "Mode not found"}, 404
+        if not request.user.get("is_super_admin"):
+            if not mode.get("user_id") or str(mode.get("user_id")) != str(request.user.get("sub")):
+                return {"error": "Access denied"}, 403
         
         # Find all active jobs for this mode
         query = {
             "mode_id": mode_id,
             "status": {"$in": ["queued", "in_progress"]}
         }
-        if not request.user.get("is_super_admin"):
-            query["user_id"] = request.user["sub"]
         
         jobs = list(scraping_jobs_collection.find(query).sort("created_at", -1))
         
@@ -3159,11 +3350,19 @@ def get_active_scrape_jobs(mode_id):
 def delete_scrape_job(job_id):
     """Delete a scraping job record (does not stop running jobs)."""
     try:
-        query = {"_id": ObjectId(job_id)}
+        try:
+            job_obj_id = ObjectId(job_id)
+        except Exception:  # noqa: BLE001
+            return {"error": "Invalid job id"}, 400
+
+        job = scraping_jobs_collection.find_one({"_id": job_obj_id})
+        if not job:
+            return {"error": "Job not found"}, 404
         if not request.user.get("is_super_admin"):
-            query["user_id"] = request.user["sub"]
-        
-        result = scraping_jobs_collection.delete_one(query)
+            if not job.get("user_id") or str(job.get("user_id")) != str(request.user.get("sub")):
+                return {"error": "Access denied"}, 403
+
+        result = scraping_jobs_collection.delete_one({"_id": job_obj_id})
         
         if result.deleted_count == 0:
             return {"error": "Job not found"}, 404

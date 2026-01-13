@@ -1610,16 +1610,8 @@
                 alert("Failed to block file.");
                 return;
             }
-
-            const deleteRes = await fetch('/flask/admin/scrape/discovered-file/' + fileId, {
-                method: 'DELETE',
-                headers: { 'Authorization': 'Bearer ' + idToken }
-            });
-            if (handleUnauthorized(deleteRes) || !deleteRes.ok) {
-                alert("Blocked, but failed to remove from list. Please refresh.");
-                return;
-            }
-
+            // The backend block endpoint already removes the discovered-file record.
+            // Just refresh the list. (If older backends don't, the list will still refresh on next poll/load.)
             loadDiscoveredFiles();
         } catch (err) {
             console.error('Block and remove failed:', err);
