@@ -2765,22 +2765,33 @@ def block_discovered_file(mode_id):
         
         file_url = file_doc.get("file_url")
         mode_name = file_doc.get("mode")
+        if not file_url:
+            return {"error": "File URL not found"}, 400
+        if not mode_name:
+            return {"error": "File mode not found"}, 400
         
-        # Verify mode matches
-        query = {"_id": ObjectId(mode_id)}
-        if not request.user.get("is_super_admin"):
-            query["user_id"] = request.user["sub"]
-        
-        mode_doc = modes_collection.find_one(query)
+        # Verify mode exists + access (do NOT bake user_id into the Mongo query; it can be
+        # stored as a non-string in older data, which causes false 403s.)
+        try:
+            mode_obj_id = ObjectId(mode_id)
+        except Exception:  # noqa: BLE001
+            return {"error": "Invalid mode id"}, 400
+
+        mode_doc = modes_collection.find_one({"_id": mode_obj_id})
         if not mode_doc:
-            return {"error": "Mode not found or access denied"}, 403
+            return {"error": "Mode not found"}, 404
+
+        if not request.user.get("is_super_admin"):
+            owner_id = mode_doc.get("user_id")
+            if not owner_id or str(owner_id) != str(request.user.get("sub")):
+                return {"error": "Access denied"}, 403
             
         if mode_doc.get("name") != mode_name:
             return {"error": "File does not belong to this mode"}, 400
             
         # Add URL to blocked_file_urls
         modes_collection.update_one(
-            {"_id": ObjectId(mode_id)},
+            {"_id": mode_obj_id},
             {"$addToSet": {"blocked_file_urls": file_url}}
         )
         
@@ -2806,22 +2817,26 @@ def delete_discovered_file(file_id):
     try:
         # Get the discovered file
         discovered_files_collection = db.get_collection("discovered_files")
-        file_doc = discovered_files_collection.find_one({"_id": ObjectId(file_id)})
+        try:
+            file_obj_id = ObjectId(file_id)
+        except Exception:  # noqa: BLE001
+            return {"error": "Invalid file id"}, 400
+
+        file_doc = discovered_files_collection.find_one({"_id": file_obj_id})
         
         if not file_doc:
             return {"error": "File not found"}, 404
         
         mode_name = file_doc.get("mode")
         
-        # Verify user has access to this mode
+        # Verify user has access (string-safe check; older data may store ids as non-strings)
         if not request.user.get("is_super_admin"):
-            mode_query = {"name": mode_name, "user_id": request.user["sub"]}
-            mode_doc = modes_collection.find_one(mode_query)
-            if not mode_doc:
+            file_owner_id = file_doc.get("user_id")
+            if not file_owner_id or str(file_owner_id) != str(request.user.get("sub")):
                 return {"error": "Access denied"}, 403
         
         # Delete the discovered file record
-        discovered_files_collection.delete_one({"_id": ObjectId(file_id)})
+        discovered_files_collection.delete_one({"_id": file_obj_id})
         
         print(f"Deleted discovered file: {file_doc.get('filename')} from mode {mode_name}")
         

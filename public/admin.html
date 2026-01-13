@@ -62,7 +62,35 @@
             <p class="text-gray-600 mt-1">Manage and configure your AI assistant modes</p>
           </div>
         </div>
-        <div class="flex gap-3">
+        <div class="flex flex-col gap-3 md:flex-row md:items-center">
+          <!-- Search / filter -->
+          <div class="relative md:w-72">
+            <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400">
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35m0 0A7.5 7.5 0 103.5 9.5a7.5 7.5 0 0013.15 7.15z"></path>
+              </svg>
+            </div>
+            <input
+              id="mode-filter"
+              type="text"
+              placeholder="Search modes..."
+              autocomplete="off"
+              class="w-full rounded-xl border border-gray-200 bg-gray-50 px-10 py-3 text-sm text-gray-900 placeholder:text-gray-400 shadow-sm transition-all focus:border-primary focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20"
+            />
+            <button
+              id="clear-mode-filter"
+              class="hidden absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-gray-600"
+              title="Clear search"
+              type="button"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+              </svg>
+              <span class="sr-only">Clear</span>
+            </button>
+          </div>
+
+          <div class="flex gap-3">
           <button id="view-superadmin" class="hidden bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white px-6 py-3 rounded-xl font-medium shadow-medium hover:shadow-strong transition-all duration-200 transform hover:-translate-y-0.5 flex items-center gap-2">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path>
@@ -81,6 +109,7 @@
             </svg>
             Create New Mode
           </button>
+          </div>
         </div>
       </div>
     </div>
@@ -89,6 +118,7 @@
   </div>
   <script>
     const DEFAULT_THEME_COLOR = '#82002d';
+    let ALL_MODES = [];
 
     function normalizeColor(value) {
       if (!value) return DEFAULT_THEME_COLOR;
@@ -159,19 +189,34 @@
 
     // Check user permissions on page load
     checkUserPermissions();
-    async function loadModes() {
-      const res = await fetch('/flask/admin/modes', {
-        headers: { 'Authorization': 'Bearer ' + idToken }
-      });
-      if (res.status === 401) {
-        window.location.href = '/flask/admin/login';
-        return;
-      }
-      if (!res.ok) return;
-      const data = await res.json();
+
+    function getModeHaystack(mode) {
+      const name = (mode && mode.name) ? String(mode.name) : '';
+      return name.toLowerCase();
+    }
+
+    function renderModes(modes) {
       const list = document.getElementById('mode-list');
       list.innerHTML = '';
-      data.modes.forEach((m, index) => {
+
+      if (!modes || !modes.length) {
+        list.innerHTML = `
+          <div class="col-span-full">
+            <div class="bg-white rounded-2xl border border-gray-100 p-10 text-center shadow-soft">
+              <div class="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-gray-50 text-gray-400">
+                <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m8-4a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+              </div>
+              <h3 class="text-lg font-semibold text-gray-900">No modes found</h3>
+              <p class="mt-1 text-sm text-gray-500">Try a different search, or create a new mode.</p>
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      modes.forEach((m, index) => {
         const color = normalizeColor(m.color);
         const div = document.createElement('div');
         div.className = 'bg-white rounded-2xl shadow-soft border border-gray-100 p-6 cursor-pointer hover:shadow-medium hover:-translate-y-1 transition-all duration-200 animate-slide-up';
@@ -238,6 +283,55 @@
         list.appendChild(div);
       });
     }
+
+    function applyModeFilter() {
+      const input = document.getElementById('mode-filter');
+      const clearBtn = document.getElementById('clear-mode-filter');
+      const query = (input && input.value) ? input.value.trim().toLowerCase() : '';
+
+      if (clearBtn) {
+        clearBtn.classList.toggle('hidden', !query);
+      }
+
+      if (!query) {
+        renderModes(ALL_MODES);
+        return;
+      }
+
+      const filtered = ALL_MODES.filter((m) => getModeHaystack(m).includes(query));
+      renderModes(filtered);
+    }
+
+    async function loadModes() {
+      const res = await fetch('/flask/admin/modes', {
+        headers: { 'Authorization': 'Bearer ' + idToken }
+      });
+      if (res.status === 401) {
+        window.location.href = '/flask/admin/login';
+        return;
+      }
+      if (!res.ok) return;
+      const data = await res.json();
+      ALL_MODES = (data && Array.isArray(data.modes)) ? data.modes : [];
+      applyModeFilter();
+    }
+
+    // Wire up filter UI
+    (function initModeFilter() {
+      const input = document.getElementById('mode-filter');
+      const clearBtn = document.getElementById('clear-mode-filter');
+      if (input) {
+        input.addEventListener('input', applyModeFilter);
+      }
+      if (clearBtn) {
+        clearBtn.addEventListener('click', () => {
+          if (input) input.value = '';
+          applyModeFilter();
+          if (input) input.focus();
+        });
+      }
+    })();
+
     loadModes();
   </script>
 </body>

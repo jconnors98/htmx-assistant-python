@@ -370,7 +370,7 @@
       }
     }
 
-    function renderBarList(container, items) {
+    function renderBarList(container, items, options = {}) {
       container.innerHTML = '';
       if (!items || !items.length) {
         const message = document.createElement('p');
@@ -379,8 +379,15 @@
         container.appendChild(message);
         return;
       }
+
+      const limit = Number.isFinite(options.limit) ? options.limit : null;
+      const expandable = Boolean(options.expandable);
+      const expanded = Boolean(options.expanded);
+      const shouldTruncate = expandable && limit && items.length > limit && !expanded;
+      const visibleItems = shouldTruncate ? items.slice(0, limit) : items;
+
       const maxCount = Math.max(...items.map((item) => item.count));
-      items.forEach((item) => {
+      visibleItems.forEach((item) => {
         const wrapper = document.createElement('div');
         wrapper.className = 'space-y-2';
 
@@ -405,6 +412,33 @@
         wrapper.appendChild(barTrack);
         container.appendChild(wrapper);
       });
+
+      if (expandable && limit && items.length > limit) {
+        const actions = document.createElement('div');
+        actions.className = 'mt-4 flex items-center justify-between';
+
+        const meta = document.createElement('p');
+        meta.className = 'text-xs text-gray-500';
+        meta.textContent = expanded
+          ? `Showing ${numberFormatter.format(items.length)} of ${numberFormatter.format(items.length)}`
+          : `Showing ${numberFormatter.format(Math.min(limit, items.length))} of ${numberFormatter.format(items.length)}`;
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'text-sm font-medium text-[#82002d] hover:underline';
+        button.textContent = expanded
+          ? (options.collapseLabel || 'Show less')
+          : (options.expandLabel || `Show more (${numberFormatter.format(items.length - limit)})`);
+        button.onclick = () => {
+          if (typeof options.onToggle === 'function') {
+            options.onToggle(!expanded);
+          }
+        };
+
+        actions.appendChild(meta);
+        actions.appendChild(button);
+        container.appendChild(actions);
+      }
     }
 
     function renderCitiesList(container, cities) {
@@ -854,14 +888,38 @@
         (data.top_locations || []).map((item) => ({ label: item.country || 'Unknown', count: item.count || 0 })),
       );
       renderCitiesList(topCitiesContainer, data.top_cities || []);
-      renderBarList(
-        dailyBreakdown,
-        (data.daily_counts || []).map((item) => ({ label: formatDailyLabel(item.date), count: item.count || 0 })),
-      );
-      renderBarList(
-        hourlyBreakdown,
-        (data.hourly_counts || []).map((item) => ({ label: formatHourLabel(item.hour), count: item.count || 0 })),
-      );
+
+      const dailyItems = (data.daily_counts || []).map((item) => ({ label: formatDailyLabel(item.date), count: item.count || 0 }));
+      const hourlyItems = (data.hourly_counts || []).map((item) => ({ label: formatHourLabel(item.hour), count: item.count || 0 }));
+
+      window.__analyticsBarExpansionState = window.__analyticsBarExpansionState || { daily: false, hourly: false };
+
+      const renderDaily = () => renderBarList(dailyBreakdown, dailyItems, {
+        limit: 10,
+        expandable: true,
+        expanded: Boolean(window.__analyticsBarExpansionState.daily),
+        expandLabel: 'Show more',
+        collapseLabel: 'Show less',
+        onToggle: (next) => {
+          window.__analyticsBarExpansionState.daily = Boolean(next);
+          renderDaily();
+        },
+      });
+
+      const renderHourly = () => renderBarList(hourlyBreakdown, hourlyItems, {
+        limit: 10,
+        expandable: true,
+        expanded: Boolean(window.__analyticsBarExpansionState.hourly),
+        expandLabel: 'Show more',
+        collapseLabel: 'Show less',
+        onToggle: (next) => {
+          window.__analyticsBarExpansionState.hourly = Boolean(next);
+          renderHourly();
+        },
+      });
+
+      renderDaily();
+      renderHourly();
       renderRecentConversations(data.recent_conversations || []);
 
       analyticsContent.classList.remove('hidden');
