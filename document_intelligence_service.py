@@ -302,12 +302,43 @@ class DocumentIntelligenceService:
         project = self._get_project_by_session(session_id)
         if not project:
             return None
+
+        # Indexing status (doc-intel modes only):
+        # - indexing_complete: false if any document indicates truncated/incomplete parsing
+        # - page_count: sum of indexed pages across documents (non-PDF treated as 1 logical page)
+        indexing_complete = True
+        page_count = 0
+        for doc in project.files:
+            extra = getattr(doc, "extra", {}) or {}
+
+            # Prefer an explicit field if present
+            if extra.get("indexing_complete") is False:
+                indexing_complete = False
+
+            # Backward-compatible heuristic when explicit field is not present
+            notes = extra.get("processing_notes") or []
+            try:
+                if any("truncated" in str(note).lower() for note in notes):
+                    indexing_complete = False
+            except Exception:  # noqa: BLE001
+                pass
+
+            if str(getattr(doc, "file_extension", "")).lower() == "pdf":
+                try:
+                    page_count += int(extra.get("page_count") or extra.get("page_count_indexed") or 0)
+                except Exception:  # noqa: BLE001
+                    page_count += 0
+            else:
+                page_count += 1
+
         return {
             "project_id": project.project_id,
             "session_id": project.session_id,
             "mode_id": project.mode_id,
             "mode_name": project.mode_name,
             "file_count": len(project.files),
+            "page_count": page_count,
+            "indexing_complete": indexing_complete,
             "package_count": len(project.packages),
             "files": [
                 {

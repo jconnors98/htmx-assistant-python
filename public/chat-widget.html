@@ -1018,6 +1018,11 @@
       fabView.classList.add('hidden');
       // Directly expand widget instead of showing collapsed view
       expandWidget();
+
+      // Notify parent page (widget-loader host) that chat is opened
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage('chat-opened', '*');
+      }
       
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
@@ -1037,6 +1042,11 @@
       collapsedView.classList.add('hidden');
       expandedView.classList.add('hidden');
       fabView.classList.remove('hidden');
+
+      // Notify parent page (widget-loader host) that chat is closed
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage('chat-closed', '*');
+      }
       
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
