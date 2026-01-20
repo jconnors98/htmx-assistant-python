@@ -28,6 +28,7 @@ from assistant_services import ScraperClient
 from packages.common.scraper_contracts import ScraperQueueConfig
 from document_intelligence_service import DocumentIntelligenceService
 from tools import DocumentToolbox
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from functions import (
     _get_priority_source, _get_jwks, _is_super_admin, _async_log_prompt,
     _parse_date, _normalize_color, _normalize_text_color, _process_natural_language_query,
@@ -1227,6 +1228,143 @@ def permitsca_api():
     except Exception as err:  # noqa: BLE001
         print("Error getting AI response:", err)
         return {"error": "There was an error getting a response. Please try again."}, 500
+
+
+@routes.post("/api/scrape-target")
+@cognito_auth_required
+def scrape_target_api():
+    """
+    Universal target scrape endpoint.
+
+    Body:
+      {
+        "url": "https://...",
+        "options": { ... },             // optional; merged into query params
+        "target": {"type":"div","selectors":{...}},
+        "execution": "sync"|"async",    // default async
+        "timeout_ms": 30000             // optional
+      }
+    """
+    data = request.get_json(silent=True) or {}
+    url = (data.get("url") or "").strip()
+    if not url:
+        return {"error": "url is required"}, 400
+
+    options = data.get("options", None)
+    if options is not None and not isinstance(options, dict):
+        return {"error": "options must be an object"}, 400
+
+    target = data.get("target")
+    if not isinstance(target, dict):
+        return {"error": "target is required and must be an object"}, 400
+    target_type = (target.get("type") or "").strip()
+    selectors = target.get("selectors")
+    if not target_type:
+        return {"error": "target.type is required"}, 400
+    if selectors is None or not isinstance(selectors, dict):
+        return {"error": "target.selectors is required and must be an object"}, 400
+
+    execution = (data.get("execution") or "async").strip().lower()
+    if execution not in ("async", "sync"):
+        return {"error": "execution must be 'sync' or 'async'"}, 400
+
+    timeout_ms = data.get("timeout_ms", 30000)
+    try:
+        timeout_ms = int(timeout_ms)
+    except Exception:  # noqa: BLE001
+        return {"error": "timeout_ms must be an integer"}, 400
+    if timeout_ms <= 0 or timeout_ms > 300000:
+        return {"error": "timeout_ms must be between 1 and 300000"}, 400
+
+    user_id = (request.user or {}).get("sub")
+    if not user_id:
+        return {"error": "Unauthorized"}, 401
+
+    # Async path: create job + dispatch to the configured backend (local thread or SQS worker)
+    if execution == "async":
+        try:
+            job_id = scraper_client.queue_api_target_scrape(
+                url=url,
+                options=options or None,
+                target={"type": target_type, "selectors": selectors},
+                user_id=user_id,
+                timeout_ms=timeout_ms,
+                auto_dispatch=True,
+            )
+            return {"status": "queued", "job_id": str(job_id)}, 202
+        except Exception as e:  # noqa: BLE001
+            print(f"Error queueing api_target_scrape job: {e}")
+            return {"error": "Failed to queue job", "details": str(e)}, 500
+
+    # Sync path: run immediately and (optionally) persist a job doc for inspectability
+    global scraping_service  # reuse existing instance if present
+    if scraping_service is None:
+        try:
+            scraping_service = ScrapingService(
+                client,
+                db,
+                VECTOR_STORE_ID,
+            )
+        except Exception as e:  # noqa: BLE001
+            print(f"Error initializing scraping_service for sync scrape-target: {e}")
+            return {"error": "Scraping service not available", "details": str(e)}, 500
+
+    job_doc = {
+        "job_type": "api_target_scrape",
+        "status": "in_progress",
+        "user_id": user_id,
+        "url": url,
+        "options": options or None,
+        "target": {"type": target_type, "selectors": selectors},
+        "timeout_ms": timeout_ms,
+        "result": None,
+        "error": None,
+        "created_at": datetime.utcnow(),
+        "started_at": datetime.utcnow(),
+        "completed_at": None,
+        "environment": SCRAPER_ENVIRONMENT if SCRAPER_EXECUTION_MODE != "local" else ("dev" if localDevMode == "true" else "prod"),
+    }
+    job_id = scraping_jobs_collection.insert_one(job_doc).inserted_id
+
+    try:
+        matches = scraping_service.scrape_target_elements(
+            url,
+            options=options or None,
+            target={"type": target_type, "selectors": selectors},
+            timeout_ms=timeout_ms,
+        )
+        if not matches:
+            scraping_jobs_collection.update_one(
+                {"_id": job_id},
+                {"$set": {"status": "failed", "error": "No matching elements found", "completed_at": datetime.utcnow()}},
+            )
+            return {"error": "No matching elements found", "job_id": str(job_id)}, 404
+
+        result = {"match_count": len(matches), "matches": matches}
+        scraping_jobs_collection.update_one(
+            {"_id": job_id},
+            {"$set": {"status": "completed", "result": result, "completed_at": datetime.utcnow()}},
+        )
+        return {"status": "completed", "job_id": str(job_id), "result": result}, 200
+    except PlaywrightTimeoutError:
+        scraping_jobs_collection.update_one(
+            {"_id": job_id},
+            {
+                "$set": {
+                    "status": "failed",
+                    "error": f"Timeout waiting for target selector (timeout_ms={timeout_ms})",
+                    "completed_at": datetime.utcnow(),
+                }
+            },
+        )
+        return {"error": "Timeout waiting for target selector", "job_id": str(job_id)}, 504
+    except Exception as e:  # noqa: BLE001
+        scraping_jobs_collection.update_one(
+            {"_id": job_id},
+            {"$set": {"status": "failed", "error": str(e), "completed_at": datetime.utcnow()}},
+        )
+        print(f"Error running sync scrape-target: {e}")
+        return {"error": "Failed to scrape target", "details": str(e), "job_id": str(job_id)}, 500
 
 
 @routes.get("/admin")

@@ -17,7 +17,7 @@ from collections import deque
 from contextlib import contextmanager, nullcontext
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set, Tuple
-from urllib.parse import urljoin, urlparse, urlunparse
+from urllib.parse import urljoin, urlparse, urlunparse, parse_qsl, urlencode
 from decouple import config
 
 import requests
@@ -35,58 +35,86 @@ class BrowserPool:
 
     def __init__(self, start_playwright_fn, max_browsers: int = 2):
         self._start_playwright_fn = start_playwright_fn
+        # IMPORTANT:
+        # Playwright's sync API (greenlet-based) is NOT safe to share across threads.
+        # If a Playwright/browser object created in one thread is used in another,
+        # it can throw: "cannot switch to a different thread (which happens to have exited)".
+        #
+        # To avoid this, we maintain a separate pool per thread. This keeps browser
+        # instances and the sync_playwright() instance thread-affine.
         self._max_browsers = max(1, max_browsers)
-        self._lock = threading.Lock()
-        self._available_browsers: "queue.Queue" = queue.Queue()
-        self._playwright = None
-        self._created_browsers = 0
+        self._global_lock = threading.Lock()
+        self._by_thread: Dict[int, Dict[str, Any]] = {}
 
-    def _ensure_playwright(self):
-        if not self._playwright:
-            self._playwright = self._start_playwright_fn()
+    def _state(self) -> Dict[str, Any]:
+        tid = threading.get_ident()
+        with self._global_lock:
+            state = self._by_thread.get(tid)
+            if state is None:
+                state = {
+                    "available": queue.Queue(),
+                    "playwright": None,
+                    "created": 0,
+                }
+                self._by_thread[tid] = state
+            return state
+
+    def _ensure_playwright(self, state: Dict[str, Any]):
+        if not state.get("playwright"):
+            state["playwright"] = self._start_playwright_fn()
 
     def acquire(self, timeout: Optional[float] = None):
         """Acquire a browser, blocking if necessary."""
+        state = self._state()
         try:
-            browser = self._available_browsers.get_nowait()
+            browser = state["available"].get_nowait()
             if browser.is_connected():
                 return browser
             browser.close()
         except queue.Empty:
             pass
 
-        with self._lock:
-            if self._created_browsers < self._max_browsers:
-                self._ensure_playwright()
-                browser = self._playwright.chromium.launch(headless=True)
-                self._created_browsers += 1
-                return browser
+        if int(state.get("created", 0)) < self._max_browsers:
+            self._ensure_playwright(state)
+            browser = state["playwright"].chromium.launch(headless=True)
+            state["created"] = int(state.get("created", 0)) + 1
+            return browser
 
-        browser = self._available_browsers.get(timeout=timeout)
+        browser = state["available"].get(timeout=timeout)
         return browser
 
     def release(self, browser):
         """Return a browser to the pool."""
+        state = self._state()
         if browser and browser.is_connected():
-            self._available_browsers.put(browser)
+            state["available"].put(browser)
         else:
-            with self._lock:
-                self._created_browsers = max(0, self._created_browsers - 1)
+            state["created"] = max(0, int(state.get("created", 0)) - 1)
 
     def shutdown(self):
         """Close all browsers and stop Playwright."""
-        while not self._available_browsers.empty():
-            try:
-                browser = self._available_browsers.get_nowait()
-                if browser and browser.is_connected():
-                    browser.close()
-            except queue.Empty:
-                break
+        with self._global_lock:
+            states = list(self._by_thread.values())
+            self._by_thread = {}
 
-        if self._playwright:
-            self._playwright.stop()
-            self._playwright = None
-        self._created_browsers = 0
+        for state in states:
+            available = state.get("available")
+            if available is not None:
+                while not available.empty():
+                    try:
+                        browser = available.get_nowait()
+                        if browser and browser.is_connected():
+                            browser.close()
+                    except queue.Empty:
+                        break
+                    except Exception:
+                        break
+            try:
+                pw = state.get("playwright")
+                if pw:
+                    pw.stop()
+            except Exception:
+                pass
 
 
 class ScrapingService:
@@ -456,6 +484,235 @@ class ScrapingService:
         """Start Playwright with stderr fallback handling."""
         with self._playwright_stderr_guard():
             return sync_playwright().start()
+
+    # ------------------------------------------------------------------ #
+    # API target scraping helpers
+    # ------------------------------------------------------------------ #
+    def _build_url_with_options(self, url: str, options: Optional[Dict[str, Any]] = None) -> str:
+        """
+        Merge `options` into the URL querystring.
+
+        - Existing query params are preserved unless overridden.
+        - None values are skipped.
+        - List values are expanded (doseq).
+        """
+        if not options:
+            return url
+
+        parsed = urlparse(url)
+        existing = dict(parse_qsl(parsed.query, keep_blank_values=True))
+
+        merged: Dict[str, Any] = dict(existing)
+        for k, v in (options or {}).items():
+            if k is None:
+                continue
+            key = str(k).strip()
+            if not key:
+                continue
+            if v is None:
+                continue
+            merged[key] = v
+
+        query = urlencode(merged, doseq=True)
+        return urlunparse(parsed._replace(query=query))
+
+    def _css_escape_attr_value(self, value: str) -> str:
+        # Minimal escaping for CSS attribute selector values.
+        return (value or "").replace("\\", "\\\\").replace('"', '\\"')
+
+    def _parse_extracted_information(self, text: str) -> Dict[str, str]:
+        """
+        Best-effort parser to turn human-formatted blocks into key-value pairs.
+
+        Heuristics:
+        - Split into non-empty lines, trimming whitespace.
+        - Treat "key" lines as short Title Case labels with no digits/@ and few words.
+        - Accumulate subsequent non-key lines as the value until the next key.
+        - If a key has no value, store "".
+        """
+        if not text:
+            return {}
+
+        def is_key_candidate(line: str) -> bool:
+            s = (line or "").strip()
+            if not s:
+                return False
+            if any(ch.isdigit() for ch in s):
+                return False
+            if "@" in s:
+                return False
+            if len(s) > 80:
+                return False
+            # Avoid lines that look like sentences/values
+            if s.endswith("."):
+                return False
+
+            words = [w for w in s.split() if w]
+            if len(words) == 0 or len(words) > 6:
+                return False
+            # Title Case tends to match label lines like "Assigned To", "Application Number"
+            return s == s.title()
+
+        lines = [ln.strip() for ln in (text or "").splitlines()]
+        lines = [ln for ln in lines if ln]  # drop blanks
+
+        extracted: Dict[str, str] = {}
+        current_key: Optional[str] = None
+        current_value_lines: List[str] = []
+
+        def flush():
+            nonlocal current_key, current_value_lines
+            if not current_key:
+                current_value_lines = []
+                return
+            value = "\n".join([v.strip() for v in current_value_lines if v.strip()]).strip()
+            extracted[current_key] = value
+            current_key = None
+            current_value_lines = []
+
+        for ln in lines:
+            if is_key_candidate(ln):
+                # Start a new key; close out the previous key.
+                flush()
+                current_key = ln
+                current_value_lines = []
+            else:
+                # Value line
+                if current_key is not None:
+                    current_value_lines.append(ln)
+
+        flush()
+        return extracted
+
+    def _build_css_selector_from_target(self, target: Dict[str, Any]) -> str:
+        """
+        Build a CSS selector from:
+          {"type": "div", "selectors": {"id":"x","class":"a b","data-foo":"bar","_ngcontent-skd-c1":""}}
+
+        Rules:
+        - class: "a b" -> .a.b
+        - id: "x" -> #x
+        - other attrs:
+            - empty string -> [attr] (presence)
+            - value -> [attr="value"]
+        """
+        tag = (target.get("type") or "").strip()
+        selectors = target.get("selectors") or {}
+        if not isinstance(selectors, dict):
+            selectors = {}
+
+        if not tag:
+            raise ValueError("target.type is required")
+
+        parts: List[str] = [tag]
+
+        # id + class special casing
+        raw_id = selectors.get("id")
+        if raw_id is not None and str(raw_id).strip():
+            parts.append(f"#{str(raw_id).strip()}")
+
+        raw_class = selectors.get("class")
+        if raw_class is not None and str(raw_class).strip():
+            class_tokens = [c for c in str(raw_class).strip().split() if c]
+            if class_tokens:
+                parts.append("." + ".".join(class_tokens))
+
+        # other attributes
+        for attr, raw_val in selectors.items():
+            if attr in ("id", "class"):
+                continue
+            attr_name = str(attr).strip()
+            if not attr_name:
+                continue
+
+            if raw_val is None:
+                continue
+            val = str(raw_val)
+            if val == "":
+                parts.append(f"[{attr_name}]")
+            else:
+                escaped = self._css_escape_attr_value(val)
+                parts.append(f'[{attr_name}="{escaped}"]')
+
+        return "".join(parts)
+
+    def scrape_target_elements(
+        self,
+        url: str,
+        *,
+        options: Optional[Dict[str, Any]] = None,
+        target: Dict[str, Any],
+        timeout_ms: int = 30000,
+        playwright_browser=None,
+        max_matches: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """
+        Scrape a page and extract structured data for all elements matching a derived CSS selector.
+
+        Returns a list of:
+          { "text": str, "html": str, "attributes": { ... } }
+        """
+        if not self._is_valid_url(url):
+            raise ValueError(f"Invalid URL: {url}")
+
+        final_url = self._build_url_with_options(url, options)
+        css = self._build_css_selector_from_target(target)
+
+        with self._borrow_browser(playwright_browser) as browser:
+            context = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            )
+            page = context.new_page()
+            try:
+                page.goto(final_url, timeout=timeout_ms, wait_until="domcontentloaded")
+                page.wait_for_selector(css, timeout=timeout_ms)
+
+                locator = page.locator(css)
+                try:
+                    count = locator.count()
+                except Exception:
+                    count = 0
+                count = min(int(count or 0), max(0, int(max_matches or 0)))
+
+                results: List[Dict[str, Any]] = []
+                for i in range(count):
+                    el = locator.nth(i)
+                    text = ""
+                    html = ""
+                    attributes: Dict[str, Any] = {}
+                    extracted_information: Dict[str, str] = {}
+                    try:
+                        text = (el.inner_text() or "").strip()
+                    except Exception:
+                        text = ""
+                    try:
+                        html = el.evaluate("el => el.outerHTML") or ""
+                    except Exception:
+                        html = ""
+                    try:
+                        attributes = el.evaluate(
+                            "el => Object.fromEntries(Array.from(el.attributes).map(a => [a.name, a.value]))"
+                        ) or {}
+                    except Exception:
+                        attributes = {}
+
+                    try:
+                        extracted_information = self._parse_extracted_information(text)
+                    except Exception:
+                        extracted_information = {}
+
+                    results.append(
+                        {
+                            "text": text,
+                            "html": html,
+                            "attributes": attributes,
+                            "extracted_information": extracted_information,
+                        }
+                    )
+
+                return results
+            finally:
+                context.close()
         
     def scrape_url(
         self, 

@@ -233,6 +233,68 @@ class ScraperClient:
     def dispatch_site_delete(self, job_id, mode_name, domain):
         self._backend.dispatch_site_delete(str(job_id), mode_name, domain)
 
+    def queue_api_target_scrape(
+        self,
+        *,
+        url: str,
+        target: Dict[str, Any],
+        user_id: str,
+        options: Optional[Dict[str, Any]] = None,
+        timeout_ms: int = 30000,
+        auto_dispatch: bool = True,
+    ):
+        """Create an API target scraping job and optionally dispatch it."""
+        url = (url or "").strip()
+        if not url:
+            raise ValueError("url is required")
+        if not isinstance(target, dict) or not (target.get("type") or "").strip():
+            raise ValueError("target.type is required")
+        selectors = target.get("selectors")
+        if selectors is None or not isinstance(selectors, dict):
+            raise ValueError("target.selectors must be an object")
+        if options is not None and not isinstance(options, dict):
+            raise ValueError("options must be an object")
+
+        job_doc = {
+            "job_type": "api_target_scrape",
+            "status": "queued",
+            "user_id": user_id,
+            "url": url,
+            "options": options or None,
+            "target": target,
+            "timeout_ms": int(timeout_ms or 30000),
+            "result": None,
+            "error": None,
+            "created_at": datetime.utcnow(),
+            "started_at": None,
+            "completed_at": None,
+            "environment": self.environment,
+        }
+        job_id = self.jobs_collection.insert_one(job_doc).inserted_id
+        if auto_dispatch or self.is_remote:
+            self.dispatch_api_target_scrape(job_id, url, target, user_id=user_id, options=options, timeout_ms=timeout_ms)
+        return job_id
+
+    def dispatch_api_target_scrape(
+        self,
+        job_id,
+        url: str,
+        target: Dict[str, Any],
+        *,
+        user_id: Optional[str] = None,
+        options: Optional[Dict[str, Any]] = None,
+        timeout_ms: int = 30000,
+    ):
+        """Send an api_target_scrape job to the configured backend."""
+        self._backend.dispatch_api_target_scrape(
+            str(job_id),
+            url,
+            target,
+            user_id=user_id,
+            options=options,
+            timeout_ms=int(timeout_ms or 30000),
+        )
+
     # ------------------------------------------------------------------ #
     def get_verification_statistics(self) -> Dict[str, Any]:
         """Expose verification stats for schedulers."""
@@ -304,6 +366,25 @@ class _LocalScraperBackend:
         )
         thread.start()
 
+    def dispatch_api_target_scrape(
+        self,
+        job_id: str,
+        url: str,
+        target: Dict[str, Any],
+        *,
+        user_id: Optional[str] = None,
+        options: Optional[Dict[str, Any]] = None,
+        timeout_ms: int = 30000,
+    ):
+        thread = threading.Thread(
+            target=self.job_processor.run_api_target_scrape,
+            args=(job_id, url, options, target),
+            kwargs={"user_id": user_id, "timeout_ms": int(timeout_ms or 30000)},
+            daemon=True,
+            name=f"ApiTargetScrape-{job_id}",
+        )
+        thread.start()
+
 
 # ---------------------------------------------------------------------- #
 # Remote backend
@@ -344,6 +425,25 @@ class _SQSScraperBackend:
     def dispatch_site_delete(self, job_id, mode_name, domain):
         payload = {"mode_name": mode_name, "domain": domain}
         self._send_request(job_id, "site_delete", payload)
+
+    def dispatch_api_target_scrape(
+        self,
+        job_id: str,
+        url: str,
+        target: Dict[str, Any],
+        *,
+        user_id: Optional[str] = None,
+        options: Optional[Dict[str, Any]] = None,
+        timeout_ms: int = 30000,
+    ):
+        payload = {
+            "url": url,
+            "options": options or None,
+            "target": target,
+            "user_id": user_id,
+            "timeout_ms": int(timeout_ms or 30000),
+        }
+        self._send_request(job_id, "api_target_scrape", payload)
 
     def _send_request(self, job_id: str, job_type: str, payload: Dict[str, Any]):
         request = ScraperJobRequest(

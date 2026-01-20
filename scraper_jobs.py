@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 from bson import ObjectId
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 
 class JobCancelledError(Exception):
@@ -444,6 +445,92 @@ class ScrapeJobProcessor:
                 },
             )
             print(f"Verification job {job_id}: failed ({exc})")
+
+    # --------------------------------------------------------------------- #
+    # API target scraping
+    # --------------------------------------------------------------------- #
+    def run_api_target_scrape(
+        self,
+        job_id,
+        url: str,
+        options: Optional[Dict[str, Any]],
+        target: Dict[str, Any],
+        user_id: Optional[str] = None,
+        timeout_ms: int = 30000,
+    ):
+        """Extract one (or more) target elements from a single URL using Playwright."""
+        if self.jobs_collection is None:
+            raise RuntimeError("Job collection is required for api_target_scrape jobs")
+
+        job_id = self._normalize_id(job_id)
+
+        try:
+            self._ensure_job_active(job_id)
+            self.jobs_collection.update_one(
+                {"_id": job_id},
+                {
+                    "$set": {
+                        "status": "in_progress",
+                        "started_at": datetime.utcnow(),
+                        "user_id": user_id,
+                        "url": url,
+                        "options": options or None,
+                        "target": target,
+                        "timeout_ms": int(timeout_ms or 30000),
+                        "environment": self.environment,
+                    }
+                },
+            )
+
+            self._ensure_job_active(job_id)
+            matches = self.scraping_service.scrape_target_elements(
+                url,
+                options=options or None,
+                target=target,
+                timeout_ms=int(timeout_ms or 30000),
+            )
+            if not matches:
+                raise ValueError("No matching elements found")
+
+            result = {"match_count": len(matches), "matches": matches}
+
+            self.jobs_collection.update_one(
+                {"_id": job_id},
+                {
+                    "$set": {
+                        "status": "completed",
+                        "result": result,
+                        "completed_at": datetime.utcnow(),
+                    }
+                },
+            )
+
+        except JobCancelledError:
+            print(f"API target scrape job {job_id}: cancelled (job document deleted)")
+        except PlaywrightTimeoutError:
+            self.jobs_collection.update_one(
+                {"_id": job_id},
+                {
+                    "$set": {
+                        "status": "failed",
+                        "error": f"Timeout waiting for target selector (timeout_ms={timeout_ms})",
+                        "completed_at": datetime.utcnow(),
+                    }
+                },
+            )
+            print(f"API target scrape job {job_id}: failed (timeout)")
+        except Exception as exc:  # noqa: BLE001
+            self.jobs_collection.update_one(
+                {"_id": job_id},
+                {
+                    "$set": {
+                        "status": "failed",
+                        "error": str(exc),
+                        "completed_at": datetime.utcnow(),
+                    }
+                },
+            )
+            print(f"API target scrape job {job_id}: failed ({exc})")
 
     # ------------------------------------------------------------------ #
     def _normalize_id(self, value):

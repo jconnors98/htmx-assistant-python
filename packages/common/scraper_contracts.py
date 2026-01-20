@@ -19,6 +19,7 @@ ScraperJobType = Literal[
     "delete_content",
     "verification",
     "site_delete",
+    "api_target_scrape",
 ]
 
 

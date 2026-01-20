@@ -122,6 +122,15 @@ def _dispatch_request(request: ScraperJobRequest, processor: ScrapeJobProcessor)
             mode_name=payload["mode_name"],
             domain=payload["domain"],
         )
+    elif request.job_type == "api_target_scrape":
+        processor.run_api_target_scrape(
+            request.job_id,
+            payload["url"],
+            payload.get("options"),
+            payload["target"],
+            user_id=payload.get("user_id"),
+            timeout_ms=int(payload.get("timeout_ms", 30000)),
+        )
     else:
         raise ValueError(f"Unsupported job type: {request.job_type}")
 
