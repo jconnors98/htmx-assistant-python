@@ -71,6 +71,9 @@ if not localDevMode == "true" and config("SCRAPER_ENVIRONMENT", default="dev") =
     os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/opt/bitnami/playwright-browsers")
     os.environ.setdefault("XDG_CACHE_HOME", "/opt/bitnami/playwright-cache")
 
+elif localDevMode == "false" and config("SCRAPER_ENVIRONMENT", default="dev") == "dev":
+    os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/home/admin/.cache/ms-playwright")
+    
 AWS_ACCESS_KEY_ID = config("AWS_ACCESS_KEY_ID", default=None)
 AWS_SECRET_ACCESS_KEY = config("AWS_SECRET_ACCESS_KEY", default=None)
 COGNITO_REGION = config("COGNITO_REGION", default=None)
