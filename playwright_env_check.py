@@ -16,7 +16,7 @@ import argparse
 import sys
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
-
+from playwright.sync_api import sync_playwright
 from scraping_service import ScrapingService
 
 
@@ -68,7 +68,7 @@ def scrape_target_elements(
         final_url = scraping_service_instance._build_url_with_options(url, options)
         css = scraping_service_instance._build_css_selector_from_target(target)
 
-        with scraping_service_instance._start_playwright() as p:
+        with sync_playwright().start() as p:
             browser = p.chromium.launch(headless=True)
             context = browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
