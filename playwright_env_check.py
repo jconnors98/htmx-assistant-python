@@ -58,10 +58,17 @@ def scrape_target_elements(
         Returns a list of:
           { "text": str, "html": str, "attributes": { ... } }
         """
-        final_url = ScrapingService._build_url_with_options(url, options)
-        css = ScrapingService._build_css_selector_from_target(target)
 
-        with ScrapingService._start_playwright() as p:
+        stub_db = _StubMongoDB()
+        scraping_service_instance = ScrapingService(
+            client=None,
+            mongo_db=stub_db,
+            vector_store_id=None,
+        )
+        final_url = scraping_service_instance._build_url_with_options(url, options)
+        css = scraping_service_instance._build_css_selector_from_target(target)
+
+        with scraping_service_instance._start_playwright() as p:
             browser = p.chromium.launch(headless=True)
             context = browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -102,7 +109,7 @@ def scrape_target_elements(
                         attributes = {}
 
                     try:
-                        extracted_information = ScrapingService._parse_extracted_information(text)
+                        extracted_information = scraping_service_instance._parse_extracted_information(text)
                     except Exception:
                         extracted_information = {}
 
@@ -189,18 +196,11 @@ def main():
     print(f"   Target: {args.target_type} selectors={args.selector}")
     print(f"   Options: {args.option}")
 
-    stub_db = _StubMongoDB()
-    scraping_service = ScrapingService(
-        client=None,
-        mongo_db=stub_db,
-        vector_store_id=None,
-    )
-
     try:
         selectors = _parse_kv_list(args.selector)
         options = _parse_kv_list(args.option)
         target = {"type": args.target_type, "selectors": selectors}
-        matches = scraping_service.scrape_target_elements(
+        matches = scrape_target_elements(
             args.url,
             options=options or None,
             target=target,
