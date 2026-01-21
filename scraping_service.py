@@ -658,62 +658,65 @@ class ScrapingService:
         final_url = self._build_url_with_options(url, options)
         css = self._build_css_selector_from_target(target)
 
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            context = browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            )
-            page = context.new_page()
-            try:
-                page.goto(final_url, timeout=timeout_ms, wait_until="domcontentloaded")
-                page.wait_for_selector(css, timeout=timeout_ms)
-
-                locator = page.locator(css)
+        # Ensure Playwright can access a real stderr fileno() in environments where sys.stderr
+        # isn't file-backed (e.g., mod_wsgi / certain hosting setups).
+        with self._playwright_stderr_guard():
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True)
+                context = browser.new_context(
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                )
+                page = context.new_page()
                 try:
-                    count = locator.count()
-                except Exception:
-                    count = 0
-                count = min(int(count or 0), max(0, int(max_matches or 0)))
+                    page.goto(final_url, timeout=timeout_ms, wait_until="domcontentloaded")
+                    page.wait_for_selector(css, timeout=timeout_ms)
 
-                results: List[Dict[str, Any]] = []
-                for i in range(count):
-                    el = locator.nth(i)
-                    text = ""
-                    html = ""
-                    attributes: Dict[str, Any] = {}
-                    extracted_information: Dict[str, str] = {}
+                    locator = page.locator(css)
                     try:
-                        text = (el.inner_text() or "").strip()
+                        count = locator.count()
                     except Exception:
+                        count = 0
+                    count = min(int(count or 0), max(0, int(max_matches or 0)))
+
+                    results: List[Dict[str, Any]] = []
+                    for i in range(count):
+                        el = locator.nth(i)
                         text = ""
-                    try:
-                        html = el.evaluate("el => el.outerHTML") or ""
-                    except Exception:
                         html = ""
-                    try:
-                        attributes = el.evaluate(
-                            "el => Object.fromEntries(Array.from(el.attributes).map(a => [a.name, a.value]))"
-                        ) or {}
-                    except Exception:
-                        attributes = {}
+                        attributes: Dict[str, Any] = {}
+                        extracted_information: Dict[str, str] = {}
+                        try:
+                            text = (el.inner_text() or "").strip()
+                        except Exception:
+                            text = ""
+                        try:
+                            html = el.evaluate("el => el.outerHTML") or ""
+                        except Exception:
+                            html = ""
+                        try:
+                            attributes = el.evaluate(
+                                "el => Object.fromEntries(Array.from(el.attributes).map(a => [a.name, a.value]))"
+                            ) or {}
+                        except Exception:
+                            attributes = {}
 
-                    try:
-                        extracted_information = self._parse_extracted_information(text)
-                    except Exception:
-                        extracted_information = {}
+                        try:
+                            extracted_information = self._parse_extracted_information(text)
+                        except Exception:
+                            extracted_information = {}
 
-                    results.append(
-                        {
-                            "text": text,
-                            "html": html,
-                            "attributes": attributes,
-                            "extracted_information": extracted_information,
-                        }
-                    )
+                        results.append(
+                            {
+                                "text": text,
+                                "html": html,
+                                "attributes": attributes,
+                                "extracted_information": extracted_information,
+                            }
+                        )
 
-                return results
-            finally:
-                context.close()
+                    return results
+                finally:
+                    context.close()
         
     def scrape_url(
         self, 
