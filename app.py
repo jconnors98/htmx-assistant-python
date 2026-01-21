@@ -67,7 +67,7 @@ api_tokens_collection = db.get_collection("api_tokens")
 
 localDevMode = config("LOCAL_DEV_MODE", default="false").lower()
 
-if not localDevMode == "true":
+if not localDevMode == "true" and config("SCRAPER_ENVIRONMENT", default="dev") == "prod":
     os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/opt/bitnami/playwright-browsers")
     os.environ.setdefault("XDG_CACHE_HOME", "/opt/bitnami/playwright-cache")
 
