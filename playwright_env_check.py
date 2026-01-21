@@ -61,7 +61,8 @@ def scrape_target_elements(
         final_url = ScrapingService._build_url_with_options(url, options)
         css = ScrapingService._build_css_selector_from_target(target)
 
-        with ScrapingService._borrow_browser(playwright_browser) as browser:
+        with ScrapingService._start_playwright() as p:
+            browser = p.chromium.launch(headless=True)
             context = browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             )
