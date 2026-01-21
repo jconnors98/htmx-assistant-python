@@ -15,8 +15,10 @@ The script:
 import argparse
 import sys
 from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
 
 from scraping_service import ScrapingService
+
 
 
 @dataclass
@@ -40,6 +42,80 @@ class _StubMongoDB:
         if name not in self._collections:
             self._collections[name] = _StubCollection(name=name)
         return self._collections[name]
+
+def scrape_target_elements(
+        url: str,
+        *,
+        options: Optional[Dict[str, Any]] = None,
+        target: Dict[str, Any],
+        timeout_ms: int = 30000,
+        playwright_browser=None,
+        max_matches: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """
+        Scrape a page and extract structured data for all elements matching a derived CSS selector.
+
+        Returns a list of:
+          { "text": str, "html": str, "attributes": { ... } }
+        """
+        final_url = ScrapingService._build_url_with_options(url, options)
+        css = ScrapingService._build_css_selector_from_target(target)
+
+        with ScrapingService._borrow_browser(playwright_browser) as browser:
+            context = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            )
+            page = context.new_page()
+            try:
+                page.goto(final_url, timeout=timeout_ms, wait_until="domcontentloaded")
+                page.wait_for_selector(css, timeout=timeout_ms)
+
+                locator = page.locator(css)
+                try:
+                    count = locator.count()
+                except Exception:
+                    count = 0
+                count = min(int(count or 0), max(0, int(max_matches or 0)))
+
+                results: List[Dict[str, Any]] = []
+                for i in range(count):
+                    el = locator.nth(i)
+                    text = ""
+                    html = ""
+                    attributes: Dict[str, Any] = {}
+                    extracted_information: Dict[str, str] = {}
+                    try:
+                        text = (el.inner_text() or "").strip()
+                    except Exception:
+                        text = ""
+                    try:
+                        html = el.evaluate("el => el.outerHTML") or ""
+                    except Exception:
+                        html = ""
+                    try:
+                        attributes = el.evaluate(
+                            "el => Object.fromEntries(Array.from(el.attributes).map(a => [a.name, a.value]))"
+                        ) or {}
+                    except Exception:
+                        attributes = {}
+
+                    try:
+                        extracted_information = ScrapingService._parse_extracted_information(text)
+                    except Exception:
+                        extracted_information = {}
+
+                    results.append(
+                        {
+                            "text": text,
+                            "html": html,
+                            "attributes": attributes,
+                            "extracted_information": extracted_information,
+                        }
+                    )
+
+                return results
+            finally:
+                context.close()
 
 
 def parse_args():
