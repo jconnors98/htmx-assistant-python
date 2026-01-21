@@ -67,6 +67,7 @@ def scrape_target_elements(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             )
             page = context.new_page()
+            print(f"Navigating to {final_url} with new browser instance")
             try:
                 page.goto(final_url, timeout=timeout_ms, wait_until="domcontentloaded")
                 page.wait_for_selector(css, timeout=timeout_ms)
