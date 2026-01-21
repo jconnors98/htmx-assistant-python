@@ -4,6 +4,7 @@ import io
 import json
 import secrets
 import logging
+import hmac
 from functools import wraps
 from flask import Flask, Blueprint, request, send_from_directory, Response, url_for, send_file
 from werkzeug.datastructures import FileStorage
@@ -62,6 +63,7 @@ scraped_content_collection = db.get_collection("scraped_content")
 scraping_jobs_collection = db.get_collection("scraping_jobs")
 document_projects_collection = db.get_collection("document_projects")
 blocked_pages_collection = db.get_collection("blocked_pages")
+api_tokens_collection = db.get_collection("api_tokens")
 
 localDevMode = config("LOCAL_DEV_MODE", default="false").lower()
 
@@ -283,6 +285,110 @@ def cognito_auth_required(fn):
             "sub": user_id,
             "is_super_admin": _is_super_admin(user_id, superadmins_collection),
         }
+        return fn(*args, **kwargs)
+
+    return wrapper
+
+
+def _hash_api_token(token: str) -> str:
+    """
+    Hash an API token for storage/lookup using HMAC-SHA256.
+
+    Why HMAC instead of plain sha256(token)?
+    - Prevents offline guessing/rainbow tables if the DB is leaked.
+    - Still allows direct lookup by hash (unlike per-token random salts).
+    """
+    secret = config("API_TOKEN_HMAC_SECRET", default=None)
+    if not secret:
+        raise RuntimeError("API_TOKEN_HMAC_SECRET is not configured")
+    token_bytes = (token or "").encode("utf-8")
+    secret_bytes = str(secret).encode("utf-8")
+    return hmac.new(secret_bytes, token_bytes, hashlib.sha256).hexdigest()
+
+
+def token_auth_required(fn):
+    """
+    Authenticate using an API token stored in MongoDB `api_tokens`.
+
+    Header forms:
+    - Authorization: Bearer <token>
+    - X-API-Token: <token>
+
+    Usage logging (best-effort; stored on the token doc):
+    - usage_count (increment)
+    - last_used_at / last_used_ip / last_used_user_agent / last_used_path / last_used_method
+    - usage_log (rolling; last 100 entries)
+    """
+
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        token = ""
+        auth = request.headers.get("Authorization", "") or ""
+        if auth.lower().startswith("bearer "):
+            token = auth.split(" ", 1)[1].strip()
+        if not token:
+            token = (request.headers.get("X-API-Token") or "").strip()
+
+        if not token:
+            return {"error": "Unauthorized"}, 401
+
+        try:
+            token_hash = _hash_api_token(token)
+        except Exception as e:  # noqa: BLE001
+            print(f"API token auth misconfigured: {e}")
+            return {"error": "Token auth not configured"}, 500
+
+        token_doc = api_tokens_collection.find_one({"token_hash": token_hash})
+        if not token_doc:
+            # Back-compat/migration path: if a legacy doc stored plaintext token, migrate it.
+            legacy = api_tokens_collection.find_one({"token": token})
+            if not legacy:
+                return {"error": "Unauthorized"}, 401
+            try:
+                api_tokens_collection.update_one(
+                    {"_id": legacy["_id"]},
+                    {"$set": {"token_hash": token_hash}, "$unset": {"token": ""}},
+                )
+            except Exception as e:  # noqa: BLE001
+                print(f"Failed to migrate legacy api token doc: {e}")
+            token_doc = legacy
+        if token_doc.get("active", True) is False:
+            return {"error": "Unauthorized"}, 401
+
+        # Usage logging (best-effort; do not block request)
+        try:
+            ip_addr = request.headers.get("X-Forwarded-For", request.remote_addr)
+            user_agent = request.headers.get("User-Agent", "")
+            log_entry = {
+                "at": datetime.utcnow(),
+                "ip": ip_addr,
+                "ua": user_agent,
+                "path": request.path,
+                "method": request.method,
+            }
+            api_tokens_collection.update_one(
+                {"_id": token_doc["_id"]},
+                {
+                    "$set": {
+                        "last_used_at": log_entry["at"],
+                        "last_used_ip": ip_addr,
+                        "last_used_user_agent": user_agent,
+                        "last_used_path": request.path,
+                        "last_used_method": request.method,
+                    },
+                    "$inc": {"usage_count": 1},
+                    "$push": {"usage_log": {"$each": [log_entry], "$slice": -100}},
+                },
+            )
+        except Exception as e:  # noqa: BLE001
+            print(f"Error logging api token usage: {e}")
+
+        request.api_token = {
+            "_id": str(token_doc.get("_id")),
+            "name": token_doc.get("name"),
+            "user_id": token_doc.get("user_id"),
+        }
+
         return fn(*args, **kwargs)
 
     return wrapper
@@ -1231,7 +1337,7 @@ def permitsca_api():
 
 
 @routes.post("/api/scrape-target")
-@cognito_auth_required
+@token_auth_required
 def scrape_target_api():
     """
     Universal target scrape endpoint.
@@ -1276,9 +1382,8 @@ def scrape_target_api():
     if timeout_ms <= 0 or timeout_ms > 300000:
         return {"error": "timeout_ms must be between 1 and 300000"}, 400
 
-    user_id = (request.user or {}).get("sub")
-    if not user_id:
-        return {"error": "Unauthorized"}, 401
+    token_user_id = (getattr(request, "api_token", {}) or {}).get("user_id")
+    user_id = str(token_user_id) if token_user_id is not None else "api"
 
     # Async path: create job + dispatch to the configured backend (local thread or SQS worker)
     if execution == "async":
