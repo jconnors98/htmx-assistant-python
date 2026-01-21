@@ -2,12 +2,14 @@
 Standalone script to verify Playwright and the scraping service environment.
 
 Usage:
-    python playwright_env_check.py --url https://example.com
+    python playwright_env_check.py --url https://example.com --target-type div --selector id=main
+    python playwright_env_check.py --url https://example.com --target-type div --selector class="content area"
+    python playwright_env_check.py --url https://example.com --target-type div --selector data-foo=bar --selector _ngcontent-skd-c1=
 
 The script:
 1. Creates a lightweight ScrapingService instance with stubbed Mongo collections.
-2. Attempts to scrape the provided URL using Playwright.
-3. Reports success/failure along with content stats and title.
+2. Attempts to extract target element(s) from the provided URL using Playwright.
+3. Reports success/failure along with match stats.
 """
 
 import argparse
@@ -42,7 +44,7 @@ class _StubMongoDB:
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Validate Playwright installation by running a ScrapingService test scrape."
+        description="Validate Playwright installation by running a ScrapingService target scrape."
     )
     parser.add_argument(
         "--url",
@@ -50,27 +52,54 @@ def parse_args():
         help="URL to scrape for the test (default: %(default)s)",
     )
     parser.add_argument(
-        "--dynamic",
-        action="store_true",
-        help="Enable dynamic content loading (uses Playwright's networkidle wait).",
-    )
-    parser.add_argument(
-        "--merge-dynamic",
-        action="store_true",
-        help="Run the hybrid dynamic merge pass (slower, but thorough).",
-    )
-    parser.add_argument(
         "--timeout",
         type=int,
         default=30000,
-        help="Playwright navigation timeout in milliseconds (default: %(default)s).",
+        help="Playwright timeout in milliseconds (default: %(default)s).",
     )
     parser.add_argument(
-        "--expand-accordions",
-        action="store_true",
-        help="Attempt to expand accordions/tabs while scraping.",
+        "--target-type",
+        default="div",
+        help="Target element tag name, e.g. div, p, h1 (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--selector",
+        action="append",
+        default=[],
+        help=(
+            "Target selector in key=value form. Repeatable. "
+            "Use an empty value for presence checks, e.g. _ngcontent-skd-c1="
+        ),
+    )
+    parser.add_argument(
+        "--option",
+        action="append",
+        default=[],
+        help="URL query option in key=value form (repeatable).",
+    )
+    parser.add_argument(
+        "--max-matches",
+        type=int,
+        default=50,
+        help="Maximum number of matching elements to return (default: %(default)s).",
     )
     return parser.parse_args()
+
+def _parse_kv_list(items):
+    parsed = {}
+    for raw in items or []:
+        if raw is None:
+            continue
+        s = str(raw)
+        if "=" not in s:
+            raise ValueError(f"Invalid key=value pair: {raw}")
+        k, v = s.split("=", 1)
+        k = k.strip()
+        if not k:
+            raise ValueError(f"Invalid key in key=value pair: {raw}")
+        # Preserve empty string for presence checks
+        parsed[k] = v
+    return parsed
 
 
 def main():
@@ -78,10 +107,9 @@ def main():
 
     print("🔍 Starting Playwright environment verification...")
     print(f"   URL: {args.url}")
-    print(f"   Dynamic content: {args.dynamic}")
-    print(f"   Merge dynamic: {args.merge_dynamic}")
-    print(f"   Expand accordions: {args.expand_accordions}")
     print(f"   Timeout: {args.timeout} ms")
+    print(f"   Target: {args.target_type} selectors={args.selector}")
+    print(f"   Options: {args.option}")
 
     stub_db = _StubMongoDB()
     scraping_service = ScrapingService(
@@ -90,25 +118,32 @@ def main():
         vector_store_id=None,
     )
 
-    content, title, error, html_content, file_links = scraping_service.scrape_url(
-        args.url,
-        expand_accordions=args.expand_accordions,
-        timeout=args.timeout,
-        extract_files=False,
-        load_dynamic_content=args.dynamic,
-        merge_dynamic_content=args.merge_dynamic,
-    )
-
-    if error:
-        print("❌ Playwright or scraping test failed.")
-        print(f"   Error: {error}")
+    try:
+        selectors = _parse_kv_list(args.selector)
+        options = _parse_kv_list(args.option)
+        target = {"type": args.target_type, "selectors": selectors}
+        matches = scraping_service.scrape_target_elements(
+            args.url,
+            options=options or None,
+            target=target,
+            timeout_ms=args.timeout,
+            max_matches=args.max_matches,
+        )
+    except Exception as e:
+        print("❌ Playwright or target scrape test failed.")
+        print(f"   Error: {e}")
         sys.exit(1)
 
-    print("✅ Playwright successfully scraped the page.")
-    print(f"   Title: {title}")
-    print(f"   Content length: {len(content)} characters")
-    print(f"   HTML length: {len(html_content or '')} characters")
-    print("   No file extraction performed in this test.")
+    if not matches:
+        print("❌ Target scrape returned no matches.")
+        sys.exit(1)
+
+    first = matches[0]
+    extracted_info = first.get("extracted_information") or {}
+    print("✅ Playwright successfully scraped target element(s).")
+    print(f"   Matches: {len(matches)}")
+    print(f"   First text length: {len((first.get('text') or ''))} characters")
+    print(f"   Extracted information keys: {len(extracted_info)}")
     sys.exit(0)
 
 
