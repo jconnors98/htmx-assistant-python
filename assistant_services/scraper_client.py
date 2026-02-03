@@ -90,12 +90,12 @@ class ScraperClient:
 
         job_id = self.jobs_collection.insert_one(job_doc).inserted_id
         if auto_dispatch or self.is_remote:
-            self.dispatch_mode_scrape(job_id, mode_name, user_id, resume_state)
+            self.dispatch_mode_scrape(job_id, mode_name, user_id, resume_state, mode_id=mode_id)
         return job_id
 
-    def dispatch_mode_scrape(self, job_id, mode_name, user_id, resume_state=None):
+    def dispatch_mode_scrape(self, job_id, mode_name, user_id, resume_state=None, *, mode_id: Optional[str] = None):
         """Send a scrape job to the configured backend."""
-        self._backend.dispatch_mode_scrape(str(job_id), mode_name, user_id, resume_state)
+        self._backend.dispatch_mode_scrape(str(job_id), mode_name, user_id, resume_state, mode_id=mode_id)
 
     def resume_mode_scrape(self, job_doc: Dict[str, Any]):
         """Re-dispatch an in-progress job."""
@@ -104,6 +104,7 @@ class ScraperClient:
             job_doc.get("mode_name"),
             job_doc.get("user_id"),
             job_doc.get("checkpoint"),
+            mode_id=job_doc.get("mode_id"),
         )
 
     def queue_single_url_refresh(
@@ -302,11 +303,11 @@ class ScraperClient:
             return {}
         return self._backend.scraping_service.get_verification_statistics()
 
-    def scrape_mode_synchronously(self, mode_name: str, user_id: str):
+    def scrape_mode_synchronously(self, mode_name: str, user_id: str, *, mode_id: Optional[str] = None):
         """Execute a mode scrape synchronously (local only)."""
         if self.mode != ScraperClientMode.LOCAL:
             raise RuntimeError("Synchronous scraping is only available in local mode")
-        return self._backend.scraping_service.scrape_mode_sites(mode_name, user_id)
+        return self._backend.scraping_service.scrape_mode_sites(mode_name, user_id, mode_id=mode_id)
 
     @property
     def is_remote(self) -> bool:
@@ -321,10 +322,11 @@ class _LocalScraperBackend:
         self.job_processor = job_processor
         self.scraping_service = job_processor.scraping_service
 
-    def dispatch_mode_scrape(self, job_id: str, mode_name: str, user_id: str, resume_state=None):
+    def dispatch_mode_scrape(self, job_id: str, mode_name: str, user_id: str, resume_state=None, *, mode_id: Optional[str] = None):
         thread = threading.Thread(
             target=self.job_processor.run_scrape_job,
             args=(job_id, mode_name, user_id, resume_state),
+            kwargs={"mode_id": mode_id},
             daemon=True,
             name=f"ScrapeJob-{mode_name}",
         )
@@ -394,10 +396,11 @@ class _SQSScraperBackend:
         self._sqs = sqs_client
         self._config = queue_config
 
-    def dispatch_mode_scrape(self, job_id, mode_name, user_id, resume_state=None):
+    def dispatch_mode_scrape(self, job_id, mode_name, user_id, resume_state=None, *, mode_id: Optional[str] = None):
         payload = {
             "mode_name": mode_name,
             "user_id": user_id,
+            "mode_id": mode_id,
             "resume_state": resume_state,
         }
         self._send_request(job_id, "scrape", payload)

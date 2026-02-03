@@ -35,6 +35,7 @@ from functions import (
     _parse_date, _normalize_color, _normalize_text_color, _process_natural_language_query,
     _search_prompts_tool, _get_unique_prompts_data, _search_permits_tool, _get_analytics_data_for_query
 )
+from tools.mongo_audit import AuditedDatabase, set_current_actor
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -53,7 +54,7 @@ try:
 except Exception as e:
     raise RuntimeError(f"Failed to connect to MongoDB: {e}")
 
-db = mongo_client.get_database(config("MONGO_DB", default="bcca-assistant"))
+db = AuditedDatabase(mongo_client.get_database(config("MONGO_DB", default="bcca-assistant")))
 modes_collection = db.get_collection("modes")
 documents_collection = db.get_collection("documents")
 prompt_logs_collection = db.get_collection("prompt_logs")
@@ -127,6 +128,65 @@ def _log_access_denied(action: str, *, mode_id=None, content_id=None, mode_owner
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("ACCESS_DENIED_LOG_FAILED action=%s error=%s", action, str(exc))
+
+
+def _vector_share_key_for_mode(mode_name: str) -> str:
+    """Match ConversationService/ScrapingService shared-with attribute key derivation."""
+    raw = (mode_name or "").strip().lower()
+    safe = re.sub(r"[^a-z0-9_]+", "_", raw)
+    safe = re.sub(r"_+", "_", safe).strip("_")
+    if not safe:
+        safe = "default"
+    return f"shared_with_{safe}"
+
+
+def _detach_vector_store_file_from_mode(
+    *, file_id: str, removed_mode: str, remaining_modes: list
+) -> bool:
+    """
+    Best-effort: update a vector-store file so it no longer appears in `file_search` for
+    `removed_mode`, while keeping it discoverable for `remaining_modes`.
+
+    Notes:
+    - The OpenAI API doesn't provide a true "unset attribute" operation. We instead set the
+      attributes to a non-matching value ("false") for the mode share key. If the file would
+      otherwise still match by primary `mode`, we move `mode` to the first remaining mode.
+    - This is used for scraped pages; uploaded documents are managed separately.
+    """
+    if not VECTOR_STORE_ID or not file_id or not removed_mode:
+        return False
+
+    try:
+        vs = getattr(client, "vector_stores", None)
+        vs_files = getattr(vs, "files", None)
+        updater = getattr(vs_files, "update", None) or getattr(vs_files, "modify", None)
+        if not callable(updater):
+            return False
+
+        remaining = [m for m in (remaining_modes or []) if m and m != removed_mode]
+        attrs = {
+            # Ensure "shared_with_<removed_mode>" no longer matches.
+            _vector_share_key_for_mode(removed_mode): "false",
+        }
+        if remaining:
+            # Ensure the file doesn't match eq(mode == removed_mode) in file_search.
+            attrs["mode"] = remaining[0]
+            # Ensure additional modes remain discoverable via shared_with_<mode>=true.
+            for m in remaining[1:]:
+                attrs[_vector_share_key_for_mode(m)] = "true"
+        else:
+            # Orphaned: mark neutral; delete job may remove it shortly anyway.
+            attrs["mode"] = f"blocked:{removed_mode}"
+
+        updater(
+            vector_store_id=VECTOR_STORE_ID,
+            file_id=file_id,
+            attributes=attrs,
+        )
+        return True
+    except Exception as e:  # noqa: BLE001
+        print(f"Warning: could not detach vector file {file_id} from mode '{removed_mode}': {e}")
+        return False
 
 
 def _merge_doc_intel_settings(settings):
@@ -288,6 +348,8 @@ def cognito_auth_required(fn):
             "sub": user_id,
             "is_super_admin": _is_super_admin(user_id, superadmins_collection),
         }
+        # Used by Mongo audit wrapper to stamp updated_by.
+        set_current_actor(user_id or "anonymous")
         return fn(*args, **kwargs)
 
     return wrapper
@@ -391,6 +453,9 @@ def token_auth_required(fn):
             "name": token_doc.get("name"),
             "user_id": token_doc.get("user_id"),
         }
+        # Used by Mongo audit wrapper to stamp updated_by.
+        token_user_id = token_doc.get("user_id")
+        set_current_actor(str(token_user_id) if token_user_id is not None else "api")
 
         return fn(*args, **kwargs)
 
@@ -2678,10 +2743,18 @@ def get_blocked_pages(mode_id):
             if not user_id or str(user_id) != str(request.user.get("sub")):
                 return {"error": "Access denied"}, 403
 
+        # Blocked pages are mode-scoped (mode_id), not user-scoped.
+        # Keep a legacy fallback for older records that used (mode, user_id).
+        query = {
+            "$or": [
+                {"mode_id": mode_obj_id},
+                {"mode": mode_name, "user_id": user_id},
+            ]
+        }
         docs = list(
             blocked_pages_collection.find(
-                {"mode": mode_name, "user_id": user_id},
-                {"_id": 0, "mode": 0, "user_id": 0},
+                query,
+                {"_id": 0, "mode_id": 0, "mode": 0, "user_id": 0},
             ).sort("blocked_at", -1)
         )
         # Ensure consistent fields
@@ -2770,10 +2843,16 @@ def block_page(mode_id):
     now = datetime.utcnow()
     try:
         blocked_pages_collection.update_one(
-            {"mode": mode_name, "user_id": mode_owner_id, "normalized_url": normalized_url},
+            {"mode_id": mode_obj_id, "normalized_url": normalized_url},
             {
                 "$setOnInsert": {"blocked_at": now},
-                "$set": {"url": url, "title": (scraped_doc or {}).get("title") or None, "updated_at": now},
+                "$set": {
+                    "mode": mode_name,
+                    "url": url,
+                    "title": (scraped_doc or {}).get("title") or None,
+                    "updated_at": now,
+                    "blocked_by": request.user.get("sub"),
+                },
             },
             upsert=True,
         )
@@ -2790,6 +2869,16 @@ def block_page(mode_id):
                 {"$pull": {"modes": mode_name}},
                 return_document=ReturnDocument.AFTER,
             )
+            # Strip vector-store attributes for this mode so file_search stops returning it.
+            try:
+                if scraped_doc.get("openai_file_id"):
+                    _detach_vector_store_file_from_mode(
+                        file_id=scraped_doc.get("openai_file_id"),
+                        removed_mode=mode_name,
+                        remaining_modes=(updated.get("modes") or []) if updated else [],
+                    )
+            except Exception:
+                pass
             if updated and not (updated.get("modes") or []):
                 try:
                     job_id = scraper_client.queue_delete_content(
@@ -2801,6 +2890,19 @@ def block_page(mode_id):
                     print(f"Failed to queue delete job for orphaned blocked page: {e}")
         elif normalized_url:
             # Best-effort detach when the UI blocks by URL (no content_id provided)
+            for doc in scraped_content_collection.find(
+                {"normalized_url": normalized_url, "modes": mode_name},
+                {"_id": 1, "openai_file_id": 1, "modes": 1},
+            ):
+                try:
+                    if doc.get("openai_file_id"):
+                        _detach_vector_store_file_from_mode(
+                            file_id=doc.get("openai_file_id"),
+                            removed_mode=mode_name,
+                            remaining_modes=(doc.get("modes") or []),
+                        )
+                except Exception:
+                    pass
             scraped_content_collection.update_many(
                 {"normalized_url": normalized_url, "modes": mode_name},
                 {"$pull": {"modes": mode_name}},
@@ -2865,13 +2967,14 @@ def block_pages_bulk(mode_id):
         valid_content_ids.append(str(d["_id"]))
         records.append(
             {
+                "mode_id": mode_obj_id,
                 "mode": mode_name,
-                "user_id": mode_owner_id,
                 "normalized_url": nurl,
                 "url": ourl,
                 "title": d.get("title") or None,
                 "blocked_at": now,
                 "updated_at": now,
+                "blocked_by": request.user.get("sub"),
             }
         )
 
@@ -2895,11 +2998,28 @@ def block_pages_bulk(mode_id):
     for cid in valid_content_ids:
         try:
             content_obj_id = ObjectId(cid)
+            doc = None
+            try:
+                doc = scraped_content_collection.find_one(
+                    {"_id": content_obj_id},
+                    {"openai_file_id": 1},
+                )
+            except Exception:
+                doc = None
             updated = scraped_content_collection.find_one_and_update(
                 {"_id": content_obj_id},
                 {"$pull": {"modes": mode_name}},
                 return_document=ReturnDocument.AFTER,
             )
+            try:
+                if doc and doc.get("openai_file_id"):
+                    _detach_vector_store_file_from_mode(
+                        file_id=doc.get("openai_file_id"),
+                        removed_mode=mode_name,
+                        remaining_modes=(updated.get("modes") or []) if updated else [],
+                    )
+            except Exception:
+                pass
             if updated and not (updated.get("modes") or []):
                 try:
                     job_id = scraper_client.queue_delete_content(
@@ -2943,6 +3063,8 @@ def unblock_page(mode_id):
         {"_id": mode_obj_id},
         {"$pull": {"blocked_page_urls": normalized_url}},
     )
+    blocked_pages_collection.delete_one({"mode_id": mode_obj_id, "normalized_url": normalized_url})
+    # Legacy cleanup
     blocked_pages_collection.delete_one({"mode": mode_name, "user_id": mode_owner_id, "normalized_url": normalized_url})
     return {"status": "unblocked", "normalized_url": normalized_url}, 200
 
@@ -2974,6 +3096,8 @@ def unblock_pages_bulk(mode_id):
         {"_id": mode_obj_id},
         {"$pullAll": {"blocked_page_urls": normalized_urls}},
     )
+    blocked_pages_collection.delete_many({"mode_id": mode_obj_id, "normalized_url": {"$in": normalized_urls}})
+    # Legacy cleanup
     blocked_pages_collection.delete_many({"mode": mode_name, "user_id": mode_owner_id, "normalized_url": {"$in": normalized_urls}})
     return {"status": "unblocked", "count": len(normalized_urls)}, 200
 

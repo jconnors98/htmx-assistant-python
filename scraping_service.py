@@ -202,6 +202,58 @@ class ScrapingService:
             self.scrape_failures_collection.create_index("failed_at")
         except Exception:
             pass  # Indexes may already exist
+
+    @staticmethod
+    def _vector_share_key_for_mode(mode_name: str) -> str:
+        """
+        Build a stable, safe vector-store attribute key for "shared with mode".
+
+        We can't rely on re-tagging the primary "mode" attribute for reused pages
+        (because a single scraped page can be used by multiple modes). Instead we
+        add an additional boolean-like attribute keyed by the target mode.
+        """
+        raw = (mode_name or "").strip().lower()
+        safe = re.sub(r"[^a-z0-9_]+", "_", raw)
+        safe = re.sub(r"_+", "_", safe).strip("_")
+        if not safe:
+            safe = "default"
+        return f"shared_with_{safe}"
+
+    def _mark_vector_file_shared_with_mode(self, file_id: Optional[str], mode_name: str) -> bool:
+        """Best-effort: mark an existing vector-store file as shared with another mode."""
+        if not self.vector_store_id or not file_id:
+            return False
+
+        key = self._vector_share_key_for_mode(mode_name)
+
+        try:
+            vs = getattr(self.client, "vector_stores", None)
+            vs_files = getattr(vs, "files", None)
+
+            # Newer SDKs typically expose update/modify for attributes.
+            updater = getattr(vs_files, "update", None) or getattr(vs_files, "modify", None)
+            if callable(updater):
+                updater(
+                    vector_store_id=self.vector_store_id,
+                    file_id=file_id,
+                    attributes={key: "true"},
+                )
+                return True
+
+            # Fallback: some SDKs may treat create as an upsert for attributes.
+            creator = getattr(vs_files, "create", None)
+            if callable(creator):
+                creator(
+                    vector_store_id=self.vector_store_id,
+                    file_id=file_id,
+                    attributes={key: "true"},
+                )
+                return True
+
+        except Exception as exc:  # noqa: BLE001
+            print(f"Warning: Could not share vector file {file_id} with mode '{mode_name}': {exc}")
+
+        return False
     
     def _insert_discovered_file(self, file_info: Dict[str, Any]) -> bool:
         """Insert into discovered_files if (mode, file_url) is new and not blocked."""
@@ -2636,7 +2688,8 @@ class ScrapingService:
         max_pages_per_site: int = 5000,
         max_crawl_depth: int = 3,
         progress_callback=None,
-        resume_state: Optional[Dict[str, Any]] = None
+        resume_state: Optional[Dict[str, Any]] = None,
+        mode_id: Optional[str] = None,
     ) -> Dict[str, any]:
         """
         Scrape all configured sites for a mode with full site crawling.
@@ -2655,13 +2708,51 @@ class ScrapingService:
         Returns:
             Dictionary with scraping results
         """
-        # Get mode configuration
-        mode_doc = self.modes_collection.find_one({"name": mode_name})
+        # Get mode configuration (prefer mode_id when available).
+        mode_obj_id = None
+        mode_doc = None
+        if mode_id:
+            try:
+                from bson import ObjectId
+
+                mode_obj_id = ObjectId(str(mode_id))
+            except Exception:
+                mode_obj_id = None
+        if mode_obj_id is not None:
+            mode_doc = self.modes_collection.find_one({"_id": mode_obj_id})
+        if not mode_doc:
+            mode_doc = self.modes_collection.find_one({"name": mode_name})
         if not mode_doc:
             return {"error": "Mode not found", "success": False}
+        if mode_obj_id is None:
+            mode_obj_id = mode_doc.get("_id")
 
         # Blocked page URLs for this mode (normalized_url values)
         blocked_page_urls = set(mode_doc.get("blocked_page_urls", []) or [])
+        blocked_last_refresh = time.time()
+        pages_since_block_refresh = 0
+
+        def _refresh_blocked_pages_if_needed(force: bool = False) -> None:
+            """Refresh blocked_page_urls periodically so mid-scrape blocks take effect."""
+            nonlocal blocked_page_urls, blocked_last_refresh, pages_since_block_refresh
+            try:
+                pages_since_block_refresh += 1
+                # Avoid per-URL DB reads; refresh every ~25 pages or 10s.
+                if not force:
+                    if pages_since_block_refresh < 25 and (time.time() - blocked_last_refresh) < 10:
+                        return
+                pages_since_block_refresh = 0
+                blocked_last_refresh = time.time()
+                latest = None
+                if mode_obj_id is not None:
+                    latest = self.modes_collection.find_one({"_id": mode_obj_id}, {"blocked_page_urls": 1})
+                if not latest:
+                    latest = self.modes_collection.find_one({"name": mode_name}, {"blocked_page_urls": 1})
+                if latest is not None:
+                    blocked_page_urls = set(latest.get("blocked_page_urls", []) or [])
+            except Exception:
+                # Best-effort only; if refresh fails, continue with last known set.
+                return
         
         scrape_sites = mode_doc.get("scrape_sites", [])
         if not scrape_sites:
@@ -2830,6 +2921,7 @@ class ScrapingService:
                         if not normalized_url:
                             print(f"  ⚠️  Skipping invalid URL: {url}")
                             continue
+                        _refresh_blocked_pages_if_needed()
                         if normalized_url in blocked_page_urls:
                             print(f"  ⛔ Skipping blocked URL for mode '{mode_name}': {url}")
                             continue
@@ -2864,10 +2956,17 @@ class ScrapingService:
                             {"normalized_url": normalized_url}
                         )
                         if existing:
+                            # Re-check block list right before reusing/attaching an existing page.
+                            _refresh_blocked_pages_if_needed()
+                            if normalized_url in blocked_page_urls:
+                                print(f"  ⛔ Skipping blocked URL for mode '{mode_name}' (reuse prevented): {url}")
+                                continue
                             self.scraped_content_collection.update_one(
                                 {"_id": existing["_id"]},
                                 {"$addToSet": {"modes": mode_name}}
                             )
+                            # Make this existing vector-store file discoverable under the new mode.
+                            self._mark_vector_file_shared_with_mode(existing.get("openai_file_id"), mode_name)
                             self._clear_failed_page(normalized_url, mode_name)
                             site_result["pages_reused"] += 1
                             results["total_pages_reused"] += 1
@@ -3052,6 +3151,8 @@ class ScrapingService:
                         {"_id": existing["_id"]},
                         {"$addToSet": {"modes": mode_name}}
                     )
+                    # Make this existing vector-store file discoverable under the new mode.
+                    self._mark_vector_file_shared_with_mode(existing.get("openai_file_id"), mode_name)
                     self._clear_failed_page(normalized_url, mode_name)
                     site_result["pages_reused"] = 1
                     results["total_pages_reused"] += 1
@@ -3207,6 +3308,8 @@ class ScrapingService:
                         {"_id": page["_id"]},
                         {"$addToSet": {"modes": mode_name}}
                     )
+                    # Make this existing vector-store file discoverable under the new mode.
+                    self._mark_vector_file_shared_with_mode(page.get("openai_file_id"), mode_name)
                     normalized_existing = page.get("normalized_url")
                     if normalized_existing:
                         self._clear_failed_page(normalized_existing, mode_name)
@@ -3666,6 +3769,13 @@ class ScrapingService:
                         openai_file_id = self.upload_to_vector_store(
                             content, mode_name, url, original_title, scraped_at
                         )
+
+                        # Preserve multi-mode discoverability on the new file by re-applying
+                        # sharing flags for any additional modes.
+                        if openai_file_id:
+                            for extra_mode in doc.get("modes", []):
+                                if extra_mode and extra_mode != mode_name:
+                                    self._mark_vector_file_shared_with_mode(openai_file_id, extra_mode)
                         
                         # Update MongoDB with new content
                         # Note: We preserve the original title from the first pass

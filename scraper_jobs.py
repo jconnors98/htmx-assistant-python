@@ -38,6 +38,7 @@ class ScrapeJobProcessor:
         mode_name: str,
         user_id: str,
         resume_state: Optional[Dict[str, Any]] = None,
+        mode_id: Optional[str] = None,
     ):
         """Execute a mode scraping job (crawl + ingest)."""
         if self.jobs_collection is None:
@@ -98,6 +99,7 @@ class ScrapeJobProcessor:
                 user_id,
                 progress_callback=update_progress,
                 resume_state=resume_state,
+                mode_id=mode_id,
             )
 
             progress_update = {

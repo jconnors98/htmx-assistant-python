@@ -23,6 +23,7 @@ from packages.common.scraper_contracts import ScraperJobRequest, ScraperQueueCon
 from scraper_jobs import ScrapeJobProcessor  # noqa: E402
 from assistant_services.scraper_client import ScraperClient  # noqa: E402
 from scraping_service import ScrapingService  # noqa: E402
+from tools.mongo_audit import AuditedDatabase, set_current_actor  # noqa: E402
 
 
 log = logging.getLogger("scraper-worker")
@@ -88,6 +89,8 @@ def _build_sqs_client(region_name: str):
 def _dispatch_request(request: ScraperJobRequest, processor: ScrapeJobProcessor):
     payload: Dict[str, Any] = request.payload or {}
     log.info("Processing job %s (%s)", request.job_id, request.job_type)
+    # Stamp updated_by for any Mongo writes during this job.
+    set_current_actor(payload.get("user_id") or "scraper_worker")
 
     if request.job_type == "scrape":
         processor.run_scrape_job(
@@ -95,6 +98,7 @@ def _dispatch_request(request: ScraperJobRequest, processor: ScrapeJobProcessor)
             payload.get("mode_name"),
             payload.get("user_id"),
             resume_state=payload.get("resume_state"),
+            mode_id=payload.get("mode_id"),
         )
     elif request.job_type == "single_url_refresh":
         processor.run_single_url_refresh(
@@ -151,7 +155,7 @@ def main():
     scraper_environment = config("SCRAPER_ENVIRONMENT", default="prod")
 
     mongo_client = _build_mongo_client()
-    db = mongo_client.get_database(config("MONGO_DB", default="bcca-assistant"))
+    db = AuditedDatabase(mongo_client.get_database(config("MONGO_DB", default="bcca-assistant")))
     jobs_collection = db.get_collection("scraping_jobs")
 
     openai_client = OpenAI(api_key=config("OPENAI_API_KEY"))

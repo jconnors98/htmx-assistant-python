@@ -166,6 +166,25 @@ class ConversationService:
         tail = text[-max_chars // 2 :]
         return f"{head} ... {tail}"
 
+    @staticmethod
+    def _vector_share_key_for_mode(mode_name: str) -> str:
+        """
+        Attribute key used to include scraped pages shared into a mode.
+
+        Scraped pages can be reused across modes; their primary `mode` attribute
+        may reflect the first mode that uploaded them. Reused pages are marked
+        with a mode-specific "shared_with_<mode>" attribute so file_search can
+        include them for additional modes.
+        """
+        import re
+
+        raw = (mode_name or "").strip().lower()
+        safe = re.sub(r"[^a-z0-9_]+", "_", raw)
+        safe = re.sub(r"_+", "_", safe).strip("_")
+        if not safe:
+            safe = "default"
+        return f"shared_with_{safe}"
+
     def _build_prompt_and_tools(
         self, mode_doc: Optional[Dict[str, Any]], mode: str, tag: str
     ) -> Tuple[str, List[Dict], List[Dict[str, Any]]]:
@@ -192,6 +211,7 @@ class ConversationService:
                 "vector_store_ids": [self.vector_store_id],
                 "filters": {},
             }
+            share_key = self._vector_share_key_for_mode(mode)
             if tag and tag in tags:
                 file_search_tool["filters"] = {
                     "type": "or",
@@ -210,13 +230,17 @@ class ConversationService:
                                 {"type": "eq", "key": "always_include", "value": "true"},
                             ],
                         },
+                        # Include any scraped pages shared into this mode.
+                        {"type": "eq", "key": share_key, "value": "true"},
                     ],
                 }
             else:
                 file_search_tool["filters"] = {
-                    "type": "eq",
-                    "key": "mode",
-                    "value": mode,
+                    "type": "or",
+                    "filters": [
+                        {"type": "eq", "key": "mode", "value": mode},
+                        {"type": "eq", "key": share_key, "value": "true"},
+                    ],
                 }
             tools.append(file_search_tool)
 
