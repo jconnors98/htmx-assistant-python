@@ -6,3 +6,5 @@ public/widget-example.html
 /storage
 app.wsgi
 /public/override
+/temp
+/docs
