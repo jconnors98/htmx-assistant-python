@@ -335,6 +335,47 @@ class ConversationService:
 
             tools.append({"type": "web_search"})
 
+        # TalentCentral: always include a jobs search tool (even when vector store is enabled)
+        if mode == "talentcentral":
+            jobs_search_tool = {
+                "type": "function",
+                "name": "search_jobs",
+                "description": "Search for relevant jobs in the database based on a user's query and/or their profile (resume)",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "What the user is looking for (trade, role, keywords). Can be empty to rely on profile/resume keywords.",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of results to return (default: 10)",
+                            "default": 10,
+                        },
+                        "use_profile": {
+                            "type": "boolean",
+                            "description": "Whether to use the user's profile and resume to improve relevance (default: true)",
+                            "default": True,
+                        },
+                    },
+                    "required": [],
+                },
+            }
+
+            if not any(
+                t.get("type") == "function" and t.get("name") == "search_jobs"
+                for t in tools
+                if isinstance(t, dict)
+            ):
+                tools.append(jobs_search_tool)
+
+            gpt_system_prompt += (
+                "You have access to a jobs database search tool. "
+                "Use the search_jobs function when the user asks to find jobs, roles, or opportunities, "
+                "or when it would help to ground your answer in real job postings. "
+            )
+
         # if database_config:
         #     db_source = self._build_database_data_source(database_config)
         #     if db_source:
@@ -493,6 +534,92 @@ class ConversationService:
                             {"role": "user", "content": text},
                             output,
                             {"output": tool_result, "call_id": output.call_id, "type": "function_call_output"},
+                        ],
+                    )
+                    response = final_response
+                    called_function = True
+
+        # Handle function calls for TalentCentral job search (talentcentral mode only)
+        if mode == "talentcentral" and hasattr(response, "output") and response.output and len(response.output) > 0:
+            output = response.output[0]
+            if output.type == "function_call":
+                function_name = output.name
+                function_args = output.arguments
+
+                # Parse function arguments
+                if isinstance(function_args, str):
+                    import json
+
+                    function_args = json.loads(function_args)
+
+                if function_name == "search_jobs":
+                    from functions import _search_jobs_tool
+
+                    query_text = function_args.get("query", "") if isinstance(function_args, dict) else ""
+                    limit = function_args.get("limit", 10) if isinstance(function_args, dict) else 10
+                    use_profile = (
+                        function_args.get("use_profile", True) if isinstance(function_args, dict) else True
+                    )
+
+                    search_results = _search_jobs_tool(
+                        query_text,
+                        user_id=user_id,
+                        limit=limit,
+                        use_profile=use_profile,
+                    )
+
+                    def _fmt_salary(job: dict) -> str:
+                        smin = job.get("salary_min")
+                        smax = job.get("salary_max")
+                        stype = job.get("salary_type") or ""
+                        if smin is None and smax is None:
+                            return "Salary: not listed"
+                        if smin is not None and smax is not None:
+                            return f"Salary: {smin}–{smax} ({stype})" if stype else f"Salary: {smin}–{smax}"
+                        if smin is not None:
+                            return f"Salary: {smin}+ ({stype})" if stype else f"Salary: {smin}+"
+                        return f"Salary: up to {smax} ({stype})" if stype else f"Salary: up to {smax}"
+
+                    # Format results for the AI
+                    if search_results:
+                        shown = min(len(search_results), int(limit) if str(limit).isdigit() else 10)
+                        tool_result = (
+                            f"Found {len(search_results)} jobs"
+                            + (f" matching '{query_text}'" if query_text else "")
+                            + ":\n"
+                        )
+                        for i, job in enumerate(search_results[:shown], 1):
+                            title = job.get("title", "Untitled")
+                            location = job.get("location") or "Unknown location"
+                            job_type = job.get("job_type") or "Unknown type"
+                            exp = job.get("experience_level") or "Unspecified"
+                            is_apprentice = bool(job.get("is_apprenticeship"))
+                            app_method = job.get("application_method") or "internal"
+                            external = job.get("external_url") or ""
+                            apply_text = (
+                                f"Apply: {external}" if app_method == "external" and external else f"Apply: {app_method}"
+                            )
+                            apprentice_text = "Apprenticeship: yes" if is_apprentice else "Apprenticeship: no"
+                            tool_result += (
+                                f"{i}. {title} — {location} ({job_type}, experience: {exp}). "
+                                f"{_fmt_salary(job)}. {apprentice_text}. {apply_text}\n"
+                            )
+                    else:
+                        tool_result = (
+                            f"No jobs found matching '{query_text}'" if query_text else "No jobs found."
+                        )
+
+                    final_response = self.client.responses.create(
+                        model="gpt-4.1-mini",
+                        input=[
+                            {"role": "system", "content": full_system_prompt},
+                            {"role": "user", "content": text},
+                            output,
+                            {
+                                "output": tool_result,
+                                "call_id": output.call_id,
+                                "type": "function_call_output",
+                            },
                         ],
                     )
                     response = final_response

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tequila Draw – QR Code</title>
+    <meta name="description" content="Scan the QR code to enter the tequila bottle draw." />
+    <link rel="stylesheet" href="assets/styles.css" />
+  </head>
+  <body>
+    <div class="wrap">
+      <header class="topbar">
+        <div class="brand">
+          <div>Buildex Draw</div>
+          <div class="pill">QR + Entry Form</div>
+        </div>
+        <nav class="nav">
+          <a class="btn ghost" href="enter.html">Open entry form</a>
+          <a class="btn ghost" href="qr.html">Poster / QR generator</a>
+          <button class="btn" type="button" id="printBtn">Print</button>
+        </nav>
+      </header>
+
+      <main class="hero">
+        <section class="card">
+          <h1 id="eventTitle">Tequila Bottle Draw</h1>
+          <p id="eventSubtitle">Scan to enter!</p>
+
+          <div class="row" style="margin-top: 10px">
+            <div class="status" id="entryUrlOut" style="flex: 1; min-width: 260px"></div>
+            <a class="btn primary" href="enter.html">Enter now</a>
+          </div>
+
+          <p class="fineprint">
+            Tip: for the cleanest QR, use the <a href="qr.html">Poster / QR generator</a> page after you deploy and
+            paste the final public URL.
+          </p>
+        </section>
+
+        <aside class="card">
+          <h2 style="margin-bottom: 8px">Scan to enter</h2>
+          <div class="qrBox">
+            <canvas id="qrCanvas" width="320" height="320" aria-label="QR code"></canvas>
+          </div>
+          <p class="hint noPrint">
+            If you’re previewing locally via a file path, the QR will still render—but scanning works best once hosted.
+          </p>
+        </aside>
+      </main>
+    </div>
+
+    <script src="config.js"></script>
+    <script src="assets/qrcode.min.js"></script>
+    <script type="module">
+      import { renderQrToCanvas } from "./assets/qr.js";
+
+      function safeConfig() {
+        return (window.APP_CONFIG && typeof window.APP_CONFIG === "object" && window.APP_CONFIG) || {};
+      }
+
+      function computeEntryUrl(cfg) {
+        if (cfg.publicEntryUrl && String(cfg.publicEntryUrl).trim()) return String(cfg.publicEntryUrl).trim();
+        try {
+          // Prefer the same-origin hosted enter.html
+          return new URL("enter.html", window.location.href).toString();
+        } catch {
+          return "enter.html";
+        }
+      }
+
+      const cfg = safeConfig();
+      const entryUrl = computeEntryUrl(cfg);
+
+      const eventTitle = document.getElementById("eventTitle");
+      const eventSubtitle = document.getElementById("eventSubtitle");
+      if (eventTitle && cfg.eventTitle) eventTitle.textContent = cfg.eventTitle;
+      if (eventSubtitle && cfg.eventSubtitle) eventSubtitle.textContent = cfg.eventSubtitle;
+
+      const entryUrlOut = document.getElementById("entryUrlOut");
+      entryUrlOut.textContent = entryUrl;
+
+      const canvas = document.getElementById("qrCanvas");
+      // Print-friendly defaults: medium ECC, minimal margin.
+      renderQrToCanvas(canvas, entryUrl, { width: 320, errorCorrectionLevel: "M", margin: 1 });
+
+      document.getElementById("printBtn")?.addEventListener("click", () => window.print());
+    </script>
+  </body>
+</html>
+

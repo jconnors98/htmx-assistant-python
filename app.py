@@ -65,6 +65,7 @@ scraping_jobs_collection = db.get_collection("scraping_jobs")
 document_projects_collection = db.get_collection("document_projects")
 blocked_pages_collection = db.get_collection("blocked_pages")
 api_tokens_collection = db.get_collection("api_tokens")
+tequila_draw_entries_collection = db.get_collection("tequila_draw_entries")
 
 localDevMode = config("LOCAL_DEV_MODE", default="false").lower()
 
@@ -378,6 +379,7 @@ def token_auth_required(fn):
     Header forms:
     - Authorization: Bearer <token>
     - X-API-Token: <token>
+    - X-API-Key: <token>   (frontend default: "x-api-key")
 
     Usage logging (best-effort; stored on the token doc):
     - usage_count (increment)
@@ -393,6 +395,9 @@ def token_auth_required(fn):
             token = auth.split(" ", 1)[1].strip()
         if not token:
             token = (request.headers.get("X-API-Token") or "").strip()
+        if not token:
+            # Common static-site API key header name.
+            token = (request.headers.get("X-API-Key") or "").strip()
 
         if not token:
             return {"error": "Unauthorized"}, 401
@@ -1402,6 +1407,103 @@ def permitsca_api():
     except Exception as err:  # noqa: BLE001
         print("Error getting AI response:", err)
         return {"error": "There was an error getting a response. Please try again."}, 500
+
+
+@routes.post("/api/tequila-draw/entries")
+@token_auth_required
+def tequila_draw_create_entry():
+    """
+    Create a tequila draw entry (used by the static QR/entry site).
+
+    Frontend contract (see docs/TEQUILA_DRAW_README.md):
+      Headers:
+        - Content-Type: application/json
+        - x-api-key: <token>   (or other header configured by frontend)
+      Body:
+        {
+          "fullName": "Jane Doe",
+          "companyName": "Acme",
+          "email": "jane@acme.com",
+          "phone": "+1 555 555 5555",
+          "source": "qr",
+          "submittedAt": "2026-02-11T12:34:56.000Z",
+          "consent": { "ageOk": true, "contactOk": false }
+        }
+    """
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return {"error": "Invalid JSON body"}, 400
+
+    def _req_str(key: str, *, max_len: int = 300) -> str:
+        v = data.get(key)
+        s = str(v or "").strip()
+        if not s:
+            raise ValueError(f"{key} is required")
+        if len(s) > max_len:
+            raise ValueError(f"{key} is too long")
+        return s
+
+    try:
+        full_name = _req_str("fullName", max_len=200)
+        company_name = _req_str("companyName", max_len=200)
+        email_raw = _req_str("email", max_len=254)
+        phone = _req_str("phone", max_len=80)
+    except ValueError as e:
+        return {"error": str(e)}, 400
+
+    email_norm = email_raw.strip().lower()
+    # intentionally simple and permissive (matches frontend intent)
+    if not re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]{2,}$", email_norm):
+        return {"error": "email must be a valid email address"}, 400
+
+    source = str((data.get("source") or "qr")).strip()[:40] or "qr"
+
+    consent = data.get("consent") if isinstance(data.get("consent"), dict) else {}
+    age_ok = consent.get("ageOk") is True
+    contact_ok = consent.get("contactOk") is True
+    if not age_ok:
+        return {"error": "consent.ageOk must be true"}, 400
+
+    submitted_at_raw = data.get("submittedAt")
+    submitted_at_client = None
+    if isinstance(submitted_at_raw, str) and submitted_at_raw.strip():
+        # Parse best-effort; store raw regardless.
+        try:
+            submitted_at_client = datetime.fromisoformat(submitted_at_raw.replace("Z", "+00:00"))
+        except Exception:  # noqa: BLE001
+            submitted_at_client = None
+
+    ip_addr = request.headers.get("X-Forwarded-For", request.remote_addr)
+    user_agent = request.headers.get("User-Agent", "")
+    token_ctx = getattr(request, "api_token", {}) or {}
+
+    entry_doc = {
+        "full_name": full_name,
+        "company_name": company_name,
+        "email": email_norm,
+        "email_raw": email_raw,
+        "phone": phone,
+        "source": source,
+        "submitted_at_raw": submitted_at_raw,
+        "submitted_at_client": submitted_at_client,
+        "consent": {"ageOk": True, "contactOk": bool(contact_ok)},
+        "created_at": datetime.utcnow(),
+        "ip": ip_addr,
+        "user_agent": user_agent,
+        "api_token": {
+            "_id": token_ctx.get("_id"),
+            "name": token_ctx.get("name"),
+            "user_id": token_ctx.get("user_id"),
+        },
+    }
+
+    try:
+        result = tequila_draw_entries_collection.insert_one(entry_doc)
+    except Exception as e:  # noqa: BLE001
+        print(f"Failed to insert tequila draw entry: {e}")
+        return {"error": "Failed to store entry"}, 500
+
+    return {"status": "ok", "entry_id": str(result.inserted_id)}, 201
 
 
 @routes.post("/api/scrape-target")

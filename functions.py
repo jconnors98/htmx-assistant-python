@@ -408,6 +408,247 @@ def _search_permits_tool(query_text, limit=10):
         return []
 
 
+def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
+    """
+    Tool function to search for jobs in MySQL, optionally using the user's profile.
+
+    - Searches across title/description/requirements via LIKE patterns.
+    - If use_profile is True, loads the user's resume from users.resume_path and extracts keywords.
+    - Uses a soft location preference (City, ProvinceCode) to rank results.
+    """
+
+    def _safe_int(value):
+        try:
+            return int(value)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _is_url(value):
+        if not value:
+            return False
+        text = str(value).strip().lower()
+        return text.startswith("http://") or text.startswith("https://")
+
+    def _extract_keywords(text, *, max_terms=12):
+        if not text:
+            return []
+
+        # Basic tokenization + stopword filtering. Keep simple and dependency-free.
+        stopwords = {
+            "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "has", "have",
+            "in", "is", "it", "its", "of", "on", "or", "our", "that", "the", "their", "this",
+            "to", "was", "were", "will", "with", "you", "your", "i", "we", "they", "he", "she",
+            "them", "us", "me", "my", "mine", "his", "her", "hers", "who", "what", "when",
+            "where", "why", "how",
+        }
+        tokens = re.findall(r"[a-zA-Z][a-zA-Z0-9\-\+\.]{1,}", str(text).lower())
+        freq = {}
+        for tok in tokens:
+            if len(tok) < 3:
+                continue
+            if tok in stopwords:
+                continue
+            # Skip ultra-common resume noise
+            if tok in {"resume", "curriculum", "vitae", "experience", "skills", "education"}:
+                continue
+            freq[tok] = freq.get(tok, 0) + 1
+
+        ranked = sorted(freq.items(), key=lambda kv: (-kv[1], kv[0]))
+        return [t for t, _ in ranked[:max_terms]]
+
+    def _load_resume_text(resume_path):
+        if not resume_path:
+            return ""
+        path_value = str(resume_path).strip()
+        if not path_value:
+            return ""
+
+        try:
+            import tempfile
+            import os
+
+            local_path = None
+            if _is_url(path_value):
+                # Download to a temp file (best-effort).
+                url = path_value
+                suffix = os.path.splitext(url.split("?")[0])[1].lower()
+                if suffix not in {".pdf", ".txt"}:
+                    suffix = ".bin"
+                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                    resp = requests.get(url, timeout=30)
+                    resp.raise_for_status()
+                    tmp.write(resp.content)
+                    local_path = tmp.name
+            else:
+                local_path = path_value
+
+            if not local_path or not os.path.exists(local_path):
+                return ""
+
+            ext = os.path.splitext(local_path)[1].lower()
+            if ext == ".pdf":
+                try:
+                    from tools import pdf_tools
+
+                    parsed = pdf_tools.parse_pdf(local_path, max_seconds=30)
+                    return (parsed or {}).get("text", "") or ""
+                except Exception as e:  # noqa: BLE001
+                    print(f"Resume PDF parse failed: {e}")
+                    return ""
+
+            # Best-effort plaintext read for non-PDF files.
+            with open(local_path, "rb") as handle:
+                raw = handle.read()
+            try:
+                return raw.decode("utf-8")
+            except Exception:  # noqa: BLE001
+                return raw.decode("utf-8", errors="ignore")
+
+        except Exception as e:  # noqa: BLE001
+            print(f"Resume load failed: {e}")
+            return ""
+
+    print("searching jobs", query_text, user_id, limit, use_profile)
+    try:
+        import mysql.connector
+        from decouple import config
+
+        # Sane limit
+        try:
+            limit = int(limit)
+        except Exception:  # noqa: BLE001
+            limit = 10
+        limit = max(1, min(limit, 25))
+
+        user_id_int = _safe_int(user_id)
+
+        # Use the same connection details from mysql_test.py / permits tool
+        cnx = mysql.connector.connect(
+            host=config("MYSQL_HOST"),
+            database=config("MYSQL_DATABASE"),
+            port=3306,
+            user=config("MYSQL_USER"),
+            password=config("MYSQL_PASSWORD"),
+            ssl_ca=config("MYSQL_CERT_PATH"),
+            collation="utf8mb4_unicode_ci",
+        )
+        cursor = cnx.cursor(dictionary=True)
+
+        user_location = None
+        resume_path = None
+        if use_profile and user_id_int is not None:
+            cursor.execute(
+                "SELECT id, location, commute_radius, resume_path FROM users WHERE id=%s LIMIT 1",
+                (user_id_int,),
+            )
+            user_row = cursor.fetchone() or {}
+            user_location = (user_row.get("location") or "").strip() or None
+            resume_path = (user_row.get("resume_path") or "").strip() or None
+
+        # Build term list from query + resume keywords
+        terms = []
+        if query_text and str(query_text).strip():
+            qt = str(query_text).strip()
+            # Include the full phrase (trimmed) plus token keywords
+            if len(qt) <= 80:
+                terms.append(qt.lower())
+            terms.extend(_extract_keywords(qt, max_terms=8))
+
+        if use_profile and resume_path:
+            resume_text = _load_resume_text(resume_path)
+            terms.extend(_extract_keywords(resume_text, max_terms=12))
+
+        # Dedupe while preserving order; keep query-derived terms first.
+        seen = set()
+        deduped_terms = []
+        for t in terms:
+            if not t:
+                continue
+            key = str(t).strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            deduped_terms.append(key)
+
+        # Avoid massive SQL parameter lists
+        deduped_terms = deduped_terms[:8]
+
+        params = []
+        if user_location:
+            location_score_sql = (
+                "(CASE WHEN CAST(location AS CHAR) LIKE %s THEN 1 ELSE 0 END) AS location_score"
+            )
+            params.append(f"%{user_location}%")
+        else:
+            location_score_sql = "0 AS location_score"
+
+        if deduped_terms:
+            relevance_parts = []
+            for term in deduped_terms:
+                pattern = f"%{term}%"
+                relevance_parts.append("(CASE WHEN title LIKE %s THEN 3 ELSE 0 END)")
+                relevance_parts.append("(CASE WHEN description LIKE %s THEN 1 ELSE 0 END)")
+                relevance_parts.append("(CASE WHEN requirements LIKE %s THEN 1 ELSE 0 END)")
+                params.extend([pattern, pattern, pattern])
+            relevance_score_sql = f"({'+'.join(relevance_parts)}) AS relevance_score"
+        else:
+            relevance_score_sql = "0 AS relevance_score"
+
+        where_sql = "WHERE status='active' AND (expires_at IS NULL OR expires_at > NOW())"
+        if deduped_terms:
+            term_groups = []
+            term_params = []
+            for term in deduped_terms:
+                pattern = f"%{term}%"
+                term_groups.append("(title LIKE %s OR description LIKE %s OR requirements LIKE %s)")
+                term_params.extend([pattern, pattern, pattern])
+            where_sql += " AND (" + " OR ".join(term_groups) + ")"
+            params.extend(term_params)
+
+        search_query = f"""
+            SELECT
+                id,
+                employer_id,
+                title,
+                description,
+                requirements,
+                salary_min,
+                salary_max,
+                salary_type,
+                job_type,
+                experience_level,
+                is_apprenticeship,
+                pre_interview_enabled,
+                status,
+                views_count,
+                created_at,
+                updated_at,
+                expires_at,
+                CAST(location AS CHAR) AS location,
+                application_method,
+                external_url,
+                {location_score_sql},
+                {relevance_score_sql}
+            FROM jobs
+            {where_sql}
+            ORDER BY location_score DESC, relevance_score DESC, created_at DESC
+            LIMIT %s
+        """
+
+        params.append(limit)
+        cursor.execute(search_query, tuple(params))
+        results = cursor.fetchall()
+
+        cursor.close()
+        cnx.close()
+
+        return results
+
+    except Exception as e:  # noqa: BLE001
+        print(f"Error searching jobs: {e}")
+        return []
+
+
 def _get_analytics_data_for_query(pipeline, match, prompt_logs_collection, modes_collection):
     """Get relevant analytics data for AI processing."""
     

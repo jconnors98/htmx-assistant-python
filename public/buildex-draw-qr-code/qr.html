@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>QR / Poster Generator</title>
+    <meta name="description" content="Generate a print-ready QR code poster for the tequila draw entry form." />
+    <link rel="stylesheet" href="assets/styles.css" />
+  </head>
+  <body>
+    <div class="wrap">
+      <header class="topbar">
+        <div class="brand">
+          <div>Buildex Draw</div>
+          <div class="pill">Poster Generator</div>
+        </div>
+        <nav class="nav">
+          <a class="btn ghost" href="index.html">QR page</a>
+          <a class="btn ghost" href="enter.html">Entry form</a>
+          <button class="btn" type="button" id="printBtn">Print</button>
+        </nav>
+      </header>
+
+      <main class="hero">
+        <section class="card">
+          <h1>QR / Poster generator</h1>
+          <p>Paste the final public URL for your entry form and generate a print-ready QR code.</p>
+
+          <div id="status" class="status" hidden></div>
+
+          <div class="field">
+            <label for="urlInput">Entry URL</label>
+            <input class="input" id="urlInput" type="url" placeholder="https://your-site.com/enter.html" />
+            <div class="hint">Use the exact URL you want scanners to land on.</div>
+          </div>
+
+          <div class="grid2">
+            <div class="field">
+              <label for="sizeSelect">QR size</label>
+              <select class="select" id="sizeSelect">
+                <option value="320">320 px (screen)</option>
+                <option value="512" selected>512 px (print)</option>
+                <option value="768">768 px (large print)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="eccSelect">Error correction</label>
+              <select class="select" id="eccSelect">
+                <option value="L">L (7%)</option>
+                <option value="M" selected>M (15%)</option>
+                <option value="Q">Q (25%)</option>
+                <option value="H">H (30%)</option>
+              </select>
+              <div class="hint">Higher is more resilient, slightly denser.</div>
+            </div>
+          </div>
+
+          <div class="row" style="margin-top: 10px">
+            <button class="btn primary" type="button" id="generateBtn">Generate</button>
+            <button class="btn" type="button" id="downloadBtn" disabled>Download PNG</button>
+          </div>
+          <div class="row noPrint" style="margin-top: 10px">
+            <button class="btn" type="button" id="copyBtn" disabled>Copy URL</button>
+            <a class="btn ghost" id="openBtn" href="#" target="_blank" rel="noreferrer">Open URL</a>
+          </div>
+
+          <p class="fineprint">
+            Printing tip: choose “Fit”/“Scale to page”, and avoid “Draft” print quality so the QR stays crisp.
+          </p>
+        </section>
+
+        <aside class="card" id="poster">
+          <h2 id="eventTitle">Tequila Bottle Draw</h2>
+          <p id="eventSubtitle">Scan to enter. Takes 10 seconds.</p>
+
+          <div class="qrBox" style="margin-top: 10px">
+            <canvas id="qrCanvas" width="512" height="512" aria-label="QR code"></canvas>
+          </div>
+
+          <div class="status" id="urlOut" style="margin-top: 12px; word-break: break-all"></div>
+
+          <div class="fineprint">
+            By entering, you agree to be contacted if you win. No purchase required. Staff can confirm eligibility.
+          </div>
+        </aside>
+      </main>
+    </div>
+
+    <script src="config.js"></script>
+    <script src="assets/qrcode.min.js"></script>
+    <script type="module">
+      import { renderQrToCanvas, qrDataUrl, downloadDataUrl } from "./assets/qr.js";
+
+      function setStatus(kind, msg) {
+        const el = document.getElementById("status");
+        if (!el) return;
+        el.classList.remove("good", "bad");
+        if (kind === "good") el.classList.add("status", "good");
+        else if (kind === "bad") el.classList.add("status", "bad");
+        else el.classList.add("status");
+        el.textContent = msg || "";
+        el.hidden = !msg;
+      }
+
+      const cfg = (window.APP_CONFIG && typeof window.APP_CONFIG === "object" && window.APP_CONFIG) || {};
+      if (cfg.eventTitle) document.getElementById("eventTitle").textContent = cfg.eventTitle;
+      if (cfg.eventSubtitle) document.getElementById("eventSubtitle").textContent = cfg.eventSubtitle;
+
+      const urlInput = document.getElementById("urlInput");
+      const sizeSelect = document.getElementById("sizeSelect");
+      const eccSelect = document.getElementById("eccSelect");
+      const canvas = document.getElementById("qrCanvas");
+      const urlOut = document.getElementById("urlOut");
+      const downloadBtn = document.getElementById("downloadBtn");
+      const copyBtn = document.getElementById("copyBtn");
+      const openBtn = document.getElementById("openBtn");
+
+      let lastDataUrl = "";
+
+      function defaultUrl() {
+        if (cfg.publicEntryUrl && String(cfg.publicEntryUrl).trim()) return String(cfg.publicEntryUrl).trim();
+        try {
+          return new URL("enter.html", window.location.href).toString();
+        } catch {
+          return "";
+        }
+      }
+      urlInput.value = defaultUrl();
+
+      async function generate() {
+        setStatus("", "");
+        const text = String(urlInput.value || "").trim();
+        if (!text) {
+          setStatus("bad", "Please paste the entry URL.");
+          return;
+        }
+
+        // basic URL sanity check (still allow custom schemes if desired)
+        if (!/^https?:\/\//i.test(text)) {
+          setStatus("bad", "Entry URL should start with http:// or https://");
+          return;
+        }
+
+        const size = Number(sizeSelect.value || "512");
+        const ecc = String(eccSelect.value || "M");
+
+        canvas.width = size;
+        canvas.height = size;
+
+        await renderQrToCanvas(canvas, text, { width: size, errorCorrectionLevel: ecc, margin: 1 });
+        urlOut.textContent = text;
+        openBtn.href = text;
+
+        lastDataUrl = await qrDataUrl(text, { width: size, errorCorrectionLevel: ecc, margin: 1 });
+        downloadBtn.disabled = false;
+        copyBtn.disabled = false;
+        setStatus("good", "Generated. You can print or download PNG.");
+      }
+
+      document.getElementById("generateBtn").addEventListener("click", () => generate().catch((e) => setStatus("bad", e.message)));
+      downloadBtn.addEventListener("click", () => {
+        if (!lastDataUrl) return;
+        const size = Number(sizeSelect.value || "512");
+        downloadDataUrl(lastDataUrl, `buildex-draw-qr-${size}px.png`);
+      });
+      copyBtn.addEventListener("click", async () => {
+        const text = String(urlInput.value || "").trim();
+        if (!text) return;
+        try {
+          await navigator.clipboard.writeText(text);
+          setStatus("good", "Copied URL to clipboard.");
+        } catch {
+          setStatus("bad", "Copy failed (clipboard permission).");
+        }
+      });
+
+      document.getElementById("printBtn").addEventListener("click", () => window.print());
+
+      // Generate once on load if we have a default URL
+      if (urlInput.value) generate().catch(() => {});
+    </script>
+  </body>
+</html>
+
