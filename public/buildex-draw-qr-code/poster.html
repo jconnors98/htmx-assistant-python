@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tequila Draw – Booth Poster</title>
+    <meta name="description" content="Scan the QR code to enter the Tequila Bottle Draw." />
+    <link rel="stylesheet" href="assets/styles.css" />
+    <style>
+      /* Fullscreen monitor poster (minimal UI) */
+      html,
+      body {
+        height: 100%;
+      }
+
+      .wrap {
+        max-width: none;
+        padding: 0;
+        height: 100%;
+        display: grid;
+        place-items: center;
+      }
+
+      .poster {
+        width: min(980px, 92vw);
+        text-align: center;
+        padding: clamp(18px, 3vw, 34px);
+      }
+
+      .kicker {
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: rgba(238, 242, 255, 0.72);
+        font-size: clamp(12px, 1.4vw, 16px);
+        margin-bottom: 10px;
+      }
+
+      .headline {
+        margin: 0;
+        line-height: 1.05;
+        letter-spacing: -0.03em;
+        font-size: clamp(34px, 5.5vw, 78px);
+        color: var(--text);
+      }
+
+      .qrWrap {
+        margin: clamp(14px, 3vw, 22px) auto 0;
+        display: grid;
+        place-items: center;
+      }
+
+      .qrCard {
+        border-radius: 22px;
+        padding: clamp(10px, 1.6vw, 16px);
+        background: rgba(255, 255, 255, 0.92);
+        box-shadow: 0 22px 60px rgba(0, 0, 0, 0.52);
+        border: 1px solid rgba(255, 255, 255, 0.35);
+      }
+
+      .qrCard img {
+        width: min(64vmin, 720px);
+        height: auto;
+        display: block;
+      }
+
+      .caption {
+        margin-top: 14px;
+        font-size: clamp(14px, 1.7vw, 20px);
+        color: rgba(238, 242, 255, 0.72);
+        font-weight: 650;
+      }
+
+      /* Reduce motion for signage */
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          transition: none !important;
+          animation: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <main class="card poster" role="main" aria-label="Tequila draw booth poster">
+        <div class="kicker">Buildex 2026</div>
+        <h1 class="headline">Enter to win a bottle of tequila!</h1>
+
+        <div class="qrWrap">
+          <div class="qrCard" aria-label="QR code">
+            <img src="assets/buildex-draw-qr-512px.png" alt="QR code to enter the tequila draw" />
+          </div>
+          <div class="caption">Scan with your phone camera to enter</div>
+        </div>
+      </main>
+    </div>
+  </body>
+</html>
+
