@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from datetime import datetime
-from typing import Optional, Tuple, List, Dict, Any
+from typing import Optional, Tuple, List, Dict, Any, Union
 from urllib.parse import quote_plus, urlencode
 from bson import ObjectId
 
@@ -412,7 +412,11 @@ class ConversationService:
         file_id: Optional[str] = None,
         file_ids: Optional[List[str]] = None,
         doc_intel_session_id: Optional[str] = None,
-    ) -> Tuple[str, str, Optional[dict]]:
+        include_jobs: bool = False,
+    ) -> Union[
+        Tuple[str, str, Optional[dict]],
+        Tuple[str, str, Optional[dict], List[Dict[str, Any]]],
+    ]:
         conv_id = ObjectId(conversation_id)
         self.add_user_message(conversation_id, user_id, text)
         mode_doc = self._get_mode_doc(mode) if mode else None
@@ -426,7 +430,9 @@ class ConversationService:
         ):
             doc_context = self.doc_intelligence_service.generate_assistant_context(mode_doc, text, doc_session_id)
             if doc_context:
-                return self._respond_with_manual_text(conv_id, doc_context, text)
+                return self._respond_with_manual_text(
+                    conv_id, doc_context, text, include_jobs=include_jobs
+                )
 
         context = self._build_context(conversation_id)
         system_prompt, tools, data_sources = self._build_prompt_and_tools(mode_doc, mode, tag)
@@ -496,6 +502,7 @@ class ConversationService:
         response = _call_model("gpt-4.1-mini")
         
         called_function = False
+        jobs_for_api: List[Dict[str, Any]] = []
         # Handle function calls for permit search (permitsca mode only)
         if mode == "permitsca" and hasattr(response, 'output') and response.output and len(response.output) > 0:
             output = response.output[0]
@@ -568,6 +575,34 @@ class ConversationService:
                         use_profile=use_profile,
                     )
 
+                    def _slugify(text: str) -> str:
+                        import re
+
+                        if text is None:
+                            return "unknown"
+                        value = str(text).strip().lower()
+                        if not value:
+                            return "unknown"
+                        value = re.sub(r"[^a-z0-9]+", "-", value)
+                        value = value.strip("-")
+                        return value or "unknown"
+
+                    def _fmt_dt(value) -> str:
+                        try:
+                            if hasattr(value, "strftime"):
+                                return value.strftime("%Y-%m-%d")
+                        except Exception:  # noqa: BLE001
+                            pass
+                        return "n/a" if value in (None, "") else str(value)
+
+                    def _excerpt(value: str, limit_chars: int = 400) -> str:
+                        if not value:
+                            return ""
+                        text_value = " ".join(str(value).split())
+                        if len(text_value) <= limit_chars:
+                            return text_value
+                        return text_value[: limit_chars - 1].rstrip() + "…"
+
                     def _fmt_salary(job: dict) -> str:
                         smin = job.get("salary_min")
                         smax = job.get("salary_max")
@@ -589,20 +624,79 @@ class ConversationService:
                             + ":\n"
                         )
                         for i, job in enumerate(search_results[:shown], 1):
+                            job_id = job.get("id")
                             title = job.get("title", "Untitled")
                             location = job.get("location") or "Unknown location"
+                            city_name = str(location).split(",")[0].strip() if location else "unknown"
                             job_type = job.get("job_type") or "Unknown type"
                             exp = job.get("experience_level") or "Unspecified"
                             is_apprentice = bool(job.get("is_apprenticeship"))
                             app_method = job.get("application_method") or "internal"
-                            external = job.get("external_url") or ""
-                            apply_text = (
-                                f"Apply: {external}" if app_method == "external" and external else f"Apply: {app_method}"
-                            )
                             apprentice_text = "Apprenticeship: yes" if is_apprentice else "Apprenticeship: no"
+
+                            # TalentCentral canonical job link
+                            city_slug = _slugify(city_name)
+                            title_slug = _slugify(title)
+                            job_link = (
+                                f"https://talentcentral.ca/job/{city_slug}/{job_id}/{title_slug}"
+                                if job_id
+                                else f"https://talentcentral.ca/job/{city_slug}/unknown/{title_slug}"
+                            )
+
+                            dist = job.get("distance_km")
+                            dist_text = f"{dist} km" if dist is not None else "n/a"
+                            created_at = _fmt_dt(job.get("created_at"))
+                            updated_at = _fmt_dt(job.get("updated_at"))
+                            expires_at = _fmt_dt(job.get("expires_at"))
+                            views = job.get("views_count")
+                            status = job.get("status") or "unknown"
+                            city_id = job.get("city_id")
+                            employer_id = job.get("employer_id")
+
+                            desc = _excerpt(job.get("description") or "", 550)
+                            reqs = _excerpt(job.get("requirements") or "", 450)
+                            salary_text = _fmt_salary(job)
+                            apply_text = f"Apply: {job_link}"
+                            apply_link = job_link
+                            jobs_for_api.append(
+                                {
+                                    "id": job_id,
+                                    "title": title,
+                                    "link": job_link,
+                                    "apply_link": apply_link,
+                                    "application_method": app_method,
+                                    "location": location,
+                                    "distance_km": dist,
+                                    "job_type": job_type,
+                                    "experience_level": exp,
+                                    "status": status,
+                                    "views_count": views,
+                                    "salary_text": salary_text,
+                                    "salary_min": job.get("salary_min"),
+                                    "salary_max": job.get("salary_max"),
+                                    "salary_type": job.get("salary_type"),
+                                    "is_apprenticeship": is_apprentice,
+                                    "created_at": created_at,
+                                    "updated_at": updated_at,
+                                    "expires_at": expires_at,
+                                    "city_id": city_id,
+                                    "employer_id": employer_id,
+                                    "description_excerpt": desc,
+                                    "requirements_excerpt": reqs,
+                                }
+                            )
+
                             tool_result += (
-                                f"{i}. {title} — {location} ({job_type}, experience: {exp}). "
-                                f"{_fmt_salary(job)}. {apprentice_text}. {apply_text}\n"
+                                f"{i}. {title}\n"
+                                f"- Link: {job_link}\n"
+                                f"- Job ID: {job_id} | Employer ID: {employer_id} | City ID: {city_id}\n"
+                                f"- Location: {location} | Distance: {dist_text}\n"
+                                f"- Type: {job_type} | Experience: {exp} | Status: {status} | Views: {views}\n"
+                                f"- {salary_text} | {apprentice_text} | {apply_text}\n"
+                                f"- Posted: {created_at} | Updated: {updated_at} | Expires: {expires_at}\n"
+                                + (f"- Description: {desc}\n" if desc else "")
+                                + (f"- Requirements: {reqs}\n" if reqs else "")
+                                + "\n"
                             )
                     else:
                         tool_result = (
@@ -644,6 +738,8 @@ class ConversationService:
         self.conversations.update_one({"_id": conv_id}, {"$set": {"updated_at": now}})
         self._update_summary(conv_id, text, output_text)
         self._enforce_cap(conv_id)
+        if include_jobs and mode == "talentcentral":
+            return output_text, response.id, usage, jobs_for_api
         return output_text, response.id, usage
     
 
@@ -682,7 +778,16 @@ class ConversationService:
             if old_ids:
                 self.messages.delete_many({"_id": {"$in": old_ids}})
 
-    def _respond_with_manual_text(self, conv_id: ObjectId, assistant_text: str, user_text: str) -> Tuple[str, str, Optional[dict]]:
+    def _respond_with_manual_text(
+        self,
+        conv_id: ObjectId,
+        assistant_text: str,
+        user_text: str,
+        include_jobs: bool = False,
+    ) -> Union[
+        Tuple[str, str, Optional[dict]],
+        Tuple[str, str, Optional[dict], List[Dict[str, Any]]],
+    ]:
         response_id = str(ObjectId())
         now = datetime.utcnow()
         usage = None
@@ -699,4 +804,6 @@ class ConversationService:
         self.conversations.update_one({"_id": conv_id}, {"$set": {"updated_at": now}})
         self._update_summary(conv_id, user_text, assistant_text)
         self._enforce_cap(conv_id)
+        if include_jobs:
+            return assistant_text, response_id, usage, []
         return assistant_text, response_id, usage

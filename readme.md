@@ -209,6 +209,38 @@ Use `python playwright_env_check.py --url https://example.com` to confirm Chromi
 - **Scraping controls**: `/admin/scrape/trigger`, `/admin/scrape/status`, `/admin/scrape/jobs`, `/admin/scrape/discovered-files`, `/admin/scrape/site/*`, `/admin/scraped-content`.
 - **Analytics**: `/admin/analytics/*` endpoints deliver summaries, natural-language analytics search, and conversation transcript exports.
 - **Permits API**: `/api/permitsca` is a JSON-only variant of `/ask` that forces the `permitsca` mode and exposes usage metrics.
+- **TalentCentral API**: `/api/talentcentral` accepts a JSON `prompt` and `user_id`, forces `talentcentral` mode, and passes `user_id` into the jobs tool flow.
+
+### TalentCentral API example
+
+Use an API token header (`Authorization: Bearer ...`, `X-API-Token`, or `X-API-Key`) because this route uses `token_auth_required`.
+
+```bash
+curl -X POST "http://localhost:5000/api/talentcentral" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: YOUR_API_TOKEN" \
+  -d '{
+    "prompt": "Find apprentice electrician jobs near me",
+    "user_id": "123",
+    "conversation_id": "optional-conversation-id",
+    "response_id": "optional-previous-response-id",
+    "tag": "optional-tag"
+  }'
+```
+
+Example response:
+
+```json
+{
+  "response": "Here are some relevant roles...",
+  "conversation_id": "67bd4c6f2e5f0b2c8450a111",
+  "response_id": "resp_abc123",
+  "usage": 1853,
+  "mode": "talentcentral",
+  "tag": "",
+  "user_id": "123"
+}
+```
 
 All admin routes are wrapped in `cognito_auth_required`, ensuring Bearer tokens from Cognito are verified against JWKS metadata and user roles (super admin vs regular) are enforced.
 

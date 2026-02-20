@@ -1409,6 +1409,80 @@ def permitsca_api():
         return {"error": "There was an error getting a response. Please try again."}, 500
 
 
+@routes.post("/api/talentcentral")
+@token_auth_required
+def talentcentral_api():
+    """Token-authenticated API endpoint for TalentCentral mode."""
+    data = request.get_json(silent=True) or {}
+    prompt = (data.get("prompt") or "").strip()
+    user_id = (data.get("user_id") or "").strip()
+    tag = (data.get("tag") or "").strip()
+    conversation_id = (data.get("conversation_id") or "").strip()
+    previous_response_id = (data.get("response_id") or "").strip()
+
+    mode = "talentcentral"
+    mode_doc = modes_collection.find_one({"name": mode})
+
+    if not prompt:
+        return {"error": "prompt is required"}, 400
+    if not user_id:
+        return {"error": "user_id is required"}, 400
+
+    if not conversation_id:
+        conversation_id = str(ObjectId())
+
+    ip_addr = request.headers.get("X-Forwarded-For", request.remote_addr)
+    print(f"TalentCentral API prompt sent from IP: {ip_addr}")
+
+    threading.Thread(
+        target=_async_log_prompt,
+        kwargs={
+            "prompt": prompt,
+            "mode": mode_doc["_id"] if mode_doc else None,
+            "ip_addr": ip_addr,
+            "conversation_id": conversation_id,
+            "prompt_logs_collection": prompt_logs_collection,
+        },
+    ).start()
+
+    try:
+        gpt_text, response_id, usage, jobs = conversation_service.respond(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            text=prompt,
+            mode=mode,
+            tag=tag,
+            previous_response_id=previous_response_id or None,
+            include_jobs=True,
+        )
+
+        threading.Thread(
+            target=_async_log_prompt,
+            kwargs={
+                "response": gpt_text,
+                "mode": mode_doc["_id"] if mode_doc else None,
+                "ip_addr": ip_addr,
+                "conversation_id": conversation_id,
+                "response_id": response_id,
+                "prompt_logs_collection": prompt_logs_collection,
+            },
+        ).start()
+
+        return {
+            "response": gpt_text,
+            "jobs": jobs,
+            "conversation_id": conversation_id,
+            "response_id": response_id,
+            "usage": usage,
+            "mode": mode,
+            "tag": tag,
+            "user_id": user_id,
+        }
+    except Exception as err:  # noqa: BLE001
+        print("Error getting TalentCentral API response:", err)
+        return {"error": "There was an error getting a response. Please try again."}, 500
+
+
 @routes.post("/api/tequila-draw/entries")
 @token_auth_required
 def tequila_draw_create_entry():

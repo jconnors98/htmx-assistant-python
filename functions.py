@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 from bson import ObjectId
 from decouple import config
+from docx import Document
 
 # Global variables that need to be imported from app.py
 _jwks = None
@@ -414,7 +415,7 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
 
     - Searches across title/description/requirements via LIKE patterns.
     - If use_profile is True, loads the user's resume from users.resume_path and extracts keywords.
-    - Uses a soft location preference (City, ProvinceCode) to rank results.
+    - Uses a soft location preference (cities.id in users.location) to rank results.
     """
 
     def _safe_int(value):
@@ -472,7 +473,7 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
                 # Download to a temp file (best-effort).
                 url = path_value
                 suffix = os.path.splitext(url.split("?")[0])[1].lower()
-                if suffix not in {".pdf", ".txt"}:
+                if suffix not in {".pdf", ".txt", ".doc", ".docx"}:
                     suffix = ".bin"
                 with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
                     resp = requests.get(url, timeout=30)
@@ -483,6 +484,7 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
                 local_path = path_value
 
             if not local_path or not os.path.exists(local_path):
+                print("resume not found", local_path)
                 return ""
 
             ext = os.path.splitext(local_path)[1].lower()
@@ -496,6 +498,91 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
                     print(f"Resume PDF parse failed: {e}")
                     return ""
 
+            if ext == ".docx":
+                # Prefer python-docx when available, then fall back to raw XML parsing.
+                try:
+                    doc = Document(local_path)
+                    text = "\n".join(p.text for p in doc.paragraphs if p.text)
+                    if text.strip():
+                        return text
+                except Exception:
+                    pass
+
+                try:
+                    import zipfile
+                    from xml.etree import ElementTree as ET
+
+                    with zipfile.ZipFile(local_path) as zf:
+                        doc_xml = zf.read("word/document.xml")
+
+                    root = ET.fromstring(doc_xml)
+                    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+                    paragraphs = []
+                    for para in root.findall(".//w:p", ns):
+                        parts = [node.text for node in para.findall(".//w:t", ns) if node.text]
+                        if parts:
+                            paragraphs.append("".join(parts))
+                    return "\n".join(paragraphs)
+                except Exception as e:  # noqa: BLE001
+                    print(f"Resume DOCX parse failed: {e}")
+                    return ""
+
+            if ext == ".doc":
+                # Legacy Word format: try native extractors first, then LibreOffice conversion.
+                try:
+                    import shutil
+                    import subprocess
+
+                    for extractor in ("antiword", "catdoc"):
+                        if not shutil.which(extractor):
+                            continue
+                        try:
+                            proc = subprocess.run(
+                                [extractor, local_path],
+                                capture_output=True,
+                                timeout=30,
+                                check=False,
+                            )
+                            parsed_text = (proc.stdout or b"").decode("utf-8", errors="ignore").strip()
+                            if parsed_text:
+                                return parsed_text
+                        except Exception as e:  # noqa: BLE001
+                            print(f"{extractor} parse failed: {e}")
+
+                    soffice_bin = shutil.which("soffice") or shutil.which("libreoffice")
+                    if soffice_bin:
+                        try:
+                            with tempfile.TemporaryDirectory() as out_dir:
+                                subprocess.run(
+                                    [
+                                        soffice_bin,
+                                        "--headless",
+                                        "--convert-to",
+                                        "txt:Text",
+                                        "--outdir",
+                                        out_dir,
+                                        local_path,
+                                    ],
+                                    capture_output=True,
+                                    timeout=45,
+                                    check=False,
+                                )
+                                converted = os.path.join(
+                                    out_dir,
+                                    f"{os.path.splitext(os.path.basename(local_path))[0]}.txt",
+                                )
+                                if os.path.exists(converted):
+                                    with open(converted, "rb") as handle:
+                                        raw = handle.read()
+                                    parsed_text = raw.decode("utf-8", errors="ignore").strip()
+                                    if parsed_text:
+                                        return parsed_text
+                        except Exception as e:  # noqa: BLE001
+                            print(f"soffice doc conversion failed: {e}")
+                except Exception as e:  # noqa: BLE001
+                    print(f"Resume DOC parse failed: {e}")
+                return ""
+
             # Best-effort plaintext read for non-PDF files.
             with open(local_path, "rb") as handle:
                 raw = handle.read()
@@ -508,7 +595,61 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
             print(f"Resume load failed: {e}")
             return ""
 
+    def _geocode_place(place, _cache={}):  # noqa: B006
+        """
+        Geocode a 'City, ProvinceCode' style string to (lat, lon).
+        Uses OpenStreetMap Nominatim (best-effort) with a tiny in-process cache.
+        """
+        if not place:
+            return None
+        key = str(place).strip().lower()
+        if not key:
+            return None
+        if key in _cache:
+            return _cache[key]
+
+        try:
+            resp = requests.get(
+                "https://nominatim.openstreetmap.org/search",
+                params={"q": place, "format": "json", "limit": 1},
+                headers={"User-Agent": "htmx-assistant-python/1.0"},
+                timeout=15,
+            )
+            if not resp.ok:
+                _cache[key] = None
+                return None
+            data = resp.json() or []
+            if not data:
+                _cache[key] = None
+                return None
+            lat = float(data[0].get("lat"))
+            lon = float(data[0].get("lon"))
+            _cache[key] = (lat, lon)
+            return _cache[key]
+        except Exception as e:  # noqa: BLE001
+            print(f"Geocode failed for '{place}': {e}")
+            _cache[key] = None
+            return None
+
+    def _haversine_km(a, b):
+        import math
+
+        (lat1, lon1) = a
+        (lat2, lon2) = b
+        r = 6371.0
+        phi1 = math.radians(lat1)
+        phi2 = math.radians(lat2)
+        dphi = math.radians(lat2 - lat1)
+        dlambda = math.radians(lon2 - lon1)
+        x = (
+            math.sin(dphi / 2) ** 2
+            + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+        )
+        return 2 * r * math.atan2(math.sqrt(x), math.sqrt(1 - x))
+
     print("searching jobs", query_text, user_id, limit, use_profile)
+    cnx = None
+    cursor = None
     try:
         import mysql.connector
         from decouple import config
@@ -525,24 +666,37 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
         # Use the same connection details from mysql_test.py / permits tool
         cnx = mysql.connector.connect(
             host=config("MYSQL_HOST"),
-            database=config("MYSQL_DATABASE"),
+            database=config("MYSQL_JOBS_DATABASE"),
             port=3306,
             user=config("MYSQL_USER"),
             password=config("MYSQL_PASSWORD"),
-            ssl_ca=config("MYSQL_CERT_PATH"),
+            # ssl_ca=config("MYSQL_CERT_PATH"),
             collation="utf8mb4_unicode_ci",
         )
         cursor = cnx.cursor(dictionary=True)
 
         user_location = None
+        user_city_id = None
+        user_location_text_legacy = None
+        commute_radius_km = None
         resume_path = None
-        if use_profile and user_id_int is not None:
+        if user_id_int is not None:
             cursor.execute(
                 "SELECT id, location, commute_radius, resume_path FROM users WHERE id=%s LIMIT 1",
                 (user_id_int,),
             )
             user_row = cursor.fetchone() or {}
-            user_location = (user_row.get("location") or "").strip() or None
+            print("user_row", user_row)
+            # New data model: users.location stores a cities.id (int).
+            user_city_id = _safe_int(user_row.get("location"))
+            if user_city_id is None:
+                # Backward compatible with legacy "City, ProvinceCode" strings during migration.
+                user_location_text_legacy = str(user_row.get("location") or "").strip() or None
+            user_location = user_city_id if user_city_id is not None else user_location_text_legacy
+            try:
+                commute_radius_km = int(user_row.get("commute_radius") or 0)
+            except Exception:  # noqa: BLE001
+                commute_radius_km = None
             resume_path = (user_row.get("resume_path") or "").strip() or None
 
         # Build term list from query + resume keywords
@@ -574,21 +728,16 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
         deduped_terms = deduped_terms[:8]
 
         params = []
-        if user_location:
-            location_score_sql = (
-                "(CASE WHEN CAST(location AS CHAR) LIKE %s THEN 1 ELSE 0 END) AS location_score"
-            )
-            params.append(f"%{user_location}%")
-        else:
-            location_score_sql = "0 AS location_score"
+        # We'll compute location_score using commute_radius in Python post-processing.
+        location_score_sql = "0 AS location_score"
 
         if deduped_terms:
             relevance_parts = []
             for term in deduped_terms:
                 pattern = f"%{term}%"
-                relevance_parts.append("(CASE WHEN title LIKE %s THEN 3 ELSE 0 END)")
-                relevance_parts.append("(CASE WHEN description LIKE %s THEN 1 ELSE 0 END)")
-                relevance_parts.append("(CASE WHEN requirements LIKE %s THEN 1 ELSE 0 END)")
+                relevance_parts.append("(CASE WHEN jobs.title LIKE %s THEN 3 ELSE 0 END)")
+                relevance_parts.append("(CASE WHEN jobs.description LIKE %s THEN 1 ELSE 0 END)")
+                relevance_parts.append("(CASE WHEN jobs.requirements LIKE %s THEN 1 ELSE 0 END)")
                 params.extend([pattern, pattern, pattern])
             relevance_score_sql = f"({'+'.join(relevance_parts)}) AS relevance_score"
         else:
@@ -600,36 +749,42 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
             term_params = []
             for term in deduped_terms:
                 pattern = f"%{term}%"
-                term_groups.append("(title LIKE %s OR description LIKE %s OR requirements LIKE %s)")
+                term_groups.append(
+                    "(jobs.title LIKE %s OR jobs.description LIKE %s OR jobs.requirements LIKE %s)"
+                )
                 term_params.extend([pattern, pattern, pattern])
             where_sql += " AND (" + " OR ".join(term_groups) + ")"
             params.extend(term_params)
 
         search_query = f"""
             SELECT
-                id,
-                employer_id,
-                title,
-                description,
-                requirements,
-                salary_min,
-                salary_max,
-                salary_type,
-                job_type,
-                experience_level,
-                is_apprenticeship,
-                pre_interview_enabled,
-                status,
-                views_count,
-                created_at,
-                updated_at,
-                expires_at,
-                CAST(location AS CHAR) AS location,
-                application_method,
-                external_url,
+                jobs.id,
+                jobs.employer_id,
+                jobs.title,
+                jobs.description,
+                jobs.requirements,
+                jobs.salary_min,
+                jobs.salary_max,
+                jobs.salary_type,
+                jobs.job_type,
+                jobs.experience_level,
+                jobs.is_apprenticeship,
+                jobs.pre_interview_enabled,
+                jobs.status,
+                jobs.views_count,
+                jobs.created_at,
+                jobs.updated_at,
+                jobs.expires_at,
+                jobs.location AS city_id,
+                COALESCE(CONCAT(cities.name, ', ', cities.province_code), CAST(jobs.location AS CHAR)) AS location,
+                cities.latitude AS city_latitude,
+                cities.longitude AS city_longitude,
+                jobs.application_method,
+                jobs.external_url,
                 {location_score_sql},
                 {relevance_score_sql}
             FROM jobs
+            LEFT JOIN cities ON cities.id = jobs.location
             {where_sql}
             ORDER BY location_score DESC, relevance_score DESC, created_at DESC
             LIMIT %s
@@ -639,13 +794,113 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
         cursor.execute(search_query, tuple(params))
         results = cursor.fetchall()
 
-        cursor.close()
-        cnx.close()
+        # Post-process location scoring using commute radius (km).
+        # Prefer cities table coordinates; fall back to geocoding only if needed.
+        if results and (user_city_id is not None or user_location_text_legacy):
+            try:
+                # Default to schema default if unset/invalid.
+                if commute_radius_km is None or commute_radius_km <= 0:
+                    commute_radius_km = 30
+
+                user_geo = None
+                user_location_display = None
+
+                if user_city_id is not None:
+                    cursor.execute(
+                        "SELECT name, province_code, latitude, longitude FROM cities WHERE id=%s LIMIT 1",
+                        (user_city_id,),
+                    )
+                    user_city = cursor.fetchone() or {}
+                    u_name = user_city.get("name")
+                    u_prov = user_city.get("province_code")
+                    u_lat = user_city.get("latitude")
+                    u_lon = user_city.get("longitude")
+                    if u_name and u_prov:
+                        user_location_display = f"{u_name}, {u_prov}"
+                    if u_lat is not None and u_lon is not None:
+                        user_geo = (float(u_lat), float(u_lon))
+
+                # Final fallback: legacy string location geocoding (should disappear after migration).
+                if not user_geo and user_location_text_legacy:
+                    user_geo = _geocode_place(user_location_text_legacy)
+
+                user_loc_lc = (
+                    str(user_location_display or user_location_text_legacy or "")
+                    .strip()
+                    .lower()
+                )
+
+                for job in results:
+                    job_loc = (job.get("location") or "").strip()
+                    job["distance_km"] = None
+                    job["location_score"] = 0
+
+                    if not job_loc:
+                        continue
+
+                    # Exact same city => perfect match even if coords are missing.
+                    job_city_id = _safe_int(job.get("city_id"))
+                    if user_city_id is not None and job_city_id is not None and job_city_id == user_city_id:
+                        job["distance_km"] = 0.0
+                        job["location_score"] = 1
+                        continue
+
+                    if user_geo:
+                        lat = job.get("city_latitude")
+                        lon = job.get("city_longitude")
+                        job_geo = None
+                        if lat is not None and lon is not None:
+                            try:
+                                job_geo = (float(lat), float(lon))
+                            except Exception:  # noqa: BLE001
+                                job_geo = None
+
+                        # Fallback: only geocode if we don't have city coordinates
+                        if not job_geo:
+                            job_geo = _geocode_place(job_loc)
+
+                        if job_geo:
+                            dist = _haversine_km(user_geo, job_geo)
+                            job["distance_km"] = round(dist, 1)
+                            if dist <= commute_radius_km:
+                                job["location_score"] = 1
+                                continue
+
+                    # Fallback: simple city/province substring check
+                    if user_loc_lc and user_loc_lc in job_loc.lower():
+                        job["location_score"] = 1
+
+                # Re-sort by location_score then relevance_score then created_at.
+                def _sort_key(job):
+                    created = job.get("created_at")
+                    created_val = created.timestamp() if hasattr(created, "timestamp") else 0
+                    return (
+                        int(job.get("location_score") or 0),
+                        float(job.get("relevance_score") or 0),
+                        created_val,
+                    )
+
+                results.sort(key=_sort_key, reverse=True)
+            except Exception as e:  # noqa: BLE001
+                print(f"Location scoring failed: {e}")
+
+        try:
+            if cursor:
+                cursor.close()
+        finally:
+            if cnx:
+                cnx.close()
 
         return results
 
     except Exception as e:  # noqa: BLE001
         print(f"Error searching jobs: {e}")
+        try:
+            if cursor:
+                cursor.close()
+        finally:
+            if cnx:
+                cnx.close()
         return []
 
 
