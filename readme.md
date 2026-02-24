@@ -131,6 +131,7 @@ Create a `.env` (or export variables) with at least:
 | `S3_BUCKET` | Bucket storing uploaded documents |
 | `SES_SENDER_EMAIL` | Verified SES sender for password reset emails |
 | `COGNITO_REGION`, `COGNITO_USER_POOL_ID`, `COGNITO_APP_CLIENT_ID` | Cognito auth metadata |
+| `TALENTCENTRAL_USER_TOKEN_SECRET` | Shared HS256 secret used to verify TalentCentral widget user JWTs (`uid`, `role`, `iat`, `exp`) |
 | `SCRAPER_EXECUTION_MODE` | `local` (default) or `remote`; controls whether scraping runs in-process or via SQS |
 | `SCRAPER_SQS_QUEUE_URL`, `SCRAPER_SQS_REGION`, `SCRAPER_SQS_MESSAGE_GROUP_ID` | Required when `SCRAPER_EXECUTION_MODE=remote` |
 | `SCRAPER_BROWSER_POOL_SIZE`, `SCRAPER_MAX_CONCURRENT_JOBS` | Tunables for crawler concurrency |
@@ -216,7 +217,7 @@ Use `python playwright_env_check.py --url https://example.com` to confirm Chromi
 Use an API token header (`Authorization: Bearer ...`, `X-API-Token`, or `X-API-Key`) because this route uses `token_auth_required`.
 
 ```bash
-curl -X POST "http://localhost:5000/api/talentcentral" \
+curl -X POST "http://localhost:3000/api/talentcentral" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: YOUR_API_TOKEN" \
   -d '{
@@ -242,6 +243,24 @@ Example response:
 }
 ```
 
+### TalentCentral widget user token (`/ask`)
+
+For embedded chat widget usage in `talentcentral` mode, you can pass a short-lived user JWT from your host page:
+
+```html
+<script
+  src="https://bcca.ai/flask/widget-loader.js"
+  data-mode="talentcentral"
+  data-user-token="{{user-token}}">
+</script>
+```
+
+Token expectations:
+- JWT signed with HS256 using `TALENTCENTRAL_USER_TOKEN_SECRET` on the chatbot backend.
+- Claims should include `uid`, `role`, `iat`, and `exp`.
+- The widget forwards this token on `/ask` only for `talentcentral` mode.
+- If token is missing, invalid, or expired, the request is treated as guest (`anonymous`).
+
 All admin routes are wrapped in `cognito_auth_required`, ensuring Bearer tokens from Cognito are verified against JWKS metadata and user roles (super admin vs regular) are enforced.
 
 ## Background jobs & monitoring
@@ -253,6 +272,16 @@ All admin routes are wrapped in `cognito_auth_required`, ensuring Bearer tokens 
 ## Document intelligence roadmap
 
 The repository already includes the detailed build spec for the “Construction Document Intelligence Mode” in `documentation/zip_extractor_feature.md`. Implementations should follow that contract by adding tool modules (`tools/extract.py`, `tools/ocr.py`, etc.), new dataclasses (`DocumentMetadata`, `ProjectContext`, `BidPackage`), and workflow glue so the assistant can ingest drawings, run OCR, classify trades, and assemble bid packages. Treat the README you’re reading now as the description of today’s state; treat the spec as the blueprint for the next major feature set.
+
+## Deployment automation
+
+This repo includes a baseline SSH-based GitHub Actions deployment pipeline:
+
+- GitHub workflow: `.github/workflows/deploy.yml`
+- Remote deploy target path: `/opt/projects/htmx-assistant-python`
+- Remote restart command: `sudo systemctl restart apache2`
+
+Setup instructions and required AWS/GitHub configuration live in `docs/AWS_CODEDEPLOY_GITHUB_ACTIONS.md`.
 
 ## Contributing & next steps
 

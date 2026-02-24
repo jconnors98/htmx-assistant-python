@@ -22,7 +22,8 @@
     mode: widgetScript.getAttribute('data-mode') || '',
     theme: widgetScript.getAttribute('data-theme') || '#82002d',
     position: widgetScript.getAttribute('data-position') || 'bottom-right', // bottom-right, bottom-left, top-right, top-left
-    baseUrl: widgetScript.getAttribute('data-base-url') || 'https://bcca.ai/flask'
+    baseUrl: widgetScript.getAttribute('data-base-url') || 'https://bcca.ai/flask',
+    userToken: widgetScript.getAttribute('data-user-token') || ''
   };
 
   // Detect mobile device (not "small iframe"). Prefer UA-CH when available.
@@ -74,7 +75,10 @@
     
     // Create iframe
     const iframe = document.createElement('iframe');
-    const widgetUrl = `${config.baseUrl}/chat-widget.html?mode=${encodeURIComponent(config.mode)}&theme=${encodeURIComponent(config.theme)}&parent_mobile=${isMobileDevice ? '1' : '0'}`;
+    const tokenQuery = config.userToken
+      ? `&user_token=${encodeURIComponent(config.userToken)}`
+      : '';
+    const widgetUrl = `${config.baseUrl}/chat-widget.html?mode=${encodeURIComponent(config.mode)}&theme=${encodeURIComponent(config.theme)}&parent_mobile=${isMobileDevice ? '1' : '0'}${tokenQuery}`;
     
     iframe.src = widgetUrl;
     iframe.style.cssText = `

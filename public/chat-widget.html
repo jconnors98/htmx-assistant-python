@@ -750,6 +750,7 @@
     // Configuration
     const urlParams = new URLSearchParams(window.location.search);
     const mode = urlParams.get("mode");
+    const userToken = (urlParams.get("user_token") || "").trim();
     const API_BASE = '/flask';
     
     // State
@@ -1204,11 +1205,16 @@
           }
         }
         
+        const headers = {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        };
+        if (mode === 'talentcentral' && userToken) {
+          headers.Authorization = `Bearer ${userToken}`;
+        }
+
         const response = await fetch(`${API_BASE}/ask`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
+          headers,
           body: formData.toString()
         });
         

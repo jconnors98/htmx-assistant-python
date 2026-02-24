@@ -19,6 +19,7 @@ from bson import ObjectId
 import boto3
 import requests
 from jose import jwk, jwt
+from jose.exceptions import ExpiredSignatureError, JWTError
 from datetime import datetime, timedelta
 import hashlib
 import threading
@@ -82,6 +83,7 @@ COGNITO_REGION = config("COGNITO_REGION", default=None)
 COGNITO_USER_POOL_ID = config("COGNITO_USER_POOL_ID", default=None)
 COGNITO_APP_CLIENT_ID = config("COGNITO_APP_CLIENT_ID", default=None)
 SES_SENDER_EMAIL = config("SES_SENDER_EMAIL", default=None)
+TALENTCENTRAL_USER_TOKEN_SECRET = config("TALENTCENTRAL_USER_TOKEN_SECRET", default=None)
 
 DEFAULT_MODE_COLOR = "#82002d"
 DEFAULT_TEXT_COLOR = "#ffffff"
@@ -467,6 +469,51 @@ def token_auth_required(fn):
     return wrapper
 
 
+def _extract_bearer_token():
+    auth = request.headers.get("Authorization", "") or ""
+    if auth.lower().startswith("bearer "):
+        return auth.split(" ", 1)[1].strip()
+    return ""
+
+
+def _verify_talentcentral_user_token():
+    """
+    Verify optional TalentCentral user JWT (HS256) and return trusted claims.
+
+    Returns:
+        dict with uid/role/iat/exp when valid, otherwise None.
+    """
+    token = _extract_bearer_token()
+    if not token or not TALENTCENTRAL_USER_TOKEN_SECRET:
+        return None
+
+    try:
+        claims = jwt.decode(
+            token,
+            TALENTCENTRAL_USER_TOKEN_SECRET,
+            algorithms=["HS256"],
+            options={"verify_aud": False},
+        )
+    except ExpiredSignatureError:
+        print("TalentCentral user token expired.")
+        return None
+    except JWTError as e:
+        print(f"TalentCentral user token invalid: {e}")
+        return None
+
+    uid = claims.get("uid")
+    uid_text = str(uid).strip() if uid is not None else ""
+    if not uid_text:
+        return None
+
+    return {
+        "uid": uid_text,
+        "role": claims.get("role"),
+        "iat": claims.get("iat"),
+        "exp": claims.get("exp"),
+    }
+
+
 def _generate_password_reset_email_html(reset_link, token_expiry_minutes=15):
     """Generate HTML email template for password reset."""
     html_body = f"""
@@ -785,6 +832,17 @@ def ask():
 
     try:
         user_id = getattr(request, "user", {}).get("sub", "anonymous")
+        if mode == "talentcentral":
+            token_claims = _verify_talentcentral_user_token()
+            if token_claims:
+                user_id = token_claims.get("uid", "anonymous")
+                role = token_claims.get("role") or "unknown"
+                print(
+                    f"TalentCentral /ask auth_source=token-user user_id={user_id} role={role}"
+                )
+            else:
+                user_id = "anonymous"
+                print("TalentCentral /ask auth_source=guest user_id=anonymous")
         gpt_text, response_id, _usage = conversation_service.respond(
             conversation_id=conversation_id,
             user_id=user_id,

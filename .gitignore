@@ -8,3 +8,4 @@ app.wsgi
 /public/override
 /temp
 /docs
+pitch.txt

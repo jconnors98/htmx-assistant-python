@@ -1,0 +1,30 @@
+name: Deploy via SSH
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Deploy to EC2 over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ vars.SSH_PORT || '22' }}
+          request_pty: true
+          script_stop: true
+          script: |
+            cd /opt/projects/htmx-assistant-python
+            sudo git -c core.sshCommand="ssh -i /home/admin/.ssh/id_rsa" pull
+            sudo systemctl restart apache2
