@@ -72,6 +72,7 @@
     let desiredWidth = 72;
     let desiredHeight = 72;
     let isFullscreen = false;
+    let isFabVisible = true;
     
     // Create iframe
     const iframe = document.createElement('iframe');
@@ -100,7 +101,7 @@
         iframe.style.display = 'none';
         return;
       }
-      if (window.innerWidth <= 480 || isFullscreen) {
+      if (isFullscreen || (window.innerWidth <= 480 && !isFabVisible)) {
       container.style.cssText = `
         position: fixed;
         bottom: 0;
@@ -165,6 +166,9 @@
       
       if (typeof data.fullscreen === 'boolean') {
         isFullscreen = data.fullscreen;
+      }
+      if (typeof data.fab === 'boolean') {
+        isFabVisible = data.fab;
       }
 
       if (reportedWidth !== null) {

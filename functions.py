@@ -457,6 +457,48 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
         ranked = sorted(freq.items(), key=lambda kv: (-kv[1], kv[0]))
         return [t for t, _ in ranked[:max_terms]]
 
+    def _resolve_city_ids_from_query(cursor_obj, text):
+        """
+        Best-effort city resolver for location-based job queries.
+        Matches explicit city names embedded in natural-language input
+        (e.g., "find jobs in Surrey").
+        """
+        if not text:
+            return []
+
+        query_text_norm = " ".join(str(text).strip().split())
+        if not query_text_norm:
+            return []
+
+        try:
+            cursor_obj.execute(
+                """
+                SELECT id
+                FROM cities
+                WHERE
+                    (LENGTH(name) >= 3 AND INSTR(LOWER(%s), LOWER(name)) > 0)
+                    OR LOWER(name) = LOWER(%s)
+                    OR LOWER(CONCAT(name, ', ', province_code)) = LOWER(%s)
+                ORDER BY LENGTH(name) DESC
+                LIMIT 10
+                """,
+                (query_text_norm, query_text_norm, query_text_norm),
+            )
+            rows = cursor_obj.fetchall() or []
+        except Exception as e:  # noqa: BLE001
+            print(f"City resolution from query failed: {e}")
+            return []
+
+        city_ids = []
+        seen = set()
+        for row in rows:
+            city_id = _safe_int((row or {}).get("id"))
+            if city_id is None or city_id in seen:
+                continue
+            seen.add(city_id)
+            city_ids.append(city_id)
+        return city_ids
+
     def _load_resume_text(resume_path):
         if not resume_path:
             return ""
@@ -744,6 +786,12 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
             relevance_score_sql = "0 AS relevance_score"
 
         where_sql = "WHERE status='active' AND (expires_at IS NULL OR expires_at > NOW())"
+        query_city_ids = _resolve_city_ids_from_query(cursor, query_text)
+        if query_city_ids:
+            placeholders = ",".join(["%s"] * len(query_city_ids))
+            where_sql += f" AND jobs.location IN ({placeholders})"
+            params.extend(query_city_ids)
+
         if deduped_terms:
             term_groups = []
             term_params = []

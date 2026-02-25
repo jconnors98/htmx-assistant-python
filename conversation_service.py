@@ -548,8 +548,13 @@ class ConversationService:
 
         # Handle function calls for TalentCentral job search (talentcentral mode only)
         if mode == "talentcentral" and hasattr(response, "output") and response.output and len(response.output) > 0:
-            output = response.output[0]
-            if output.type == "function_call":
+            output = None
+            for item in response.output:
+                if getattr(item, "type", None) == "function_call" and getattr(item, "name", None) == "search_jobs":
+                    output = item
+                    break
+
+            if output:
                 function_name = output.name
                 function_args = output.arguments
 
