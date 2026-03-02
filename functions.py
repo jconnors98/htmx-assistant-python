@@ -409,6 +409,334 @@ def _search_permits_tool(query_text, limit=10):
         return []
 
 
+_RESUME_CONTEXT_CACHE: Dict[str, Dict[str, Any]] = {}
+_RESUME_CONTEXT_CACHE_LOCK = threading.Lock()
+_RESUME_CONTEXT_CACHE_TTL_SECONDS = 900
+
+
+def _safe_int_value(value):
+    try:
+        return int(value)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _is_url_path(value):
+    if not value:
+        return False
+    text = str(value).strip().lower()
+    return text.startswith("http://") or text.startswith("https://")
+
+
+def _extract_resume_keywords(text, *, max_terms=12):
+    if not text:
+        return []
+
+    stopwords = {
+        "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "has", "have",
+        "in", "is", "it", "its", "of", "on", "or", "our", "that", "the", "their", "this",
+        "to", "was", "were", "will", "with", "you", "your", "i", "we", "they", "he", "she",
+        "them", "us", "me", "my", "mine", "his", "her", "hers", "who", "what", "when",
+        "where", "why", "how",
+    }
+    tokens = re.findall(r"[a-zA-Z][a-zA-Z0-9\-\+\.]{1,}", str(text).lower())
+    freq = {}
+    for tok in tokens:
+        if len(tok) < 3:
+            continue
+        if tok in stopwords:
+            continue
+        if tok in {"resume", "curriculum", "vitae", "experience", "skills", "education"}:
+            continue
+        freq[tok] = freq.get(tok, 0) + 1
+
+    ranked = sorted(freq.items(), key=lambda kv: (-kv[1], kv[0]))
+    return [t for t, _ in ranked[:max_terms]]
+
+
+def _connect_jobs_db():
+    import mysql.connector
+
+    cnx = mysql.connector.connect(
+        host=config("MYSQL_HOST"),
+        database=config("MYSQL_JOBS_DATABASE"),
+        port=3306,
+        user=config("MYSQL_USER"),
+        password=config("MYSQL_PASSWORD"),
+        collation="utf8mb4_unicode_ci",
+    )
+    return cnx, cnx.cursor(dictionary=True)
+
+
+def _load_resume_text_from_path(resume_path):
+    if not resume_path:
+        return ""
+    path_value = str(resume_path).strip()
+    if not path_value:
+        return ""
+
+    try:
+        import tempfile
+
+        local_path = None
+        if _is_url_path(path_value):
+            # Download to a temp file (best-effort).
+            url = path_value
+            suffix = os.path.splitext(url.split("?")[0])[1].lower()
+            if suffix not in {".pdf", ".txt", ".doc", ".docx"}:
+                suffix = ".bin"
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                resp = requests.get(url, timeout=30)
+                resp.raise_for_status()
+                tmp.write(resp.content)
+                local_path = tmp.name
+        else:
+            local_path = path_value
+
+        if not local_path or not os.path.exists(local_path):
+            print("resume not found", local_path)
+            return ""
+
+        ext = os.path.splitext(local_path)[1].lower()
+        if ext == ".pdf":
+            try:
+                from tools import pdf_tools
+
+                parsed = pdf_tools.parse_pdf(local_path, max_seconds=30)
+                return (parsed or {}).get("text", "") or ""
+            except Exception as e:  # noqa: BLE001
+                print(f"Resume PDF parse failed: {e}")
+                return ""
+
+        if ext == ".docx":
+            # Prefer python-docx when available, then fall back to raw XML parsing.
+            try:
+                doc = Document(local_path)
+                text = "\n".join(p.text for p in doc.paragraphs if p.text)
+                if text.strip():
+                    return text
+            except Exception:
+                pass
+
+            try:
+                import zipfile
+                from xml.etree import ElementTree as ET
+
+                with zipfile.ZipFile(local_path) as zf:
+                    doc_xml = zf.read("word/document.xml")
+
+                root = ET.fromstring(doc_xml)
+                ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+                paragraphs = []
+                for para in root.findall(".//w:p", ns):
+                    parts = [node.text for node in para.findall(".//w:t", ns) if node.text]
+                    if parts:
+                        paragraphs.append("".join(parts))
+                return "\n".join(paragraphs)
+            except Exception as e:  # noqa: BLE001
+                print(f"Resume DOCX parse failed: {e}")
+                return ""
+
+        if ext == ".doc":
+            # Legacy Word format: try native extractors first, then LibreOffice conversion.
+            try:
+                import shutil
+                import subprocess
+                import tempfile
+
+                for extractor in ("antiword", "catdoc"):
+                    if not shutil.which(extractor):
+                        continue
+                    try:
+                        proc = subprocess.run(
+                            [extractor, local_path],
+                            capture_output=True,
+                            timeout=30,
+                            check=False,
+                        )
+                        parsed_text = (proc.stdout or b"").decode("utf-8", errors="ignore").strip()
+                        if parsed_text:
+                            return parsed_text
+                    except Exception as e:  # noqa: BLE001
+                        print(f"{extractor} parse failed: {e}")
+
+                soffice_bin = shutil.which("soffice") or shutil.which("libreoffice")
+                if soffice_bin:
+                    try:
+                        with tempfile.TemporaryDirectory() as out_dir:
+                            subprocess.run(
+                                [
+                                    soffice_bin,
+                                    "--headless",
+                                    "--convert-to",
+                                    "txt:Text",
+                                    "--outdir",
+                                    out_dir,
+                                    local_path,
+                                ],
+                                capture_output=True,
+                                timeout=45,
+                                check=False,
+                            )
+                            converted = os.path.join(
+                                out_dir,
+                                f"{os.path.splitext(os.path.basename(local_path))[0]}.txt",
+                            )
+                            if os.path.exists(converted):
+                                with open(converted, "rb") as handle:
+                                    raw = handle.read()
+                                parsed_text = raw.decode("utf-8", errors="ignore").strip()
+                                if parsed_text:
+                                    return parsed_text
+                    except Exception as e:  # noqa: BLE001
+                        print(f"soffice doc conversion failed: {e}")
+            except Exception as e:  # noqa: BLE001
+                print(f"Resume DOC parse failed: {e}")
+            return ""
+
+        with open(local_path, "rb") as handle:
+            raw = handle.read()
+        try:
+            return raw.decode("utf-8")
+        except Exception:  # noqa: BLE001
+            return raw.decode("utf-8", errors="ignore")
+
+    except Exception as e:  # noqa: BLE001
+        print(f"Resume load failed: {e}")
+        return ""
+
+
+def _get_talentcentral_user_profile(cursor, user_id):
+    user_id_int = _safe_int_value(user_id)
+    profile = {
+        "effective_user_id": str(user_id),
+        "user_id_int": user_id_int,
+        "user_profile_found": False,
+        "user_city_id": None,
+        "user_location_text_legacy": None,
+        "user_location": None,
+        "commute_radius_km": None,
+        "resume_path": None,
+    }
+    if user_id_int is None:
+        return profile
+
+    cursor.execute(
+        "SELECT id, location, commute_radius, resume_path FROM users WHERE id=%s LIMIT 1",
+        (user_id_int,),
+    )
+    user_row = cursor.fetchone() or {}
+    profile["user_profile_found"] = bool(user_row)
+    profile["user_city_id"] = _safe_int_value(user_row.get("location"))
+    if profile["user_city_id"] is None:
+        profile["user_location_text_legacy"] = str(user_row.get("location") or "").strip() or None
+    profile["user_location"] = (
+        profile["user_city_id"]
+        if profile["user_city_id"] is not None
+        else profile["user_location_text_legacy"]
+    )
+    try:
+        profile["commute_radius_km"] = int(user_row.get("commute_radius") or 0)
+    except Exception:  # noqa: BLE001
+        profile["commute_radius_km"] = None
+    profile["resume_path"] = (user_row.get("resume_path") or "").strip() or None
+    return profile
+
+
+def _get_cached_resume_payload(*, user_id, resume_path):
+    key = f"{user_id}:{resume_path}"
+    now = datetime.utcnow()
+
+    with _RESUME_CONTEXT_CACHE_LOCK:
+        cached = _RESUME_CONTEXT_CACHE.get(key)
+        if cached:
+            age_seconds = (now - cached["created_at"]).total_seconds()
+            if age_seconds <= _RESUME_CONTEXT_CACHE_TTL_SECONDS:
+                payload = dict(cached)
+                payload["cache_hit"] = True
+                return payload
+            _RESUME_CONTEXT_CACHE.pop(key, None)
+
+    resume_text = _load_resume_text_from_path(resume_path)
+    payload = {
+        "created_at": now,
+        "resume_text": resume_text,
+        "top_skills_keywords": _extract_resume_keywords(resume_text, max_terms=16),
+        "experience_signals": _extract_resume_keywords(resume_text, max_terms=8),
+        "cache_hit": False,
+    }
+    with _RESUME_CONTEXT_CACHE_LOCK:
+        _RESUME_CONTEXT_CACHE[key] = payload
+    return dict(payload)
+
+
+def _build_resume_summary(resume_text, *, max_chars=1200):
+    normalized = " ".join(str(resume_text or "").split())
+    if not normalized:
+        return ""
+    return normalized[:max_chars].strip()
+
+
+def _get_resume_context_tool(*, user_id, max_chars=1200):
+    """
+    Return concise resume context for signed-in TalentCentral users.
+    This is intentionally compact to keep tool tokens and latency low.
+    """
+    cnx = None
+    cursor = None
+    try:
+        cnx, cursor = _connect_jobs_db()
+        profile = _get_talentcentral_user_profile(cursor, user_id)
+        resume_path = profile.get("resume_path")
+        if not resume_path:
+            return {
+                "has_resume": False,
+                "has_profile": bool(profile.get("user_profile_found")),
+                "resume_summary": "",
+                "top_skills_keywords": [],
+                "experience_signals": [],
+                "max_chars": int(max_chars),
+                "cache_hit": False,
+            }
+
+        resume_payload = _get_cached_resume_payload(
+            user_id=profile.get("user_id_int") or str(user_id),
+            resume_path=resume_path,
+        )
+        resume_text = resume_payload.get("resume_text") or ""
+        summary = _build_resume_summary(resume_text, max_chars=max(300, min(int(max_chars), 2200)))
+
+        return {
+            "has_resume": bool(resume_text.strip()),
+            "has_profile": bool(profile.get("user_profile_found")),
+            "resume_summary": summary,
+            "top_skills_keywords": (resume_payload.get("top_skills_keywords") or [])[:12],
+            "experience_signals": (resume_payload.get("experience_signals") or [])[:6],
+            "max_chars": int(max_chars),
+            "cache_hit": bool(resume_payload.get("cache_hit")),
+            "resume_path_present": bool(resume_path),
+        }
+    except Exception as e:  # noqa: BLE001
+        print(f"Resume context tool failed: {e}")
+        return {
+            "has_resume": False,
+            "has_profile": False,
+            "resume_summary": "",
+            "top_skills_keywords": [],
+            "experience_signals": [],
+            "max_chars": int(max_chars),
+            "cache_hit": False,
+            "error": "resume_context_unavailable",
+        }
+    finally:
+        try:
+            if cursor:
+                cursor.close()
+        finally:
+            if cnx:
+                cnx.close()
+
+
 def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
     """
     Tool function to search for jobs in MySQL, optionally using the user's profile.
@@ -424,38 +752,8 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
         except Exception:  # noqa: BLE001
             return None
 
-    def _is_url(value):
-        if not value:
-            return False
-        text = str(value).strip().lower()
-        return text.startswith("http://") or text.startswith("https://")
-
     def _extract_keywords(text, *, max_terms=12):
-        if not text:
-            return []
-
-        # Basic tokenization + stopword filtering. Keep simple and dependency-free.
-        stopwords = {
-            "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "has", "have",
-            "in", "is", "it", "its", "of", "on", "or", "our", "that", "the", "their", "this",
-            "to", "was", "were", "will", "with", "you", "your", "i", "we", "they", "he", "she",
-            "them", "us", "me", "my", "mine", "his", "her", "hers", "who", "what", "when",
-            "where", "why", "how",
-        }
-        tokens = re.findall(r"[a-zA-Z][a-zA-Z0-9\-\+\.]{1,}", str(text).lower())
-        freq = {}
-        for tok in tokens:
-            if len(tok) < 3:
-                continue
-            if tok in stopwords:
-                continue
-            # Skip ultra-common resume noise
-            if tok in {"resume", "curriculum", "vitae", "experience", "skills", "education"}:
-                continue
-            freq[tok] = freq.get(tok, 0) + 1
-
-        ranked = sorted(freq.items(), key=lambda kv: (-kv[1], kv[0]))
-        return [t for t, _ in ranked[:max_terms]]
+        return _extract_resume_keywords(text, max_terms=max_terms)
 
     def _resolve_city_ids_from_query(cursor_obj, text):
         """
@@ -497,145 +795,15 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
                 continue
             seen.add(city_id)
             city_ids.append(city_id)
+        print(
+            "jobs city resolution",
+            {
+                "query": query_text_norm,
+                "matched_city_ids": city_ids,
+                "match_count": len(city_ids),
+            },
+        )
         return city_ids
-
-    def _load_resume_text(resume_path):
-        if not resume_path:
-            return ""
-        path_value = str(resume_path).strip()
-        if not path_value:
-            return ""
-
-        try:
-            import tempfile
-            import os
-
-            local_path = None
-            if _is_url(path_value):
-                # Download to a temp file (best-effort).
-                url = path_value
-                suffix = os.path.splitext(url.split("?")[0])[1].lower()
-                if suffix not in {".pdf", ".txt", ".doc", ".docx"}:
-                    suffix = ".bin"
-                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                    resp = requests.get(url, timeout=30)
-                    resp.raise_for_status()
-                    tmp.write(resp.content)
-                    local_path = tmp.name
-            else:
-                local_path = path_value
-
-            if not local_path or not os.path.exists(local_path):
-                print("resume not found", local_path)
-                return ""
-
-            ext = os.path.splitext(local_path)[1].lower()
-            if ext == ".pdf":
-                try:
-                    from tools import pdf_tools
-
-                    parsed = pdf_tools.parse_pdf(local_path, max_seconds=30)
-                    return (parsed or {}).get("text", "") or ""
-                except Exception as e:  # noqa: BLE001
-                    print(f"Resume PDF parse failed: {e}")
-                    return ""
-
-            if ext == ".docx":
-                # Prefer python-docx when available, then fall back to raw XML parsing.
-                try:
-                    doc = Document(local_path)
-                    text = "\n".join(p.text for p in doc.paragraphs if p.text)
-                    if text.strip():
-                        return text
-                except Exception:
-                    pass
-
-                try:
-                    import zipfile
-                    from xml.etree import ElementTree as ET
-
-                    with zipfile.ZipFile(local_path) as zf:
-                        doc_xml = zf.read("word/document.xml")
-
-                    root = ET.fromstring(doc_xml)
-                    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
-                    paragraphs = []
-                    for para in root.findall(".//w:p", ns):
-                        parts = [node.text for node in para.findall(".//w:t", ns) if node.text]
-                        if parts:
-                            paragraphs.append("".join(parts))
-                    return "\n".join(paragraphs)
-                except Exception as e:  # noqa: BLE001
-                    print(f"Resume DOCX parse failed: {e}")
-                    return ""
-
-            if ext == ".doc":
-                # Legacy Word format: try native extractors first, then LibreOffice conversion.
-                try:
-                    import shutil
-                    import subprocess
-
-                    for extractor in ("antiword", "catdoc"):
-                        if not shutil.which(extractor):
-                            continue
-                        try:
-                            proc = subprocess.run(
-                                [extractor, local_path],
-                                capture_output=True,
-                                timeout=30,
-                                check=False,
-                            )
-                            parsed_text = (proc.stdout or b"").decode("utf-8", errors="ignore").strip()
-                            if parsed_text:
-                                return parsed_text
-                        except Exception as e:  # noqa: BLE001
-                            print(f"{extractor} parse failed: {e}")
-
-                    soffice_bin = shutil.which("soffice") or shutil.which("libreoffice")
-                    if soffice_bin:
-                        try:
-                            with tempfile.TemporaryDirectory() as out_dir:
-                                subprocess.run(
-                                    [
-                                        soffice_bin,
-                                        "--headless",
-                                        "--convert-to",
-                                        "txt:Text",
-                                        "--outdir",
-                                        out_dir,
-                                        local_path,
-                                    ],
-                                    capture_output=True,
-                                    timeout=45,
-                                    check=False,
-                                )
-                                converted = os.path.join(
-                                    out_dir,
-                                    f"{os.path.splitext(os.path.basename(local_path))[0]}.txt",
-                                )
-                                if os.path.exists(converted):
-                                    with open(converted, "rb") as handle:
-                                        raw = handle.read()
-                                    parsed_text = raw.decode("utf-8", errors="ignore").strip()
-                                    if parsed_text:
-                                        return parsed_text
-                        except Exception as e:  # noqa: BLE001
-                            print(f"soffice doc conversion failed: {e}")
-                except Exception as e:  # noqa: BLE001
-                    print(f"Resume DOC parse failed: {e}")
-                return ""
-
-            # Best-effort plaintext read for non-PDF files.
-            with open(local_path, "rb") as handle:
-                raw = handle.read()
-            try:
-                return raw.decode("utf-8")
-            except Exception:  # noqa: BLE001
-                return raw.decode("utf-8", errors="ignore")
-
-        except Exception as e:  # noqa: BLE001
-            print(f"Resume load failed: {e}")
-            return ""
 
     def _geocode_place(place, _cache={}):  # noqa: B006
         """
@@ -693,9 +861,6 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
     cnx = None
     cursor = None
     try:
-        import mysql.connector
-        from decouple import config
-
         # Sane limit
         try:
             limit = int(limit)
@@ -703,56 +868,59 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
             limit = 10
         limit = max(1, min(limit, 25))
 
-        user_id_int = _safe_int(user_id)
-
-        # Use the same connection details from mysql_test.py / permits tool
-        cnx = mysql.connector.connect(
-            host=config("MYSQL_HOST"),
-            database=config("MYSQL_JOBS_DATABASE"),
-            port=3306,
-            user=config("MYSQL_USER"),
-            password=config("MYSQL_PASSWORD"),
-            # ssl_ca=config("MYSQL_CERT_PATH"),
-            collation="utf8mb4_unicode_ci",
-        )
-        cursor = cnx.cursor(dictionary=True)
+        cnx, cursor = _connect_jobs_db()
 
         user_location = None
         user_city_id = None
         user_location_text_legacy = None
         commute_radius_km = None
         resume_path = None
-        if user_id_int is not None:
-            cursor.execute(
-                "SELECT id, location, commute_radius, resume_path FROM users WHERE id=%s LIMIT 1",
-                (user_id_int,),
-            )
-            user_row = cursor.fetchone() or {}
-            print("user_row", user_row)
-            # New data model: users.location stores a cities.id (int).
-            user_city_id = _safe_int(user_row.get("location"))
-            if user_city_id is None:
-                # Backward compatible with legacy "City, ProvinceCode" strings during migration.
-                user_location_text_legacy = str(user_row.get("location") or "").strip() or None
-            user_location = user_city_id if user_city_id is not None else user_location_text_legacy
-            try:
-                commute_radius_km = int(user_row.get("commute_radius") or 0)
-            except Exception:  # noqa: BLE001
-                commute_radius_km = None
-            resume_path = (user_row.get("resume_path") or "").strip() or None
+        profile = _get_talentcentral_user_profile(cursor, user_id)
+        user_id_int = profile.get("user_id_int")
+        user_row_found = bool(profile.get("user_profile_found"))
+        user_city_id = profile.get("user_city_id")
+        user_location_text_legacy = profile.get("user_location_text_legacy")
+        user_location = profile.get("user_location")
+        commute_radius_km = profile.get("commute_radius_km")
+        resume_path = profile.get("resume_path")
+        print(
+            "jobs user context",
+            {
+                "effective_user_id": str(user_id),
+                "user_id_int": user_id_int,
+                "user_profile_found": user_row_found,
+                "user_city_id": user_city_id,
+                "has_legacy_location_text": bool(user_location_text_legacy),
+                "has_resume_path": bool(resume_path),
+            },
+        )
 
         # Build term list from query + resume keywords
-        terms = []
+        query_terms = []
+        profile_terms = []
         if query_text and str(query_text).strip():
             qt = str(query_text).strip()
             # Include the full phrase (trimmed) plus token keywords
             if len(qt) <= 80:
-                terms.append(qt.lower())
-            terms.extend(_extract_keywords(qt, max_terms=8))
+                query_terms.append(qt.lower())
+            query_terms.extend(_extract_keywords(qt, max_terms=8))
 
         if use_profile and resume_path:
-            resume_text = _load_resume_text(resume_path)
-            terms.extend(_extract_keywords(resume_text, max_terms=12))
+            resume_payload = _get_cached_resume_payload(
+                user_id=user_id_int if user_id_int is not None else str(user_id),
+                resume_path=resume_path,
+            )
+            resume_text = resume_payload.get("resume_text") or ""
+            profile_terms.extend(_extract_keywords(resume_text, max_terms=8))
+            print(
+                "jobs resume context",
+                {
+                    "has_resume_text": bool(resume_text.strip()),
+                    "cache_hit": bool(resume_payload.get("cache_hit")),
+                    "resume_path_present": bool(resume_path),
+                },
+            )
+        terms = query_terms + profile_terms
 
         # Dedupe while preserving order; keep query-derived terms first.
         seen = set()
@@ -768,6 +936,65 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
 
         # Avoid massive SQL parameter lists
         deduped_terms = deduped_terms[:8]
+
+        # Resolve explicit city mentions from the query before building text clauses.
+        query_city_ids = _resolve_city_ids_from_query(cursor, query_text)
+        city_name_tokens = set()
+        if query_city_ids:
+            placeholders = ",".join(["%s"] * len(query_city_ids))
+            cursor.execute(
+                f"SELECT name FROM cities WHERE id IN ({placeholders})",
+                tuple(query_city_ids),
+            )
+            city_rows = cursor.fetchall() or []
+            city_names_lc = []
+            for row in city_rows:
+                city_name = str((row or {}).get("name") or "").strip().lower()
+                if not city_name:
+                    continue
+                city_names_lc.append(city_name)
+                city_name_tokens.add(city_name)
+                for part in re.findall(r"[a-zA-Z][a-zA-Z0-9\-\+\.]{1,}", city_name):
+                    city_name_tokens.add(part.lower())
+
+            # If location is clearly detected from query text, don't force city words
+            # to also match title/description/requirements.
+            if city_name_tokens and deduped_terms:
+                generic_job_terms = {
+                    "find", "job", "jobs", "role", "roles", "position", "positions",
+                    "opportunity", "opportunities", "work", "career", "careers",
+                    "near", "nearby", "around", "me",
+                }
+                filtered_terms = []
+                for term in deduped_terms:
+                    t = str(term or "").strip().lower()
+                    if not t:
+                        continue
+                    if t in city_name_tokens or t in generic_job_terms:
+                        continue
+
+                    # Drop phrase-style terms that are only location + generic words
+                    # (e.g., "find me jobs in surrey"), but keep role-specific phrases.
+                    phrase_tokens = re.findall(r"[a-zA-Z][a-zA-Z0-9\-\+\.]{1,}", t)
+                    meaningful_tokens = [
+                        tok for tok in phrase_tokens
+                        if tok not in city_name_tokens and tok not in generic_job_terms
+                    ]
+                    if not meaningful_tokens and any(city in t for city in city_name_tokens):
+                        continue
+
+                    filtered_terms.append(t)
+
+                if filtered_terms != deduped_terms:
+                    print(
+                        "jobs text terms adjusted for location query",
+                        {
+                            "original_terms": deduped_terms,
+                            "filtered_terms": filtered_terms,
+                            "city_tokens": sorted(city_name_tokens),
+                        },
+                    )
+                    deduped_terms = filtered_terms
 
         params = []
         # We'll compute location_score using commute_radius in Python post-processing.
@@ -786,11 +1013,16 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
             relevance_score_sql = "0 AS relevance_score"
 
         where_sql = "WHERE status='active' AND (expires_at IS NULL OR expires_at > NOW())"
-        query_city_ids = _resolve_city_ids_from_query(cursor, query_text)
         if query_city_ids:
             placeholders = ",".join(["%s"] * len(query_city_ids))
             where_sql += f" AND jobs.location IN ({placeholders})"
             params.extend(query_city_ids)
+            print(
+                "jobs location filter applied",
+                {"query_city_ids": query_city_ids, "query_city_count": len(query_city_ids)},
+            )
+        else:
+            print("jobs location filter not applied", {"reason": "no_city_match_in_query"})
 
         if deduped_terms:
             term_groups = []
@@ -837,6 +1069,9 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
             ORDER BY location_score DESC, relevance_score DESC, created_at DESC
             LIMIT %s
         """
+
+        print("where_sql", where_sql)
+        print("params", params)
 
         params.append(limit)
         cursor.execute(search_query, tuple(params))

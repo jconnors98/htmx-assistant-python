@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 from datetime import datetime
 from typing import Optional, Tuple, List, Dict, Any, Union
@@ -340,7 +341,11 @@ class ConversationService:
             jobs_search_tool = {
                 "type": "function",
                 "name": "search_jobs",
-                "description": "Search for relevant jobs in the database based on a user's query and/or their profile (resume)",
+                "description": (
+                    "Search for relevant jobs in the database based on a user's query and/or their "
+                    "existing profile resume. For signed-in users, their profile resume is already "
+                    "available and can be used automatically."
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -362,6 +367,27 @@ class ConversationService:
                     "required": [],
                 },
             }
+            resume_context_tool = {
+                "type": "function",
+                "name": "get_resume_context",
+                "description": (
+                    "Get concise context from the signed-in user's existing profile resume "
+                    "(summary, top keywords, experience signals). Use this for requests like "
+                    "resume review, course recommendations from resume, and salary guidance "
+                    "based on resume."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "max_chars": {
+                            "type": "integer",
+                            "description": "Maximum resume summary length (default: 1200)",
+                            "default": 1200,
+                        }
+                    },
+                    "required": [],
+                },
+            }
 
             if not any(
                 t.get("type") == "function" and t.get("name") == "search_jobs"
@@ -369,11 +395,20 @@ class ConversationService:
                 if isinstance(t, dict)
             ):
                 tools.append(jobs_search_tool)
+            if not any(
+                t.get("type") == "function" and t.get("name") == "get_resume_context"
+                for t in tools
+                if isinstance(t, dict)
+            ):
+                tools.append(resume_context_tool)
 
             gpt_system_prompt += (
                 "You have access to a jobs database search tool. "
                 "Use the search_jobs function when the user asks to find jobs, roles, or opportunities, "
                 "or when it would help to ground your answer in real job postings. "
+                "You also have access to get_resume_context for resume-aware personalization. "
+                "For signed-in users, their existing resume in profile is already available to tools; "
+                "do not ask them to upload a resume unless they explicitly want to replace/update it. "
             )
 
         # if database_config:
@@ -443,7 +478,7 @@ class ConversationService:
         conversation_files = self.get_conversation_files(conversation_id)
         all_file_ids = list(set((file_ids or []) + conversation_files))  # Combine and deduplicate
 
-        def _call_model(model_name: str):
+        def _call_model(model_name: str, system_prompt_override: Optional[str] = None):
             user_content: List[Dict] = [
                 {"type": "input_text", "text": text}
             ]
@@ -461,7 +496,7 @@ class ConversationService:
                 "model": model_name,
                 "tools": tools,
                 "input": [
-                    {"role": "system", "content": full_system_prompt},
+                    {"role": "system", "content": system_prompt_override or full_system_prompt},
                     {"role": "user", "content": user_content},
                 ],
             }
@@ -499,7 +534,56 @@ class ConversationService:
                 # If anything goes wrong, assume confident to avoid double calls
                 return True
 
+        def _has_tool_call(res) -> bool:
+            if not hasattr(res, "output") or not res.output:
+                return False
+            for item in res.output:
+                if getattr(item, "type", None) == "function_call":
+                    return True
+            return False
+
+        def _is_resume_intent(message: str) -> bool:
+            if not message:
+                return False
+            text_lc = str(message).lower()
+            patterns = [
+                r"\bbased on my resume\b",
+                r"\bfrom my resume\b",
+                r"\breview my resume\b",
+                r"\busing my resume\b",
+                r"\baccording to my resume\b",
+                r"\bjob based on my resume\b",
+            ]
+            return any(re.search(pattern, text_lc) for pattern in patterns)
+
+        def _asks_for_resume_upload(output_text: str) -> bool:
+            if not output_text:
+                return False
+            text_lc = str(output_text).lower()
+            patterns = [
+                r"\bupload your resume\b",
+                r"\bplease upload\b.*\bresume\b",
+                r"\bgo ahead and upload\b.*\bresume\b",
+                r"\bshare your resume\b",
+            ]
+            return any(re.search(pattern, text_lc) for pattern in patterns)
+
         response = _call_model("gpt-4.1-mini")
+
+        if (
+            mode == "talentcentral"
+            and str(user_id).strip().lower() != "anonymous"
+            and _is_resume_intent(text)
+            and not _has_tool_call(response)
+            and _asks_for_resume_upload(response.output_text)
+        ):
+            retry_prompt = (
+                f"{full_system_prompt}\n"
+                "Important TalentCentral behavior: if the user is signed in, their existing profile "
+                "resume may already be available to tools. Prefer using search_jobs or "
+                "get_resume_context before asking for an upload."
+            )
+            response = _call_model("gpt-4.1-mini", system_prompt_override=retry_prompt)
         
         called_function = False
         jobs_for_api: List[Dict[str, Any]] = []
@@ -550,7 +634,10 @@ class ConversationService:
         if mode == "talentcentral" and hasattr(response, "output") and response.output and len(response.output) > 0:
             output = None
             for item in response.output:
-                if getattr(item, "type", None) == "function_call" and getattr(item, "name", None) == "search_jobs":
+                if (
+                    getattr(item, "type", None) == "function_call"
+                    and getattr(item, "name", None) in {"search_jobs", "get_resume_context"}
+                ):
                     output = item
                     break
 
@@ -564,6 +651,7 @@ class ConversationService:
 
                     function_args = json.loads(function_args)
 
+                tool_result = ""
                 if function_name == "search_jobs":
                     from functions import _search_jobs_tool
 
@@ -707,7 +795,38 @@ class ConversationService:
                         tool_result = (
                             f"No jobs found matching '{query_text}'" if query_text else "No jobs found."
                         )
+                elif function_name == "get_resume_context":
+                    from functions import _get_resume_context_tool
 
+                    max_chars = (
+                        function_args.get("max_chars", 1200) if isinstance(function_args, dict) else 1200
+                    )
+                    resume_context = _get_resume_context_tool(user_id=user_id, max_chars=max_chars)
+                    has_profile = bool(resume_context.get("has_profile"))
+                    has_resume = bool(resume_context.get("has_resume"))
+                    summary = str(resume_context.get("resume_summary") or "").strip()
+                    keywords = resume_context.get("top_skills_keywords") or []
+                    signals = resume_context.get("experience_signals") or []
+                    cache_hit = bool(resume_context.get("cache_hit"))
+                    if has_profile and has_resume:
+                        tool_result = (
+                            "Resume context found for the signed-in user.\n"
+                            f"- Cache hit: {'yes' if cache_hit else 'no'}\n"
+                            f"- Top keywords: {', '.join(keywords[:12]) if keywords else 'none'}\n"
+                            f"- Experience signals: {', '.join(signals[:6]) if signals else 'none'}\n"
+                            f"- Resume summary: {summary if summary else 'No summary available.'}"
+                        )
+                    elif has_profile:
+                        tool_result = (
+                            "Signed-in user profile found, but no usable resume context was available.\n"
+                            "Ask the user to upload/update resume only if they want to improve personalization."
+                        )
+                    else:
+                        tool_result = (
+                            "No signed-in profile context was found for this request."
+                        )
+
+                if tool_result:
                     final_response = self.client.responses.create(
                         model="gpt-4.1-mini",
                         input=[

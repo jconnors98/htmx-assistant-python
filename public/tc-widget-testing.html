@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TalentCentral Widget Test Page</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      background: #f8fafc;
+    }
+
+    .panel {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
+    }
+
+    .mono {
+      font-family: Consolas, Monaco, "Andale Mono", "Ubuntu Mono", monospace;
+      font-size: 12px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #0f172a;
+      color: #f8fafc;
+      border-radius: 8px;
+      padding: 12px;
+      margin-top: 12px;
+    }
+
+    .label {
+      display: block;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #334155;
+      margin-bottom: 6px;
+    }
+
+    .field {
+      width: 100%;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      padding: 10px;
+      font-size: 0.9rem;
+      color: #0f172a;
+    }
+
+    .field:focus {
+      outline: none;
+      border-color: #2563eb;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+
+    .btn {
+      border: 1px solid transparent;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .btn-primary {
+      background: #1d4ed8;
+      color: #ffffff;
+    }
+
+    .btn-secondary {
+      background: #ffffff;
+      color: #1e293b;
+      border-color: #cbd5e1;
+    }
+
+    .test-frame {
+      width: 100%;
+      height: 640px;
+      border: 1px solid #cbd5e1;
+      border-radius: 12px;
+      background: #ffffff;
+    }
+
+    .test-surface {
+      min-height: 280px;
+      border: 1px dashed #94a3b8;
+      border-radius: 12px;
+      background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+      padding: 18px;
+      color: #334155;
+      font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+  <main class="max-w-6xl mx-auto px-4 py-8 space-y-6">
+    <header class="panel">
+      <h1 class="text-3xl font-bold text-slate-900">TalentCentral Widget Testing</h1>
+      <p class="text-slate-600 mt-2">
+        This page is dedicated to testing <strong>only</strong> `mode=talentcentral` using both supported embed methods:
+        JavaScript loader and direct iframe.
+      </p>
+    </header>
+
+    <section class="panel">
+      <h2 class="text-xl font-bold text-slate-900 mb-3">Shared Test Configuration</h2>
+      <div class="grid md:grid-cols-2 gap-4">
+        <div>
+          <label class="label" for="base-url">Base URL</label>
+          <input id="base-url" class="field" value="http://127.0.0.1:3000/flask" />
+        </div>
+        <button id="open-chat-btn">Chat with us</button>
+        <script>
+          document.getElementById('open-chat-btn').addEventListener('click', function () {
+            window.ChatWidget?.open?.();
+          });
+        </script>
+        <div>
+          <label class="label" for="user-token">User Token (optional)</label>
+          <input id="user-token" class="field" placeholder="Paste JWT/token for TalentCentral auth testing" />
+        </div>
+      </div>
+      <p class="text-xs text-slate-500 mt-3">
+        Token is passed as `data-user-token` for the loader and `user_token` query param for the iframe URL.
+      </p>
+      <div class="border-t border-slate-200 mt-4 pt-4 space-y-3">
+        <h3 class="text-sm font-semibold text-slate-800">User Token Generator (Local Dev)</h3>
+        <div class="grid md:grid-cols-3 gap-3">
+          <div>
+            <label class="label" for="token-user-select">Select User</label>
+            <select id="token-user-select" class="field"></select>
+          </div>
+          <div>
+            <label class="label" for="token-role">Role</label>
+            <select id="token-role" class="field">
+              <option value="jobseeker">jobseeker</option>
+              <option value="employer">employer</option>
+              <option value="admin">admin</option>
+            </select>
+          </div>
+          <div>
+            <label class="label" for="token-expiry">Expiry (minutes)</label>
+            <input id="token-expiry" class="field" type="number" min="1" max="1440" value="60" />
+          </div>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <button id="load-token-users" class="btn btn-secondary">Load Users</button>
+          <button id="generate-user-token" class="btn btn-primary">Generate User Token</button>
+        </div>
+        <div id="token-generator-status" class="text-xs text-slate-600"></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2 class="text-xl font-bold text-slate-900">Method 1: Widget Loader (`widget-loader.js`)</h2>
+      <p class="text-slate-600 mt-2">
+        Injects the loader script and mounts a floating TalentCentral widget on this page.
+      </p>
+      <div class="flex flex-wrap gap-2 mt-4">
+        <button id="mount-loader" class="btn btn-primary">Mount Loader Widget</button>
+        <button id="remount-loader" class="btn btn-secondary">Remount With Current Settings</button>
+      </div>
+      <div class="test-surface mt-4">
+        Interact with this area while the widget is mounted to verify overlay behavior and placement.
+        The loader widget appears as a floating bubble on the page.
+      </div>
+      <div id="loader-snippet" class="mono"></div>
+    </section>
+
+    <section class="panel">
+      <h2 class="text-xl font-bold text-slate-900">Method 2: Direct Iframe Embed (`chat-widget.html`)</h2>
+      <p class="text-slate-600 mt-2">
+        Uses an explicit iframe source URL for TalentCentral mode.
+      </p>
+      <div class="flex flex-wrap gap-2 mt-4">
+        <button id="load-iframe" class="btn btn-primary">Load / Refresh Iframe</button>
+        <a id="open-standalone" class="btn btn-secondary" target="_blank" rel="noreferrer">Open Same URL in New Tab</a>
+      </div>
+      <iframe id="talentcentral-iframe" class="test-frame mt-4" allow="clipboard-write"></iframe>
+      <div id="iframe-snippet" class="mono"></div>
+    </section>
+  </main>
+
+  <script>
+    const MODE = "talentcentral";
+    const THEME = "#82002d";
+    const POSITION = "bottom-right";
+
+    const baseUrlInput = document.getElementById("base-url");
+    const userTokenInput = document.getElementById("user-token");
+    const tokenUserSelect = document.getElementById("token-user-select");
+    const tokenRoleSelect = document.getElementById("token-role");
+    const tokenExpiryInput = document.getElementById("token-expiry");
+    const tokenStatus = document.getElementById("token-generator-status");
+
+    const loaderSnippet = document.getElementById("loader-snippet");
+    const iframeSnippet = document.getElementById("iframe-snippet");
+    const iframe = document.getElementById("talentcentral-iframe");
+    const standaloneLink = document.getElementById("open-standalone");
+
+    function currentConfig() {
+      return {
+        baseUrl: baseUrlInput.value.trim().replace(/\/$/, ""),
+        userToken: userTokenInput.value.trim()
+      };
+    }
+
+    function apiUrl(path) {
+      const { baseUrl } = currentConfig();
+      const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+      return `${baseUrl}${normalizedPath}`;
+    }
+
+    async function readJsonResponse(res) {
+      const raw = await res.text();
+      let payload = null;
+      try {
+        payload = raw ? JSON.parse(raw) : {};
+      } catch (_err) {
+        const snippet = (raw || "").slice(0, 140).replace(/\s+/g, " ").trim();
+        throw new Error(`HTTP ${res.status}: expected JSON but received: ${snippet || "<empty>"}`);
+      }
+      return payload;
+    }
+
+    async function loadTokenUsers() {
+      tokenStatus.textContent = "Loading users...";
+      try {
+        const res = await fetch(apiUrl("/api/talentcentral/test-users?limit=250"));
+        const payload = await readJsonResponse(res);
+        if (!res.ok) {
+          throw new Error(payload.error || "Failed to load users");
+        }
+
+        const users = Array.isArray(payload.users) ? payload.users : [];
+        tokenUserSelect.innerHTML = "";
+        if (!users.length) {
+          const opt = document.createElement("option");
+          opt.value = "";
+          opt.textContent = "No users found";
+          tokenUserSelect.appendChild(opt);
+          tokenStatus.textContent = "No users returned from test endpoint.";
+          return;
+        }
+
+        users.forEach((user) => {
+          const opt = document.createElement("option");
+          opt.value = String(user.id || "").trim();
+          opt.textContent = user.label || `User #${opt.value}`;
+          tokenUserSelect.appendChild(opt);
+        });
+        tokenStatus.textContent = `Loaded ${users.length} users.`;
+      } catch (err) {
+        tokenStatus.textContent = `Failed to load users: ${err.message}`;
+      }
+    }
+
+    async function generateUserToken() {
+      const uid = (tokenUserSelect.value || "").trim();
+      const role = (tokenRoleSelect.value || "jobseeker").trim();
+      const expiresIn = Number(tokenExpiryInput.value || 60);
+
+      if (!uid) {
+        tokenStatus.textContent = "Select a user first.";
+        return;
+      }
+
+      tokenStatus.textContent = "Generating token...";
+      try {
+        const res = await fetch(apiUrl("/api/talentcentral/test-user-token"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            uid,
+            role,
+            expires_in_minutes: expiresIn
+          })
+        });
+        const payload = await readJsonResponse(res);
+        if (!res.ok) {
+          throw new Error(payload.error || "Failed to generate token");
+        }
+
+        userTokenInput.value = payload.token || "";
+        renderLoaderSnippet();
+        refreshIframe();
+        tokenStatus.textContent = `Generated token for uid=${uid}, role=${role}, expires_at=${payload.expires_at || "n/a"}`;
+      } catch (err) {
+        tokenStatus.textContent = `Failed to generate token: ${err.message}`;
+      }
+    }
+
+    function buildIframeUrl() {
+      const { baseUrl, userToken } = currentConfig();
+      const params = new URLSearchParams({ mode: MODE });
+      if (userToken) params.set("user_token", userToken);
+      return `${baseUrl}/chat-widget.html?${params.toString()}`;
+    }
+
+    function renderLoaderSnippet() {
+      const { baseUrl, userToken } = currentConfig();
+      const tokenLine = userToken ? `  data-user-token="${userToken}"\n` : "";
+      loaderSnippet.textContent = [
+        "<script",
+        `  src="${baseUrl}/widget-loader.js"`,
+        `  data-mode="${MODE}"`,
+        `  data-theme="${THEME}"`,
+        `  data-position="${POSITION}"`,
+        `  data-base-url="${baseUrl}"`,
+        tokenLine.trimEnd(),
+        "><\\/script>"
+      ].filter(Boolean).join("\n");
+    }
+
+    function renderIframeSnippet(url) {
+      iframeSnippet.textContent = [
+        "<iframe",
+        `  src="${url}"`,
+        "  allow=\"clipboard-write\"",
+        "  style=\"width: 100%; height: 640px; border: 1px solid #cbd5e1; border-radius: 12px;\"",
+        "></iframe>"
+      ].join("\n");
+    }
+
+    function removeInjectedLoaderScript() {
+      const existing = document.getElementById("tc-loader-script");
+      if (existing) {
+        existing.remove();
+      }
+    }
+
+    function mountLoaderWidget() {
+      const { baseUrl, userToken } = currentConfig();
+      removeInjectedLoaderScript();
+
+      // Remove previous loader container if present to ensure a clean remount.
+      const existingContainer = document.getElementById("chat-widget-container");
+      if (existingContainer) {
+        existingContainer.remove();
+      }
+
+      const script = document.createElement("script");
+      script.id = "tc-loader-script";
+      script.src = `${baseUrl}/widget-loader.js`;
+      script.setAttribute("data-mode", MODE);
+      script.setAttribute("data-theme", THEME);
+      script.setAttribute("data-position", POSITION);
+      script.setAttribute("data-base-url", baseUrl);
+      if (userToken) {
+        script.setAttribute("data-user-token", userToken);
+      }
+      document.body.appendChild(script);
+
+      renderLoaderSnippet();
+    }
+
+    function refreshIframe() {
+      const iframeUrl = buildIframeUrl();
+      iframe.src = iframeUrl;
+      standaloneLink.href = iframeUrl;
+      renderIframeSnippet(iframeUrl);
+    }
+
+    document.getElementById("mount-loader").addEventListener("click", mountLoaderWidget);
+    document.getElementById("remount-loader").addEventListener("click", mountLoaderWidget);
+    document.getElementById("load-iframe").addEventListener("click", refreshIframe);
+    document.getElementById("load-token-users").addEventListener("click", loadTokenUsers);
+    document.getElementById("generate-user-token").addEventListener("click", generateUserToken);
+
+    baseUrlInput.addEventListener("input", () => {
+      renderLoaderSnippet();
+      refreshIframe();
+      loadTokenUsers();
+    });
+    userTokenInput.addEventListener("input", () => {
+      renderLoaderSnippet();
+      refreshIframe();
+    });
+
+    renderLoaderSnippet();
+    refreshIframe();
+    loadTokenUsers();
+  </script>
+</body>
+</html>
+

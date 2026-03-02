@@ -93,6 +93,29 @@
     // Ensure the wrapper doesn't eat clicks; only the iframe should be interactive.
     container.style.pointerEvents = 'none';
     iframe.style.pointerEvents = 'auto';
+
+    const postWidgetCommand = function(command) {
+      if (!iframe.contentWindow) return false;
+      iframe.contentWindow.postMessage({
+        source: 'chat-widget-loader',
+        type: 'COMMAND',
+        command
+      }, widgetOrigin || '*');
+      return true;
+    };
+
+    // Public host-page API so clients can open/close/toggle from custom buttons.
+    window.ChatWidget = Object.assign(window.ChatWidget || {}, {
+      open: function() {
+        return postWidgetCommand('OPEN_WIDGET');
+      },
+      close: function() {
+        return postWidgetCommand('CLOSE_WIDGET');
+      },
+      toggle: function() {
+        return postWidgetCommand('TOGGLE_WIDGET');
+      }
+    });
     
     // Helper to clamp and apply the container size without occupying extra space
     const applyContainerStyles = function() {
@@ -195,7 +218,7 @@
     container.appendChild(iframe);
     document.body.appendChild(container);
     
-    console.log('Chat Widget v0.22 loaded successfully');
+    console.log('Chat Widget v0.23 loaded successfully');
   };
 
   // On mobile, try to pre-check mode settings to avoid any iframe flash.

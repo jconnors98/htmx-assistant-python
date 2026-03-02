@@ -834,6 +834,14 @@
     const filePreviews = document.getElementById('file-previews');
     const emptyState = document.getElementById('empty-state');
     const promptButtonsContainer = document.getElementById('prompt-buttons');
+    const parentOrigin = (() => {
+      try {
+        if (!document.referrer) return null;
+        return new URL(document.referrer).origin;
+      } catch (err) {
+        return null;
+      }
+    })();
     
     // Initialize
     async function init() {
@@ -1233,6 +1241,9 @@
         formData.append('mode', mode);
         formData.append('conversation_id', conversationId);
         formData.append('response_id', responseId);
+        if (mode === 'talentcentral' && userToken) {
+          formData.append('user_token', userToken);
+        }
         
         // Add uploaded file IDs
         if (uploadedFileIds.length > 0) {
@@ -1529,6 +1540,37 @@
     
     // Make removeFile function global
     window.removeFile = removeFile;
+
+    // Listen for parent-loader commands so host pages can control widget state.
+    window.addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (!data || data.source !== 'chat-widget-loader' || data.type !== 'COMMAND') return;
+      if (parentOrigin && event.origin !== parentOrigin) return;
+
+      if (data.command === 'OPEN_WIDGET') {
+        if (isFabVisible) {
+          openWidget();
+        } else if (!isExpanded) {
+          expandWidget();
+        }
+        return;
+      }
+
+      if (data.command === 'CLOSE_WIDGET') {
+        if (!isFabVisible) {
+          closeWidget();
+        }
+        return;
+      }
+
+      if (data.command === 'TOGGLE_WIDGET') {
+        if (isFabVisible) {
+          openWidget();
+        } else {
+          closeWidget();
+        }
+      }
+    });
     
     // Observe size changes so the parent iframe can shrink/grow to visible content
     if (window.ResizeObserver && chatWidgetContainer) {

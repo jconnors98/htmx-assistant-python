@@ -83,7 +83,7 @@ COGNITO_REGION = config("COGNITO_REGION", default=None)
 COGNITO_USER_POOL_ID = config("COGNITO_USER_POOL_ID", default=None)
 COGNITO_APP_CLIENT_ID = config("COGNITO_APP_CLIENT_ID", default=None)
 SES_SENDER_EMAIL = config("SES_SENDER_EMAIL", default=None)
-TALENTCENTRAL_USER_TOKEN_SECRET = config("TALENTCENTRAL_USER_TOKEN_SECRET", default=None)
+API_TOKEN_HMAC_SECRET = config("API_TOKEN_HMAC_SECRET", default=None)
 
 DEFAULT_MODE_COLOR = "#82002d"
 DEFAULT_TEXT_COLOR = "#ffffff"
@@ -469,11 +469,35 @@ def token_auth_required(fn):
     return wrapper
 
 
-def _extract_bearer_token():
+def _extract_talentcentral_user_token():
+    """
+    Extract TalentCentral user JWT from supported request locations.
+    Priority:
+    1) Authorization: Bearer <token>
+    2) form field: user_token
+    3) query param: user_token
+    4) JSON body: user_token
+    """
     auth = request.headers.get("Authorization", "") or ""
     if auth.lower().startswith("bearer "):
-        return auth.split(" ", 1)[1].strip()
-    return ""
+        token = auth.split(" ", 1)[1].strip()
+        if token:
+            return token, "authorization_header"
+
+    form_token = (request.form.get("user_token") or "").strip()
+    if form_token:
+        return form_token, "form_user_token"
+
+    query_token = (request.args.get("user_token") or "").strip()
+    if query_token:
+        return query_token, "query_user_token"
+
+    json_data = request.get_json(silent=True) or {}
+    json_token = str(json_data.get("user_token") or "").strip()
+    if json_token:
+        return json_token, "json_user_token"
+
+    return "", "none"
 
 
 def _verify_talentcentral_user_token():
@@ -483,14 +507,23 @@ def _verify_talentcentral_user_token():
     Returns:
         dict with uid/role/iat/exp when valid, otherwise None.
     """
-    token = _extract_bearer_token()
-    if not token or not TALENTCENTRAL_USER_TOKEN_SECRET:
+    token, token_source = _extract_talentcentral_user_token()
+    if not token or not API_TOKEN_HMAC_SECRET:
+        print(
+            "TalentCentral token not available for verification",
+            {
+                "token_source": token_source,
+                "has_secret": bool(API_TOKEN_HMAC_SECRET),
+            },
+        )
         return None
+
+    print("TalentCentral token source", {"token_source": token_source})
 
     try:
         claims = jwt.decode(
             token,
-            TALENTCENTRAL_USER_TOKEN_SECRET,
+            API_TOKEN_HMAC_SECRET,
             algorithms=["HS256"],
             options={"verify_aud": False},
         )
@@ -506,12 +539,97 @@ def _verify_talentcentral_user_token():
     if not uid_text:
         return None
 
+    print(
+        "TalentCentral token decoded claims",
+        {
+            "uid": uid_text,
+            "role": claims.get("role"),
+            "iat": claims.get("iat"),
+            "exp": claims.get("exp"),
+        },
+    )
+
     return {
         "uid": uid_text,
         "role": claims.get("role"),
         "iat": claims.get("iat"),
         "exp": claims.get("exp"),
     }
+
+
+def _resolve_api_token_user_id():
+    """
+    Best-effort API-token user lookup for unauthenticated endpoints (e.g. /ask).
+    Returns a string user_id when a valid active API token is present, else None.
+    """
+    token = ""
+    auth = request.headers.get("Authorization", "") or ""
+    if auth.lower().startswith("bearer "):
+        token = auth.split(" ", 1)[1].strip()
+    if not token:
+        token = (request.headers.get("X-API-Token") or "").strip()
+    if not token:
+        token = (request.headers.get("X-API-Key") or "").strip()
+
+    if not token:
+        return None
+
+    try:
+        token_hash = _hash_api_token(token)
+    except Exception as e:  # noqa: BLE001
+        print(f"API token hash failed in /ask fallback: {e}")
+        return None
+
+    token_doc = api_tokens_collection.find_one({"token_hash": token_hash})
+    if not token_doc:
+        token_doc = api_tokens_collection.find_one({"token": token})
+    if not token_doc or token_doc.get("active", True) is False:
+        return None
+
+    token_user_id = token_doc.get("user_id")
+    token_user_id_text = str(token_user_id).strip() if token_user_id is not None else ""
+    return token_user_id_text or None
+
+
+def _list_talentcentral_test_users(limit=200):
+    """
+    Return a best-effort list of TalentCentral users from MySQL for local testing.
+    """
+    cnx = None
+    cursor = None
+    try:
+        import mysql.connector
+
+        safe_limit = max(1, min(int(limit), 500))
+        cnx = mysql.connector.connect(
+            host=config("MYSQL_HOST"),
+            database=config("MYSQL_JOBS_DATABASE"),
+            port=3306,
+            user=config("MYSQL_USER"),
+            password=config("MYSQL_PASSWORD"),
+            collation="utf8mb4_unicode_ci",
+        )
+        cursor = cnx.cursor(dictionary=True)
+        cursor.execute(
+            "SELECT id FROM users ORDER BY id DESC LIMIT %s",
+            (safe_limit,),
+        )
+        rows = cursor.fetchall() or []
+        return [
+            {"id": str(row.get("id")), "label": f"User #{row.get('id')}"}
+            for row in rows
+            if row.get("id") is not None
+        ]
+    except Exception as e:  # noqa: BLE001
+        print(f"Failed to list TalentCentral test users: {e}")
+        return []
+    finally:
+        try:
+            if cursor:
+                cursor.close()
+        finally:
+            if cnx:
+                cnx.close()
 
 
 def _generate_password_reset_email_html(reset_link, token_expiry_minutes=15):
@@ -841,8 +959,13 @@ def ask():
                     f"TalentCentral /ask auth_source=token-user user_id={user_id} role={role}"
                 )
             else:
-                user_id = "anonymous"
-                print("TalentCentral /ask auth_source=guest user_id=anonymous")
+                api_token_user_id = _resolve_api_token_user_id()
+                if api_token_user_id:
+                    user_id = api_token_user_id
+                    print(f"TalentCentral /ask auth_source=api-token user_id={user_id}")
+                else:
+                    user_id = "anonymous"
+                    print("TalentCentral /ask auth_source=guest user_id=anonymous")
         gpt_text, response_id, _usage = conversation_service.respond(
             conversation_id=conversation_id,
             user_id=user_id,
@@ -1539,6 +1662,61 @@ def talentcentral_api():
     except Exception as err:  # noqa: BLE001
         print("Error getting TalentCentral API response:", err)
         return {"error": "There was an error getting a response. Please try again."}, 500
+
+
+@routes.get("/api/talentcentral/test-users")
+def talentcentral_test_users():
+    """Local-dev helper endpoint for widget testing page user selection."""
+    if localDevMode != "true":
+        return {"error": "Not available outside local dev mode"}, 403
+
+    try:
+        limit = int((request.args.get("limit") or "200").strip())
+    except Exception:  # noqa: BLE001
+        limit = 200
+
+    users = _list_talentcentral_test_users(limit=limit)
+    return {"users": users, "count": len(users)}
+
+
+@routes.post("/api/talentcentral/test-user-token")
+def talentcentral_test_user_token():
+    """Local-dev helper endpoint to mint HS256 TalentCentral user tokens for testing."""
+    if localDevMode != "true":
+        return {"error": "Not available outside local dev mode"}, 403
+    if not API_TOKEN_HMAC_SECRET:
+        return {"error": "API_TOKEN_HMAC_SECRET is not configured"}, 500
+
+    data = request.get_json(silent=True) or {}
+    uid = str(data.get("uid") or "").strip()
+    role = str(data.get("role") or "jobseeker").strip() or "jobseeker"
+    expires_in_minutes = data.get("expires_in_minutes", 60)
+
+    if not uid:
+        return {"error": "uid is required"}, 400
+
+    try:
+        expires_in_minutes = int(expires_in_minutes)
+    except Exception:  # noqa: BLE001
+        return {"error": "expires_in_minutes must be an integer"}, 400
+    if expires_in_minutes < 1 or expires_in_minutes > 1440:
+        return {"error": "expires_in_minutes must be between 1 and 1440"}, 400
+
+    now = datetime.utcnow()
+    exp = now + timedelta(minutes=expires_in_minutes)
+    claims = {
+        "uid": uid,
+        "role": role,
+        "iat": int(now.timestamp()),
+        "exp": int(exp.timestamp()),
+    }
+    token = jwt.encode(claims, API_TOKEN_HMAC_SECRET, algorithm="HS256")
+
+    return {
+        "token": token,
+        "claims": claims,
+        "expires_at": exp.isoformat() + "Z",
+    }
 
 
 @routes.post("/api/tequila-draw/entries")

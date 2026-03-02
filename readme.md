@@ -131,7 +131,7 @@ Create a `.env` (or export variables) with at least:
 | `S3_BUCKET` | Bucket storing uploaded documents |
 | `SES_SENDER_EMAIL` | Verified SES sender for password reset emails |
 | `COGNITO_REGION`, `COGNITO_USER_POOL_ID`, `COGNITO_APP_CLIENT_ID` | Cognito auth metadata |
-| `TALENTCENTRAL_USER_TOKEN_SECRET` | Shared HS256 secret used to verify TalentCentral widget user JWTs (`uid`, `role`, `iat`, `exp`) |
+| `API_TOKEN_HMAC_SECRET` | Shared HS256 secret used to verify API tokens and widget user JWTs (`uid`, `role`, `iat`, `exp`) |
 | `SCRAPER_EXECUTION_MODE` | `local` (default) or `remote`; controls whether scraping runs in-process or via SQS |
 | `SCRAPER_SQS_QUEUE_URL`, `SCRAPER_SQS_REGION`, `SCRAPER_SQS_MESSAGE_GROUP_ID` | Required when `SCRAPER_EXECUTION_MODE=remote` |
 | `SCRAPER_BROWSER_POOL_SIZE`, `SCRAPER_MAX_CONCURRENT_JOBS` | Tunables for crawler concurrency |
@@ -256,7 +256,7 @@ For embedded chat widget usage in `talentcentral` mode, you can pass a short-liv
 ```
 
 Token expectations:
-- JWT signed with HS256 using `TALENTCENTRAL_USER_TOKEN_SECRET` on the chatbot backend.
+- JWT signed with HS256 using `API_TOKEN_HMAC_SECRET` on the chatbot backend.
 - Claims should include `uid`, `role`, `iat`, and `exp`.
 - The widget forwards this token on `/ask` only for `talentcentral` mode.
 - If token is missing, invalid, or expired, the request is treated as guest (`anonymous`).
