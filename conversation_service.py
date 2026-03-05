@@ -406,6 +406,10 @@ class ConversationService:
                 "You have access to a jobs database search tool. "
                 "Use the search_jobs function when the user asks to find jobs, roles, or opportunities, "
                 "or when it would help to ground your answer in real job postings. "
+                "If the user adds constraints (location, trade, experience, salary, remote/on-site), "
+                "run search_jobs again with those constraints before responding. "
+                "Do not claim there are no jobs for a requested constraint unless search_jobs was called "
+                "for that request. "
                 "You also have access to get_resume_context for resume-aware personalization. "
                 "For signed-in users, their existing resume in profile is already available to tools; "
                 "do not ask them to upload a resume unless they explicitly want to replace/update it. "
@@ -568,7 +572,90 @@ class ConversationService:
             ]
             return any(re.search(pattern, text_lc) for pattern in patterns)
 
+        def _is_job_search_intent(message: str) -> bool:
+            if not message:
+                return False
+            text_lc = str(message).lower()
+            patterns = [
+                r"\bhelp me find a job\b",
+                r"\bcan you help me find a job\b",
+                r"\bcan you find me a job\b",
+                r"\bfind me a job\b",
+                r"\bfind me jobs?\b",
+                r"\bfind jobs?\b",
+                r"\bjob opportunities\b",
+                r"\bjob openings\b",
+                r"\bsearch for jobs?\b",
+                r"\blook for jobs?\b",
+                r"\bbased on my resume\b",
+                r"\bfor a job\b",
+            ]
+            return any(re.search(pattern, text_lc) for pattern in patterns)
+
+        def _is_job_filter_followup(message: str) -> bool:
+            if not message:
+                return False
+            text_lc = str(message).lower()
+            patterns = [
+                r"\boutside of\b",
+                r"\boutside\b",
+                r"\bwithin\b",
+                r"\bin vancouver\b",
+                r"\bnear me\b",
+                r"\bclose to\b",
+                r"\bonly\b.*\b(job|jobs|role|roles)\b",
+                r"\bdon't want to go\b",
+            ]
+            return any(re.search(pattern, text_lc) for pattern in patterns)
+
+        def _is_deferred_job_search_reply(output_text: str) -> bool:
+            if not output_text:
+                return False
+            text_lc = str(output_text).lower()
+            patterns = [
+                r"\bplease give me a moment\b",
+                r"\bgive me a moment\b",
+                r"\bi(?:\s+will|'ll)\s+(?:search|look)\b",
+                r"\blet me\b.*\bsearch\b",
+                r"\bfind suitable job opportunities\b",
+                r"\bfind suitable jobs?\b",
+                r"\bsearch for.*jobs?\b",
+            ]
+            return any(re.search(pattern, text_lc) for pattern in patterns)
+
+        def _claims_no_jobs(output_text: str) -> bool:
+            if not output_text:
+                return False
+            text_lc = str(output_text).lower()
+            patterns = [
+                r"\bno (?:listed )?job openings\b",
+                r"\bno jobs found\b",
+                r"\bthere are no\b.*\bjobs?\b",
+                r"\bcurrently,? there are no\b.*\bjobs?\b",
+                r"\bno opportunities\b",
+            ]
+            return any(re.search(pattern, text_lc) for pattern in patterns)
+
+        def _safe_preview(value: Any, max_len: int = 160) -> str:
+            try:
+                text_value = " ".join(str(value).split())
+            except Exception:  # noqa: BLE001
+                text_value = "<unprintable>"
+            if len(text_value) > max_len:
+                return text_value[: max_len - 3] + "..."
+            return text_value
+
         response = _call_model("gpt-4.1-mini")
+        if mode == "talentcentral":
+            print(
+                "[talentcentral] initial model response",
+                {
+                    "response_id": getattr(response, "id", None),
+                    "output_items": len(getattr(response, "output", []) or []),
+                    "has_tool_call": _has_tool_call(response),
+                    "output_preview": _safe_preview(getattr(response, "output_text", "")),
+                },
+            )
 
         if (
             mode == "talentcentral"
@@ -583,9 +670,27 @@ class ConversationService:
                 "resume may already be available to tools. Prefer using search_jobs or "
                 "get_resume_context before asking for an upload."
             )
+            print(
+                "[talentcentral] retrying initial response",
+                {
+                    "reason": "resume_intent_with_upload_request_and_no_tool_call",
+                    "user_id": str(user_id),
+                    "user_prompt_preview": _safe_preview(text),
+                },
+            )
             response = _call_model("gpt-4.1-mini", system_prompt_override=retry_prompt)
+            print(
+                "[talentcentral] retry response",
+                {
+                    "response_id": getattr(response, "id", None),
+                    "output_items": len(getattr(response, "output", []) or []),
+                    "has_tool_call": _has_tool_call(response),
+                    "output_preview": _safe_preview(getattr(response, "output_text", "")),
+                },
+            )
         
         called_function = False
+        search_jobs_called = False
         jobs_for_api: List[Dict[str, Any]] = []
         # Handle function calls for permit search (permitsca mode only)
         if mode == "permitsca" and hasattr(response, 'output') and response.output and len(response.output) > 0:
@@ -630,218 +735,490 @@ class ConversationService:
                     response = final_response
                     called_function = True
 
-        # Handle function calls for TalentCentral job search (talentcentral mode only)
-        if mode == "talentcentral" and hasattr(response, "output") and response.output and len(response.output) > 0:
-            output = None
-            for item in response.output:
-                if (
-                    getattr(item, "type", None) == "function_call"
-                    and getattr(item, "name", None) in {"search_jobs", "get_resume_context"}
-                ):
-                    output = item
+        # Handle function calls for TalentCentral tools.
+        # Iterate because the model may first call get_resume_context, then search_jobs.
+        if mode == "talentcentral" and hasattr(response, "output") and response.output:
+            max_tool_round_trips = 4
+            for round_index in range(max_tool_round_trips):
+                function_calls = [
+                    item
+                    for item in (response.output or [])
+                    if (
+                        getattr(item, "type", None) == "function_call"
+                        and getattr(item, "name", None) in {"search_jobs", "get_resume_context"}
+                    )
+                ]
+                if not function_calls:
+                    print(
+                        "[talentcentral] tool loop stopped",
+                        {
+                            "round": round_index + 1,
+                            "reason": "no_function_calls",
+                            "response_id": getattr(response, "id", None),
+                            "output_preview": _safe_preview(getattr(response, "output_text", "")),
+                        },
+                    )
                     break
 
-            if output:
-                function_name = output.name
-                function_args = output.arguments
+                called_function = True
+                follow_up_items = []
+                print(
+                    "[talentcentral] tool round start",
+                    {
+                        "round": round_index + 1,
+                        "function_count": len(function_calls),
+                        "function_names": [getattr(fc, "name", "<unknown>") for fc in function_calls],
+                        "response_id": getattr(response, "id", None),
+                    },
+                )
 
-                # Parse function arguments
-                if isinstance(function_args, str):
-                    import json
+                for output in function_calls:
+                    function_name = output.name
+                    function_args = output.arguments
 
-                    function_args = json.loads(function_args)
+                    # Parse function arguments defensively.
+                    if isinstance(function_args, str):
+                        import json
 
-                tool_result = ""
-                if function_name == "search_jobs":
-                    from functions import _search_jobs_tool
-
-                    query_text = function_args.get("query", "") if isinstance(function_args, dict) else ""
-                    limit = function_args.get("limit", 10) if isinstance(function_args, dict) else 10
-                    use_profile = (
-                        function_args.get("use_profile", True) if isinstance(function_args, dict) else True
-                    )
-
-                    search_results = _search_jobs_tool(
-                        query_text,
-                        user_id=user_id,
-                        limit=limit,
-                        use_profile=use_profile,
-                    )
-
-                    def _slugify(text: str) -> str:
-                        import re
-
-                        if text is None:
-                            return "unknown"
-                        value = str(text).strip().lower()
-                        if not value:
-                            return "unknown"
-                        value = re.sub(r"[^a-z0-9]+", "-", value)
-                        value = value.strip("-")
-                        return value or "unknown"
-
-                    def _fmt_dt(value) -> str:
                         try:
-                            if hasattr(value, "strftime"):
-                                return value.strftime("%Y-%m-%d")
+                            function_args = json.loads(function_args)
                         except Exception:  # noqa: BLE001
-                            pass
-                        return "n/a" if value in (None, "") else str(value)
-
-                    def _excerpt(value: str, limit_chars: int = 400) -> str:
-                        if not value:
-                            return ""
-                        text_value = " ".join(str(value).split())
-                        if len(text_value) <= limit_chars:
-                            return text_value
-                        return text_value[: limit_chars - 1].rstrip() + "…"
-
-                    def _fmt_salary(job: dict) -> str:
-                        smin = job.get("salary_min")
-                        smax = job.get("salary_max")
-                        stype = job.get("salary_type") or ""
-                        if smin is None and smax is None:
-                            return "Salary: not listed"
-                        if smin is not None and smax is not None:
-                            return f"Salary: {smin}–{smax} ({stype})" if stype else f"Salary: {smin}–{smax}"
-                        if smin is not None:
-                            return f"Salary: {smin}+ ({stype})" if stype else f"Salary: {smin}+"
-                        return f"Salary: up to {smax} ({stype})" if stype else f"Salary: up to {smax}"
-
-                    # Format results for the AI
-                    if search_results:
-                        shown = min(len(search_results), int(limit) if str(limit).isdigit() else 10)
-                        tool_result = (
-                            f"Found {len(search_results)} jobs"
-                            + (f" matching '{query_text}'" if query_text else "")
-                            + ":\n"
-                        )
-                        for i, job in enumerate(search_results[:shown], 1):
-                            job_id = job.get("id")
-                            title = job.get("title", "Untitled")
-                            location = job.get("location") or "Unknown location"
-                            city_name = str(location).split(",")[0].strip() if location else "unknown"
-                            job_type = job.get("job_type") or "Unknown type"
-                            exp = job.get("experience_level") or "Unspecified"
-                            is_apprentice = bool(job.get("is_apprenticeship"))
-                            app_method = job.get("application_method") or "internal"
-                            apprentice_text = "Apprenticeship: yes" if is_apprentice else "Apprenticeship: no"
-
-                            # TalentCentral canonical job link
-                            city_slug = _slugify(city_name)
-                            title_slug = _slugify(title)
-                            job_link = (
-                                f"https://talentcentral.ca/job/{city_slug}/{job_id}/{title_slug}"
-                                if job_id
-                                else f"https://talentcentral.ca/job/{city_slug}/unknown/{title_slug}"
-                            )
-
-                            dist = job.get("distance_km")
-                            dist_text = f"{dist} km" if dist is not None else "n/a"
-                            created_at = _fmt_dt(job.get("created_at"))
-                            updated_at = _fmt_dt(job.get("updated_at"))
-                            expires_at = _fmt_dt(job.get("expires_at"))
-                            views = job.get("views_count")
-                            status = job.get("status") or "unknown"
-                            city_id = job.get("city_id")
-                            employer_id = job.get("employer_id")
-
-                            desc = _excerpt(job.get("description") or "", 550)
-                            reqs = _excerpt(job.get("requirements") or "", 450)
-                            salary_text = _fmt_salary(job)
-                            apply_text = f"Apply: {job_link}"
-                            apply_link = job_link
-                            jobs_for_api.append(
-                                {
-                                    "id": job_id,
-                                    "title": title,
-                                    "link": job_link,
-                                    "apply_link": apply_link,
-                                    "application_method": app_method,
-                                    "location": location,
-                                    "distance_km": dist,
-                                    "job_type": job_type,
-                                    "experience_level": exp,
-                                    "status": status,
-                                    "views_count": views,
-                                    "salary_text": salary_text,
-                                    "salary_min": job.get("salary_min"),
-                                    "salary_max": job.get("salary_max"),
-                                    "salary_type": job.get("salary_type"),
-                                    "is_apprenticeship": is_apprentice,
-                                    "created_at": created_at,
-                                    "updated_at": updated_at,
-                                    "expires_at": expires_at,
-                                    "city_id": city_id,
-                                    "employer_id": employer_id,
-                                    "description_excerpt": desc,
-                                    "requirements_excerpt": reqs,
-                                }
-                            )
-
-                            tool_result += (
-                                f"{i}. {title}\n"
-                                f"- Link: {job_link}\n"
-                                f"- Job ID: {job_id} | Employer ID: {employer_id} | City ID: {city_id}\n"
-                                f"- Location: {location} | Distance: {dist_text}\n"
-                                f"- Type: {job_type} | Experience: {exp} | Status: {status} | Views: {views}\n"
-                                f"- {salary_text} | {apprentice_text} | {apply_text}\n"
-                                f"- Posted: {created_at} | Updated: {updated_at} | Expires: {expires_at}\n"
-                                + (f"- Description: {desc}\n" if desc else "")
-                                + (f"- Requirements: {reqs}\n" if reqs else "")
-                                + "\n"
-                            )
-                    else:
-                        tool_result = (
-                            f"No jobs found matching '{query_text}'" if query_text else "No jobs found."
-                        )
-                elif function_name == "get_resume_context":
-                    from functions import _get_resume_context_tool
-
-                    max_chars = (
-                        function_args.get("max_chars", 1200) if isinstance(function_args, dict) else 1200
+                            function_args = {}
+                    elif not isinstance(function_args, dict):
+                        function_args = {}
+                    print(
+                        "[talentcentral] executing tool",
+                        {
+                            "round": round_index + 1,
+                            "function": function_name,
+                            "call_id": getattr(output, "call_id", None),
+                            "args": function_args,
+                        },
                     )
-                    resume_context = _get_resume_context_tool(user_id=user_id, max_chars=max_chars)
-                    has_profile = bool(resume_context.get("has_profile"))
-                    has_resume = bool(resume_context.get("has_resume"))
-                    summary = str(resume_context.get("resume_summary") or "").strip()
-                    keywords = resume_context.get("top_skills_keywords") or []
-                    signals = resume_context.get("experience_signals") or []
-                    cache_hit = bool(resume_context.get("cache_hit"))
-                    if has_profile and has_resume:
-                        tool_result = (
-                            "Resume context found for the signed-in user.\n"
-                            f"- Cache hit: {'yes' if cache_hit else 'no'}\n"
-                            f"- Top keywords: {', '.join(keywords[:12]) if keywords else 'none'}\n"
-                            f"- Experience signals: {', '.join(signals[:6]) if signals else 'none'}\n"
-                            f"- Resume summary: {summary if summary else 'No summary available.'}"
-                        )
-                    elif has_profile:
-                        tool_result = (
-                            "Signed-in user profile found, but no usable resume context was available.\n"
-                            "Ask the user to upload/update resume only if they want to improve personalization."
-                        )
-                    else:
-                        tool_result = (
-                            "No signed-in profile context was found for this request."
-                        )
 
-                if tool_result:
-                    final_response = self.client.responses.create(
-                        model="gpt-4.1-mini",
-                        input=[
-                            {"role": "system", "content": full_system_prompt},
-                            {"role": "user", "content": text},
-                            output,
+                    tool_result = ""
+                    if function_name == "search_jobs":
+                        search_jobs_called = True
+                        from functions import _search_jobs_tool
+
+                        query_text = function_args.get("query", "")
+                        limit = function_args.get("limit", 10)
+                        use_profile = function_args.get("use_profile", True)
+
+                        search_results = _search_jobs_tool(
+                            query_text,
+                            user_id=user_id,
+                            limit=limit,
+                            use_profile=use_profile,
+                        )
+                        print(
+                            "[talentcentral] search_jobs completed",
                             {
-                                "output": tool_result,
-                                "call_id": output.call_id,
-                                "type": "function_call_output",
+                                "round": round_index + 1,
+                                "query": query_text,
+                                "limit": limit,
+                                "use_profile": use_profile,
+                                "results_count": len(search_results or []),
                             },
-                        ],
+                        )
+
+                        def _slugify(text: str) -> str:
+                            import re
+
+                            if text is None:
+                                return "unknown"
+                            value = str(text).strip().lower()
+                            if not value:
+                                return "unknown"
+                            value = re.sub(r"[^a-z0-9]+", "-", value)
+                            value = value.strip("-")
+                            return value or "unknown"
+
+                        def _fmt_dt(value) -> str:
+                            try:
+                                if hasattr(value, "strftime"):
+                                    return value.strftime("%Y-%m-%d")
+                            except Exception:  # noqa: BLE001
+                                pass
+                            return "n/a" if value in (None, "") else str(value)
+
+                        def _excerpt(value: str, limit_chars: int = 400) -> str:
+                            if not value:
+                                return ""
+                            text_value = " ".join(str(value).split())
+                            if len(text_value) <= limit_chars:
+                                return text_value
+                            return text_value[: limit_chars - 1].rstrip() + "…"
+
+                        def _fmt_salary(job: dict) -> str:
+                            smin = job.get("salary_min")
+                            smax = job.get("salary_max")
+                            stype = job.get("salary_type") or ""
+                            if smin is None and smax is None:
+                                return "Salary: not listed"
+                            if smin is not None and smax is not None:
+                                return f"Salary: {smin}–{smax} ({stype})" if stype else f"Salary: {smin}–{smax}"
+                            if smin is not None:
+                                return f"Salary: {smin}+ ({stype})" if stype else f"Salary: {smin}+"
+                            return f"Salary: up to {smax} ({stype})" if stype else f"Salary: up to {smax}"
+
+                        # Format results for the AI
+                        if search_results:
+                            shown = min(len(search_results), int(limit) if str(limit).isdigit() else 10)
+                            tool_result = (
+                                f"Found {len(search_results)} jobs"
+                                + (f" matching '{query_text}'" if query_text else "")
+                                + ":\n"
+                            )
+                            for i, job in enumerate(search_results[:shown], 1):
+                                job_id = job.get("id")
+                                title = job.get("title", "Untitled")
+                                location = job.get("location") or "Unknown location"
+                                city_name = str(location).split(",")[0].strip() if location else "unknown"
+                                job_type = job.get("job_type") or "Unknown type"
+                                exp = job.get("experience_level") or "Unspecified"
+                                is_apprentice = bool(job.get("is_apprenticeship"))
+                                app_method = job.get("application_method") or "internal"
+                                apprentice_text = "Apprenticeship: yes" if is_apprentice else "Apprenticeship: no"
+
+                                # TalentCentral canonical job link
+                                city_slug = _slugify(city_name)
+                                title_slug = _slugify(title)
+                                job_link = (
+                                    f"https://talentcentral.ca/job/{city_slug}/{job_id}/{title_slug}"
+                                    if job_id
+                                    else f"https://talentcentral.ca/job/{city_slug}/unknown/{title_slug}"
+                                )
+
+                                dist = job.get("distance_km")
+                                dist_text = f"{dist} km" if dist is not None else "n/a"
+                                created_at = _fmt_dt(job.get("created_at"))
+                                updated_at = _fmt_dt(job.get("updated_at"))
+                                expires_at = _fmt_dt(job.get("expires_at"))
+                                views = job.get("views_count")
+                                status = job.get("status") or "unknown"
+                                city_id = job.get("city_id")
+                                employer_id = job.get("employer_id")
+
+                                desc = _excerpt(job.get("description") or "", 550)
+                                reqs = _excerpt(job.get("requirements") or "", 450)
+                                salary_text = _fmt_salary(job)
+                                apply_text = f"Apply: {job_link}"
+                                apply_link = job_link
+                                jobs_for_api.append(
+                                    {
+                                        "id": job_id,
+                                        "title": title,
+                                        "link": job_link,
+                                        "apply_link": apply_link,
+                                        "application_method": app_method,
+                                        "location": location,
+                                        "distance_km": dist,
+                                        "job_type": job_type,
+                                        "experience_level": exp,
+                                        "status": status,
+                                        "views_count": views,
+                                        "salary_text": salary_text,
+                                        "salary_min": job.get("salary_min"),
+                                        "salary_max": job.get("salary_max"),
+                                        "salary_type": job.get("salary_type"),
+                                        "is_apprenticeship": is_apprentice,
+                                        "created_at": created_at,
+                                        "updated_at": updated_at,
+                                        "expires_at": expires_at,
+                                        "city_id": city_id,
+                                        "employer_id": employer_id,
+                                        "description_excerpt": desc,
+                                        "requirements_excerpt": reqs,
+                                    }
+                                )
+
+                                tool_result += (
+                                    f"{i}. {title}\n"
+                                    f"- Link: {job_link}\n"
+                                    f"- Job ID: {job_id} | Employer ID: {employer_id} | City ID: {city_id}\n"
+                                    f"- Location: {location} | Distance: {dist_text}\n"
+                                    f"- Type: {job_type} | Experience: {exp} | Status: {status} | Views: {views}\n"
+                                    f"- {salary_text} | {apprentice_text} | {apply_text}\n"
+                                    f"- Posted: {created_at} | Updated: {updated_at} | Expires: {expires_at}\n"
+                                    + (f"- Description: {desc}\n" if desc else "")
+                                    + (f"- Requirements: {reqs}\n" if reqs else "")
+                                    + "\n"
+                                )
+                        else:
+                            tool_result = (
+                                f"No jobs found matching '{query_text}'" if query_text else "No jobs found."
+                            )
+                    elif function_name == "get_resume_context":
+                        from functions import _get_resume_context_tool
+
+                        max_chars = function_args.get("max_chars", 1200)
+                        resume_context = _get_resume_context_tool(user_id=user_id, max_chars=max_chars)
+                        has_profile = bool(resume_context.get("has_profile"))
+                        has_resume = bool(resume_context.get("has_resume"))
+                        summary = str(resume_context.get("resume_summary") or "").strip()
+                        keywords = resume_context.get("top_skills_keywords") or []
+                        signals = resume_context.get("experience_signals") or []
+                        cache_hit = bool(resume_context.get("cache_hit"))
+                        print(
+                            "[talentcentral] get_resume_context completed",
+                            {
+                                "round": round_index + 1,
+                                "max_chars": max_chars,
+                                "has_profile": has_profile,
+                                "has_resume": has_resume,
+                                "cache_hit": cache_hit,
+                                "keyword_count": len(keywords),
+                                "signal_count": len(signals),
+                            },
+                        )
+                        if has_profile and has_resume:
+                            tool_result = (
+                                "Resume context found for the signed-in user.\n"
+                                f"- Cache hit: {'yes' if cache_hit else 'no'}\n"
+                                f"- Top keywords: {', '.join(keywords[:12]) if keywords else 'none'}\n"
+                                f"- Experience signals: {', '.join(signals[:6]) if signals else 'none'}\n"
+                                f"- Resume summary: {summary if summary else 'No summary available.'}"
+                            )
+                        elif has_profile:
+                            tool_result = (
+                                "Signed-in user profile found, but no usable resume context was available.\n"
+                                "Ask the user to upload/update resume only if they want to improve personalization."
+                            )
+                        else:
+                            tool_result = "No signed-in profile context was found for this request."
+
+                    follow_up_items.append(output)
+                    follow_up_items.append(
+                        {
+                            "output": tool_result,
+                            "call_id": output.call_id,
+                            "type": "function_call_output",
+                        }
                     )
-                    response = final_response
-                    called_function = True
+                    print(
+                        "[talentcentral] tool output prepared",
+                        {
+                            "round": round_index + 1,
+                            "function": function_name,
+                            "call_id": getattr(output, "call_id", None),
+                            "tool_output_chars": len(tool_result or ""),
+                            "tool_output_preview": _safe_preview(tool_result),
+                        },
+                    )
+
+                response = self.client.responses.create(
+                    model="gpt-4.1-mini",
+                    input=[
+                        {"role": "system", "content": full_system_prompt},
+                        {"role": "user", "content": text},
+                        *follow_up_items,
+                    ],
+                )
+                print(
+                    "[talentcentral] post-tool model response",
+                    {
+                        "round": round_index + 1,
+                        "response_id": getattr(response, "id", None),
+                        "output_items": len(getattr(response, "output", []) or []),
+                        "has_tool_call": _has_tool_call(response),
+                        "output_preview": _safe_preview(getattr(response, "output_text", "")),
+                    },
+                )
+            else:
+                print(
+                    "[talentcentral] tool loop reached max rounds",
+                    {
+                        "max_rounds": max_tool_round_trips,
+                        "response_id": getattr(response, "id", None),
+                        "has_tool_call": _has_tool_call(response),
+                    },
+                )
+
+        # Fallback: if the model replied with a "please wait / I will search" style message
+        # without actually calling search_jobs, execute one forced search and finalize.
+        if (
+            mode == "talentcentral"
+            and str(user_id).strip().lower() != "anonymous"
+            and not search_jobs_called
+            and (_is_job_search_intent(text) or _is_job_filter_followup(text))
+            and (
+                _is_deferred_job_search_reply(getattr(response, "output_text", ""))
+                or _claims_no_jobs(getattr(response, "output_text", ""))
+            )
+        ):
+            fallback_reason = "deferred_reply_without_search_jobs_call"
+            if _claims_no_jobs(getattr(response, "output_text", "")):
+                fallback_reason = "no_jobs_claim_without_search_jobs_call"
+            print(
+                "[talentcentral] forcing search_jobs fallback",
+                {
+                    "reason": fallback_reason,
+                    "response_id": getattr(response, "id", None),
+                    "user_prompt_preview": _safe_preview(text),
+                    "assistant_preview": _safe_preview(getattr(response, "output_text", "")),
+                },
+            )
+            from functions import _search_jobs_tool
+
+            fallback_limit = 10
+            fallback_use_profile = True
+            fallback_query_text = text
+            search_results = _search_jobs_tool(
+                fallback_query_text,
+                user_id=user_id,
+                limit=fallback_limit,
+                use_profile=fallback_use_profile,
+            )
+            search_jobs_called = True
+            called_function = True
+
+            def _slugify(text: str) -> str:
+                import re
+
+                if text is None:
+                    return "unknown"
+                value = str(text).strip().lower()
+                if not value:
+                    return "unknown"
+                value = re.sub(r"[^a-z0-9]+", "-", value)
+                value = value.strip("-")
+                return value or "unknown"
+
+            def _fmt_dt(value) -> str:
+                try:
+                    if hasattr(value, "strftime"):
+                        return value.strftime("%Y-%m-%d")
+                except Exception:  # noqa: BLE001
+                    pass
+                return "n/a" if value in (None, "") else str(value)
+
+            def _excerpt(value: str, limit_chars: int = 400) -> str:
+                if not value:
+                    return ""
+                text_value = " ".join(str(value).split())
+                if len(text_value) <= limit_chars:
+                    return text_value
+                return text_value[: limit_chars - 1].rstrip() + "…"
+
+            def _fmt_salary(job: dict) -> str:
+                smin = job.get("salary_min")
+                smax = job.get("salary_max")
+                stype = job.get("salary_type") or ""
+                if smin is None and smax is None:
+                    return "Salary: not listed"
+                if smin is not None and smax is not None:
+                    return f"Salary: {smin}–{smax} ({stype})" if stype else f"Salary: {smin}–{smax}"
+                if smin is not None:
+                    return f"Salary: {smin}+ ({stype})" if stype else f"Salary: {smin}+"
+                return f"Salary: up to {smax} ({stype})" if stype else f"Salary: up to {smax}"
+
+            if search_results:
+                shown = min(len(search_results), fallback_limit)
+                tool_result = f"Found {len(search_results)} jobs matching '{fallback_query_text}':\n"
+                for i, job in enumerate(search_results[:shown], 1):
+                    job_id = job.get("id")
+                    title = job.get("title", "Untitled")
+                    location = job.get("location") or "Unknown location"
+                    city_name = str(location).split(",")[0].strip() if location else "unknown"
+                    job_type = job.get("job_type") or "Unknown type"
+                    exp = job.get("experience_level") or "Unspecified"
+                    is_apprentice = bool(job.get("is_apprenticeship"))
+                    app_method = job.get("application_method") or "internal"
+                    apprentice_text = "Apprenticeship: yes" if is_apprentice else "Apprenticeship: no"
+                    city_slug = _slugify(city_name)
+                    title_slug = _slugify(title)
+                    job_link = (
+                        f"https://talentcentral.ca/job/{city_slug}/{job_id}/{title_slug}"
+                        if job_id
+                        else f"https://talentcentral.ca/job/{city_slug}/unknown/{title_slug}"
+                    )
+                    dist = job.get("distance_km")
+                    dist_text = f"{dist} km" if dist is not None else "n/a"
+                    created_at = _fmt_dt(job.get("created_at"))
+                    updated_at = _fmt_dt(job.get("updated_at"))
+                    expires_at = _fmt_dt(job.get("expires_at"))
+                    views = job.get("views_count")
+                    status = job.get("status") or "unknown"
+                    city_id = job.get("city_id")
+                    employer_id = job.get("employer_id")
+                    desc = _excerpt(job.get("description") or "", 550)
+                    reqs = _excerpt(job.get("requirements") or "", 450)
+                    salary_text = _fmt_salary(job)
+                    apply_link = job_link
+                    jobs_for_api.append(
+                        {
+                            "id": job_id,
+                            "title": title,
+                            "link": job_link,
+                            "apply_link": apply_link,
+                            "application_method": app_method,
+                            "location": location,
+                            "distance_km": dist,
+                            "job_type": job_type,
+                            "experience_level": exp,
+                            "status": status,
+                            "views_count": views,
+                            "salary_text": salary_text,
+                            "salary_min": job.get("salary_min"),
+                            "salary_max": job.get("salary_max"),
+                            "salary_type": job.get("salary_type"),
+                            "is_apprenticeship": is_apprentice,
+                            "created_at": created_at,
+                            "updated_at": updated_at,
+                            "expires_at": expires_at,
+                            "city_id": city_id,
+                            "employer_id": employer_id,
+                            "description_excerpt": desc,
+                            "requirements_excerpt": reqs,
+                        }
+                    )
+                    tool_result += (
+                        f"{i}. {title}\n"
+                        f"- Link: {job_link}\n"
+                        f"- Job ID: {job_id} | Employer ID: {employer_id} | City ID: {city_id}\n"
+                        f"- Location: {location} | Distance: {dist_text}\n"
+                        f"- Type: {job_type} | Experience: {exp} | Status: {status} | Views: {views}\n"
+                        f"- {salary_text} | {apprentice_text}\n"
+                        f"- Posted: {created_at} | Updated: {updated_at} | Expires: {expires_at}\n"
+                        + (f"- Description: {desc}\n" if desc else "")
+                        + (f"- Requirements: {reqs}\n" if reqs else "")
+                        + "\n"
+                    )
+            else:
+                tool_result = f"No jobs found matching '{fallback_query_text}'."
+
+            print(
+                "[talentcentral] forced search_jobs completed",
+                {
+                    "results_count": len(search_results or []),
+                    "tool_output_chars": len(tool_result or ""),
+                },
+            )
+            response = self.client.responses.create(
+                model="gpt-4.1-mini",
+                input=[
+                    {"role": "system", "content": full_system_prompt},
+                    {"role": "user", "content": text},
+                    {
+                        "role": "assistant",
+                        "content": (
+                            "Internal tool execution summary (forced fallback for deferred reply):\n"
+                            f"{tool_result}\n\n"
+                            "Now provide the user with concrete job matches from these results."
+                        ),
+                    },
+                ],
+            )
+            print(
+                "[talentcentral] post-forced-search response",
+                {
+                    "response_id": getattr(response, "id", None),
+                    "output_items": len(getattr(response, "output", []) or []),
+                    "has_tool_call": _has_tool_call(response),
+                    "output_preview": _safe_preview(getattr(response, "output_text", "")),
+                },
+            )
         
         if not _is_confident(response) and not called_function:
             print("response from mini model is not confident, calling gpt-5.1")
@@ -849,6 +1226,18 @@ class ConversationService:
         output_text = response.output_text
         now = datetime.utcnow()
         usage = response.usage.total_tokens if response.usage else None
+        if mode == "talentcentral":
+            print(
+                "[talentcentral] final assistant response",
+                {
+                    "response_id": getattr(response, "id", None),
+                    "called_function": called_function,
+                    "jobs_for_api_count": len(jobs_for_api),
+                    "output_chars": len(output_text or ""),
+                    "usage_total_tokens": usage,
+                    "output_preview": _safe_preview(output_text),
+                },
+            )
         self.messages.insert_one(
             {
                 "conversation_id": conv_id,

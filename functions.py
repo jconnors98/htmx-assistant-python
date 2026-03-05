@@ -544,9 +544,25 @@ def _load_resume_text_from_path(resume_path):
                 import subprocess
                 import tempfile
 
+                try:
+                    file_size = os.path.getsize(local_path)
+                except Exception as file_size_error:  # noqa: BLE001
+                    file_size = None
+                    print(f"[resume-doc] Could not read file size for {local_path}: {file_size_error}")
+                print(
+                    f"[resume-doc] Begin parsing DOC file: path={local_path} "
+                    f"exists={os.path.exists(local_path)} size_bytes={file_size}"
+                )
+
+                empty_reasons = []
                 for extractor in ("antiword", "catdoc"):
-                    if not shutil.which(extractor):
+                    extractor_path = shutil.which(extractor)
+                    if not extractor_path:
+                        reason = f"{extractor} not installed"
+                        empty_reasons.append(reason)
+                        print(f"[resume-doc] Skipping extractor: {reason}")
                         continue
+                    print(f"[resume-doc] Trying extractor={extractor} bin={extractor_path}")
                     try:
                         proc = subprocess.run(
                             [extractor, local_path],
@@ -554,17 +570,37 @@ def _load_resume_text_from_path(resume_path):
                             timeout=30,
                             check=False,
                         )
+                        stdout_bytes = proc.stdout or b""
+                        stderr_bytes = proc.stderr or b""
+                        print(
+                            f"[resume-doc] Extractor={extractor} return_code={proc.returncode} "
+                            f"stdout_bytes={len(stdout_bytes)} stderr_bytes={len(stderr_bytes)}"
+                        )
                         parsed_text = (proc.stdout or b"").decode("utf-8", errors="ignore").strip()
                         if parsed_text:
+                            preview = parsed_text[:200].replace("\n", "\\n")
+                            print(
+                                f"[resume-doc] Extractor={extractor} succeeded "
+                                f"text_chars={len(parsed_text)} preview={preview!r}"
+                            )
                             return parsed_text
+                        stderr_preview = stderr_bytes.decode("utf-8", errors="ignore").strip()[:200]
+                        reason = (
+                            f"{extractor} produced empty text "
+                            f"(return_code={proc.returncode}, stderr_preview={stderr_preview!r})"
+                        )
+                        empty_reasons.append(reason)
+                        print(f"[resume-doc] {reason}")
                     except Exception as e:  # noqa: BLE001
+                        empty_reasons.append(f"{extractor} raised exception: {e}")
                         print(f"{extractor} parse failed: {e}")
 
                 soffice_bin = shutil.which("soffice") or shutil.which("libreoffice")
                 if soffice_bin:
+                    print(f"[resume-doc] Trying LibreOffice conversion with bin={soffice_bin}")
                     try:
                         with tempfile.TemporaryDirectory() as out_dir:
-                            subprocess.run(
+                            convert_proc = subprocess.run(
                                 [
                                     soffice_bin,
                                     "--headless",
@@ -578,20 +614,51 @@ def _load_resume_text_from_path(resume_path):
                                 timeout=45,
                                 check=False,
                             )
+                            convert_stdout = (convert_proc.stdout or b"").decode("utf-8", errors="ignore").strip()
+                            convert_stderr = (convert_proc.stderr or b"").decode("utf-8", errors="ignore").strip()
+                            print(
+                                f"[resume-doc] LibreOffice conversion return_code={convert_proc.returncode} "
+                                f"stdout_preview={convert_stdout[:200]!r} stderr_preview={convert_stderr[:200]!r}"
+                            )
                             converted = os.path.join(
                                 out_dir,
                                 f"{os.path.splitext(os.path.basename(local_path))[0]}.txt",
+                            )
+                            print(
+                                f"[resume-doc] Converted TXT path={converted} "
+                                f"exists={os.path.exists(converted)}"
                             )
                             if os.path.exists(converted):
                                 with open(converted, "rb") as handle:
                                     raw = handle.read()
                                 parsed_text = raw.decode("utf-8", errors="ignore").strip()
                                 if parsed_text:
+                                    preview = parsed_text[:200].replace("\n", "\\n")
+                                    print(
+                                        f"[resume-doc] LibreOffice conversion succeeded "
+                                        f"text_chars={len(parsed_text)} preview={preview!r}"
+                                    )
                                     return parsed_text
+                                reason = "LibreOffice produced TXT file but extracted text is empty"
+                                empty_reasons.append(reason)
+                                print(f"[resume-doc] {reason}")
+                            else:
+                                reason = "LibreOffice did not produce converted TXT output file"
+                                empty_reasons.append(reason)
+                                print(f"[resume-doc] {reason}")
                     except Exception as e:  # noqa: BLE001
+                        empty_reasons.append(f"LibreOffice conversion exception: {e}")
                         print(f"soffice doc conversion failed: {e}")
+                else:
+                    reason = "Neither soffice nor libreoffice executable was found"
+                    empty_reasons.append(reason)
+                    print(f"[resume-doc] {reason}")
             except Exception as e:  # noqa: BLE001
                 print(f"Resume DOC parse failed: {e}")
+            if empty_reasons:
+                print(f"[resume-doc] Returning empty text for DOC. Reasons: {empty_reasons}")
+            else:
+                print("[resume-doc] Returning empty text for DOC with no detailed reasons captured.")
             return ""
 
         with open(local_path, "rb") as handle:
@@ -682,12 +749,14 @@ def _get_resume_context_tool(*, user_id, max_chars=1200):
     Return concise resume context for signed-in TalentCentral users.
     This is intentionally compact to keep tool tokens and latency low.
     """
+    print("getting resume context", user_id, max_chars)
     cnx = None
     cursor = None
     try:
         cnx, cursor = _connect_jobs_db()
         profile = _get_talentcentral_user_profile(cursor, user_id)
         resume_path = profile.get("resume_path")
+        print("resume path", resume_path)
         if not resume_path:
             return {
                 "has_resume": False,
@@ -703,6 +772,7 @@ def _get_resume_context_tool(*, user_id, max_chars=1200):
             user_id=profile.get("user_id_int") or str(user_id),
             resume_path=resume_path,
         )
+        print("resume payload", resume_payload)
         resume_text = resume_payload.get("resume_text") or ""
         summary = _build_resume_summary(resume_text, max_chars=max(300, min(int(max_chars), 2200)))
 
@@ -745,6 +815,7 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
     - If use_profile is True, loads the user's resume from users.resume_path and extracts keywords.
     - Uses a soft location preference (cities.id in users.location) to rank results.
     """
+    print("searching jobs", query_text, user_id, limit, use_profile)
 
     def _safe_int(value):
         try:
@@ -754,6 +825,23 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
 
     def _extract_keywords(text, *, max_terms=12):
         return _extract_resume_keywords(text, max_terms=max_terms)
+
+    def _is_vague_job_query(text):
+        if text is None:
+            return True
+        normalized = " ".join(str(text).strip().lower().split())
+        if not normalized:
+            return True
+        tokens = re.findall(r"[a-zA-Z][a-zA-Z0-9\-\+\.]{0,}", normalized)
+        if not tokens:
+            return True
+        generic_tokens = {
+            "find", "me", "a", "an", "the", "job", "jobs", "work", "role", "roles",
+            "help", "can", "could", "you", "please", "for", "to", "with", "my",
+            "resume", "based", "on", "looking", "look",
+        }
+        meaningful = [tok for tok in tokens if tok not in generic_tokens]
+        return len(meaningful) == 0
 
     def _resolve_city_ids_from_query(cursor_obj, text):
         """
@@ -867,6 +955,9 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
         except Exception:  # noqa: BLE001
             limit = 10
         limit = max(1, min(limit, 25))
+        requested_limit = limit
+        fetch_limit = max(limit * 4, limit)
+        fetch_limit = min(fetch_limit, 100)
 
         cnx, cursor = _connect_jobs_db()
 
@@ -894,6 +985,17 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
                 "has_resume_path": bool(resume_path),
             },
         )
+
+        if resume_path and not use_profile and _is_vague_job_query(query_text):
+            use_profile = True
+            print(
+                "jobs profile usage overridden",
+                {
+                    "reason": "vague_query_with_available_resume",
+                    "query_text": query_text,
+                    "use_profile": use_profile,
+                },
+            )
 
         # Build term list from query + resume keywords
         query_terms = []
@@ -997,8 +1099,11 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
                     deduped_terms = filtered_terms
 
         params = []
-        # We'll compute location_score using commute_radius in Python post-processing.
-        location_score_sql = "0 AS location_score"
+        # Strong pre-limit city preference to avoid losing local jobs before Python re-scoring.
+        if user_city_id is not None:
+            location_score_sql = f"(CASE WHEN jobs.location = {int(user_city_id)} THEN 2 ELSE 0 END) AS location_score"
+        else:
+            location_score_sql = "0 AS location_score"
 
         if deduped_terms:
             relevance_parts = []
@@ -1073,7 +1178,7 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
         print("where_sql", where_sql)
         print("params", params)
 
-        params.append(limit)
+        params.append(fetch_limit)
         cursor.execute(search_query, tuple(params))
         results = cursor.fetchall()
 
@@ -1166,6 +1271,9 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
                 results.sort(key=_sort_key, reverse=True)
             except Exception as e:  # noqa: BLE001
                 print(f"Location scoring failed: {e}")
+
+        # Apply caller-visible limit after ranking/post-processing.
+        results = results[:requested_limit]
 
         try:
             if cursor:
