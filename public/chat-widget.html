@@ -183,17 +183,35 @@
     }
     
     /* Format assistant messages */
+    .message.assistant .message-bubble h3,
+    .message.assistant .message-bubble h4 {
+      margin: 0 0 10px 0;
+      font-weight: 700;
+      line-height: 1.3;
+      color: #111827;
+    }
+
+    .message.assistant .message-bubble h3 {
+      font-size: 15px;
+    }
+
+    .message.assistant .message-bubble h4 {
+      font-size: 14px;
+    }
+
+    .message.assistant .message-bubble div + div,
     .message.assistant .message-bubble p {
-      margin: 0 0 24px 0;
+      margin: 0 0 12px 0;
     }
     
+    .message.assistant .message-bubble div:last-child,
     .message.assistant .message-bubble p:last-child {
       margin-bottom: 0;
     }
     
     .message.assistant .message-bubble ul,
     .message.assistant .message-bubble ol {
-      margin: 0 0 16px 0;
+      margin: 0 0 12px 0;
       padding-left: 20px;
     }
     
@@ -203,11 +221,87 @@
     }
     
     .message.assistant .message-bubble li {
-      margin-bottom: 16px;
+      margin-bottom: 6px;
     }
     
     .message.assistant .message-bubble li:last-child {
       margin-bottom: 0;
+    }
+
+    .message.assistant .message-bubble a {
+      color: var(--theme-color, #82002d);
+      text-decoration: underline;
+      text-underline-offset: 2px;
+      font-weight: 500;
+    }
+
+    .message.assistant .message-bubble a:hover {
+      color: var(--theme-color-hover, #6b0024);
+    }
+
+    .message.assistant .message-bubble .job-card,
+    .message.assistant .message-bubble .info-card {
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      padding: 10px 12px;
+      background: #f9fafb;
+      margin: 0 0 10px 0;
+    }
+
+    .message.assistant .message-bubble .job-card:last-child,
+    .message.assistant .message-bubble .info-card:last-child {
+      margin-bottom: 0;
+    }
+
+    .message.assistant .message-bubble .eyebrow {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--theme-color, #82002d);
+      margin-bottom: 6px;
+    }
+
+    .message.assistant .message-bubble .job-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin: 0 0 10px 0;
+    }
+
+    .message.assistant .message-bubble .chip {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      background: #ede9fe;
+      color: #5b21b6;
+      padding: 3px 8px;
+      font-size: 11px;
+      font-weight: 600;
+      line-height: 1.2;
+    }
+
+    .message.assistant .message-bubble .job-actions {
+      margin-top: 10px;
+    }
+
+    .message.assistant .message-bubble .job-actions a {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 10px;
+      background: var(--theme-color, #82002d);
+      color: white;
+      text-decoration: none;
+      padding: 8px 10px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .message.assistant .message-bubble .job-actions a:hover {
+      background: var(--theme-color-hover, #6b0024);
+      color: white;
     }
     
     .message.assistant .message-bubble code {
@@ -1311,13 +1405,84 @@
     }
     
     // Add message to chat
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text == null ? '' : String(text);
+      return div.innerHTML;
+    }
+
+    function sanitizeAssistantHtml(html) {
+      const template = document.createElement('template');
+      template.innerHTML = html == null ? '' : String(html);
+
+      const allowedTags = new Set([
+        'P', 'UL', 'OL', 'LI', 'STRONG', 'EM', 'A', 'BR', 'CODE', 'PRE',
+        'H3', 'H4', 'DIV', 'SPAN'
+      ]);
+      const allowedClasses = new Set(['job-card', 'info-card', 'eyebrow', 'job-meta', 'job-actions', 'chip']);
+      const walker = document.createTreeWalker(template.content, NodeFilter.SHOW_ELEMENT);
+      const nodesToProcess = [];
+
+      while (walker.nextNode()) {
+        nodesToProcess.push(walker.currentNode);
+      }
+
+      nodesToProcess.forEach((node) => {
+        if (!allowedTags.has(node.tagName)) {
+          const textNode = document.createTextNode(node.textContent || '');
+          node.replaceWith(textNode);
+          return;
+        }
+
+        Array.from(node.attributes).forEach((attr) => {
+          const name = attr.name.toLowerCase();
+          if (name.startsWith('on') || name === 'style') {
+            node.removeAttribute(attr.name);
+            return;
+          }
+
+          if (node.tagName === 'A' && name === 'href') {
+            const value = (attr.value || '').trim();
+            const isSafeHref = value.startsWith('http://') || value.startsWith('https://') || value.startsWith('mailto:');
+            if (!isSafeHref) {
+              node.removeAttribute('href');
+            } else {
+              node.setAttribute('target', '_blank');
+              node.setAttribute('rel', 'noopener noreferrer');
+            }
+            return;
+          }
+
+          if (name === 'class') {
+            const filtered = (attr.value || '')
+              .split(/\s+/)
+              .filter(cls => allowedClasses.has(cls));
+            if (filtered.length > 0) {
+              node.setAttribute('class', filtered.join(' '));
+            } else {
+              node.removeAttribute('class');
+            }
+            return;
+          }
+
+          if (!(node.tagName === 'A' && (name === 'target' || name === 'rel' || name === 'href'))) {
+            node.removeAttribute(attr.name);
+          }
+        });
+      });
+
+      return template.innerHTML.trim() || '<p>No response received.</p>';
+    }
+
     function addMessage(text, type) {
       const messageDiv = document.createElement('div');
       messageDiv.className = `message ${type}`;
       
       const bubble = document.createElement('div');
       bubble.className = 'message-bubble';
-      bubble.innerHTML = text;
+      bubble.innerHTML = type === 'assistant'
+        ? sanitizeAssistantHtml(text)
+        : escapeHtml(text);
       
       messageDiv.appendChild(bubble);
       chatMessages.appendChild(messageDiv);

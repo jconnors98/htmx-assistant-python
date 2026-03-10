@@ -1185,6 +1185,10 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
         # Post-process location scoring using commute radius (km).
         # Prefer cities table coordinates; fall back to geocoding only if needed.
         if results and (user_city_id is not None or user_location_text_legacy):
+            print("POST PROCESSING LOCATION SCORING**************", {
+                "user_city_id": user_city_id,
+                "commute_radius_km": commute_radius_km
+            })
             try:
                 # Default to schema default if unset/invalid.
                 if commute_radius_km is None or commute_radius_km <= 0:
