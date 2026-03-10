@@ -617,6 +617,25 @@ class ConversationService:
             ]
             return any(re.search(pattern, text_lc) for pattern in patterns)
 
+        def _is_job_filter_followup(message: str) -> bool:
+            if not message:
+                return False
+            text_lc = str(message).lower()
+            patterns = [
+                r"\bonly in\b",
+                r"\bnear\b",
+                r"\bnearby\b",
+                r"\bin\/near\b",
+                r"\bin vancouver\b",
+                r"\bwithin\b",
+                r"\bclose to\b",
+                r"\bdon't want to go\b",
+                r"\boutside of\b",
+                r"\blocation\b",
+                r"\bcity\b",
+            ]
+            return any(re.search(pattern, text_lc) for pattern in patterns)
+
         def _extract_search_jobs_fallback_args(output_text: str) -> Optional[Dict[str, Any]]:
             """
             Detect leaked search_jobs args JSON in assistant text.
@@ -1097,7 +1116,11 @@ class ConversationService:
         if (
             mode == "talentcentral"
             and not search_jobs_called
-            and (_is_job_search_intent(text) or fallback_args is not None)
+            and (
+                _is_job_search_intent(text)
+                or _is_job_filter_followup(text)
+                or fallback_args is not None
+            )
             and (
                 fallback_args is not None
                 or _looks_like_unfinished_job_search(getattr(response, "output_text", ""))
