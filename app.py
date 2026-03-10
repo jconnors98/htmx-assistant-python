@@ -2,6 +2,7 @@ import os
 import re
 import io
 import json
+import html
 import secrets
 import logging
 import hmac
@@ -141,6 +142,133 @@ def _vector_share_key_for_mode(mode_name: str) -> str:
     if not safe:
         safe = "default"
     return f"shared_with_{safe}"
+
+
+def _format_chat_html(gpt_text, *, mode="", jobs=None):
+    jobs = jobs or []
+    if mode == "talentcentral" and jobs and gpt_text:
+        duplicate_section_patterns = [
+            r"\n\s*Current jobs you can apply to now.*",
+            r"\n\s*Here are (?:some|a few|several) (?:current )?jobs.*",
+        ]
+        for pattern in duplicate_section_patterns:
+            gpt_text = re.sub(pattern, "", gpt_text, flags=re.IGNORECASE | re.DOTALL)
+
+        job_titles_lc = [
+            str(job.get("title") or "").strip().lower()
+            for job in jobs
+            if str(job.get("title") or "").strip()
+        ]
+        job_links_lc = [
+            str(job.get("apply_link") or job.get("link") or "").strip().lower()
+            for job in jobs
+            if str(job.get("apply_link") or job.get("link") or "").strip()
+        ]
+
+        filtered_lines = []
+        for raw_line in str(gpt_text).splitlines():
+            line = raw_line.strip()
+            line_lc = line.lower()
+            if not line:
+                filtered_lines.append(raw_line)
+                continue
+
+            mentions_rendered_job = any(title in line_lc for title in job_titles_lc) or any(
+                link in line_lc for link in job_links_lc
+            )
+            looks_like_job_listing_line = (
+                "talentcentral.ca/job/" in line_lc
+                or re.search(r"\$\d", line) is not None
+                or "apply:" in line_lc
+            )
+
+            if mentions_rendered_job or looks_like_job_listing_line:
+                continue
+
+            filtered_lines.append(raw_line)
+
+        gpt_text = "\n".join(filtered_lines)
+        gpt_text = re.sub(r"\n{3,}", "\n\n", gpt_text).strip()
+
+    html_reply = markdown(gpt_text or "")
+
+    def _linkify(match):
+        url = match.group(0)
+        return f'<a href="{url}" target="_blank" rel="noopener">{url}</a>'
+
+    html_reply = re.sub(r'(?<!href=")(https?://[^\s<]+)', _linkify, html_reply)
+
+    allowed_tags = list(bleach.sanitizer.ALLOWED_TAGS) + [
+        "img", "p", "h3", "h4", "br", "div", "span", "pre", "code"
+    ]
+    allowed_attributes = {
+        "a": ["href", "target", "rel"],
+        "img": ["src", "alt"],
+        "div": ["class"],
+        "span": ["class"],
+    }
+    allowed_classes = {
+        "job-card", "info-card", "eyebrow", "job-meta", "job-actions", "chip"
+    }
+
+    html_reply = bleach.clean(
+        html_reply,
+        tags=allowed_tags,
+        attributes=allowed_attributes,
+        strip=True,
+    )
+
+    if mode == "talentcentral" and jobs:
+        cards = []
+        for job in jobs[:8]:
+            title = html.escape(str(job.get("title") or "Untitled"))
+            location = html.escape(str(job.get("location") or "Unknown location"))
+            exp = html.escape(str(job.get("experience_level") or "Unspecified"))
+            job_type = html.escape(str(job.get("job_type") or "Unknown type"))
+            salary_text = html.escape(str(job.get("salary_text") or "Salary: not listed"))
+            link = str(job.get("apply_link") or job.get("link") or "").strip()
+            desc = html.escape(str(job.get("description_excerpt") or "").strip())
+            expires_at = html.escape(str(job.get("expires_at") or "n/a"))
+            apprenticeship = bool(job.get("is_apprenticeship"))
+
+            chips = [
+                f'<span class="chip">{location}</span>',
+                f'<span class="chip">{job_type}</span>',
+                f'<span class="chip">{exp}</span>',
+            ]
+            if apprenticeship:
+                chips.append('<span class="chip">Apprenticeship</span>')
+
+            action_html = ""
+            if link.startswith("http://") or link.startswith("https://"):
+                safe_link = html.escape(link, quote=True)
+                action_html = (
+                    f'<div class="job-actions"><a href="{safe_link}" target="_blank" '
+                    f'rel="noopener noreferrer">View job</a></div>'
+                )
+
+            description_html = f"<p>{desc}</p>" if desc else ""
+            expiry_html = ""
+            if expires_at and expires_at.lower() not in {"n/a", "none", "unknown", "null"}:
+                expiry_html = f"<p>Apply by: {expires_at}</p>"
+            cards.append(
+                '<div class="job-card">'
+                '<div class="eyebrow">TalentCentral Match</div>'
+                f"<h4>{title}</h4>"
+                f'<div class="job-meta">{" ".join(chips)}</div>'
+                f"<p><strong>{salary_text}</strong></p>"
+                f"{description_html}"
+                f"{expiry_html}"
+                f"{action_html}"
+                "</div>"
+            )
+
+        cards_html = "".join(cards)
+        if html_reply.strip():
+            return f'{cards_html}<div class="info-card">{html_reply}</div>'
+        return cards_html
+
+    return html_reply
 
 
 def _detach_vector_store_file_from_mode(
@@ -966,7 +1094,8 @@ def ask():
                 else:
                     user_id = "anonymous"
                     print("TalentCentral /ask auth_source=guest user_id=anonymous")
-        gpt_text, response_id, _usage = conversation_service.respond(
+        include_jobs = mode == "talentcentral"
+        respond_result = conversation_service.respond(
             conversation_id=conversation_id,
             user_id=user_id,
             text=message,
@@ -975,7 +1104,13 @@ def ask():
             previous_response_id=previous_response_id or None,
             file_ids=openai_file_ids,
             doc_intel_session_id=doc_intel_session_id or None,
+            include_jobs=include_jobs,
         )
+        if include_jobs:
+            gpt_text, response_id, _usage, jobs = respond_result
+        else:
+            gpt_text, response_id, _usage = respond_result
+            jobs = []
 
         # Log the AI response
         threading.Thread(
@@ -994,21 +1129,7 @@ def ask():
         if openai_file_ids:
             conversation_service.store_conversation_files(conversation_id, openai_file_ids)
 
-
-        html_reply = markdown(gpt_text)
-
-        # Auto-link plain URLs
-        def _linkify(match):
-            url = match.group(0)
-            return f'<a href="{url}" target="_blank" rel="noopener">{url}</a>'
-
-        html_reply = re.sub(r'(?<!href=")(https?://[^\s<]+)', _linkify, html_reply)
-
-        html_reply = bleach.clean(
-            html_reply,
-            tags=list(bleach.sanitizer.ALLOWED_TAGS) + ["img", "p", "h3", "br"],
-            attributes={"a": ["href", "target", "rel"], "img": ["src", "alt"]},
-        )
+        html_reply = _format_chat_html(gpt_text, mode=mode, jobs=jobs)
 
         html = (
             '<div class="chat-entry assistant">'

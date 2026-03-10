@@ -410,6 +410,11 @@ class ConversationService:
                 "run search_jobs again with those constraints before responding. "
                 "Do not claim there are no jobs for a requested constraint unless search_jobs was called "
                 "for that request. "
+                "Never narrate internal tool usage, never say you are calling a tool, and never output raw "
+                "tool arguments or JSON to the user. "
+                "When job matches are available, keep the prose brief and high-level. Do not restate job-by-job "
+                "details, links, salaries, or locations in the narrative if those details are already displayed "
+                "separately. Focus on a short intro and useful next steps. "
                 "You also have access to get_resume_context for resume-aware personalization. "
                 "For signed-in users, their existing resume in profile is already available to tools; "
                 "do not ask them to upload a resume unless they explicitly want to replace/update it. "
@@ -436,7 +441,14 @@ class ConversationService:
                 "Only use these websites in your web search; do not use any other sources from the internet. "
             )
         
-        gpt_system_prompt += "Do not repeat information. When using lists, use bullets versus numbering."
+        gpt_system_prompt += (
+            "Format final answers as clean HTML fragments suitable for a chat bubble. "
+            "Use only simple semantic tags when helpful: <p>, <ul>, <ol>, <li>, <strong>, "
+            "<em>, <a>, <br>, <code>, <pre>, <h3>, <h4>, and <div>. "
+            "Do not include <html>, <body>, <head>, inline scripts, inline styles, or markdown fences. "
+            "Keep the HTML concise and readable in a narrow mobile-sized chat window. "
+            "Do not repeat information. When using lists, prefer bullets over numbering."
+        )
 
         return gpt_system_prompt, tools, data_sources
 
@@ -482,6 +494,12 @@ class ConversationService:
         conversation_files = self.get_conversation_files(conversation_id)
         all_file_ids = list(set((file_ids or []) + conversation_files))  # Combine and deduplicate
 
+        def _model_defaults(model_name: str) -> Dict[str, Any]:
+            defaults: Dict[str, Any] = {"model": model_name}
+            if str(model_name).startswith("gpt-5"):
+                defaults["reasoning"] = {"effort": "low", "summary": "auto"}
+            return defaults
+
         def _call_model(model_name: str, system_prompt_override: Optional[str] = None):
             user_content: List[Dict] = [
                 {"type": "input_text", "text": text}
@@ -497,18 +515,20 @@ class ConversationService:
                     user_content.append({"type": "input_file", "file_id": fid})
 
             params = {
-                "model": model_name,
+                **_model_defaults(model_name),
                 "tools": tools,
-                "input": [
+            }
+
+            if previous_response_id and not system_prompt_override:
+                params["previous_response_id"] = previous_response_id
+                params["input"] = [
+                    {"role": "user", "content": user_content},
+                ]
+            else:
+                params["input"] = [
                     {"role": "system", "content": system_prompt_override or full_system_prompt},
                     {"role": "user", "content": user_content},
-                ],
-            }
-            if (
-                previous_response_id
-                and self.messages.count_documents({"conversation_id": conv_id}) <= 6
-            ):
-                params["previous_response_id"] = previous_response_id
+                ]
 
             if data_sources:
                 return self.client.responses.create(
@@ -545,6 +565,11 @@ class ConversationService:
                 if getattr(item, "type", None) == "function_call":
                     return True
             return False
+
+        def _has_message_output(res) -> bool:
+            if not hasattr(res, "output") or not res.output:
+                return False
+            return any(getattr(item, "type", None) == "message" for item in res.output)
 
         def _is_resume_intent(message: str) -> bool:
             if not message:
@@ -592,49 +617,51 @@ class ConversationService:
             ]
             return any(re.search(pattern, text_lc) for pattern in patterns)
 
-        def _is_job_filter_followup(message: str) -> bool:
-            if not message:
-                return False
-            text_lc = str(message).lower()
-            patterns = [
-                r"\boutside of\b",
-                r"\boutside\b",
-                r"\bwithin\b",
-                r"\bin vancouver\b",
-                r"\bnear me\b",
-                r"\bclose to\b",
-                r"\bonly\b.*\b(job|jobs|role|roles)\b",
-                r"\bdon't want to go\b",
-            ]
-            return any(re.search(pattern, text_lc) for pattern in patterns)
+        def _extract_search_jobs_fallback_args(output_text: str) -> Optional[Dict[str, Any]]:
+            """
+            Detect leaked search_jobs args JSON in assistant text.
+            Example:
+            'Searching more broadly ... {"query":"welder","limit":10,"use_profile":true}'
+            """
+            if not output_text:
+                return None
+            text_value = str(output_text)
+            start = text_value.find("{")
+            end = text_value.rfind("}")
+            if start == -1 or end == -1 or end <= start:
+                return None
+            raw_json = text_value[start : end + 1]
+            try:
+                import json
 
-        def _is_deferred_job_search_reply(output_text: str) -> bool:
+                parsed = json.loads(raw_json)
+            except Exception:  # noqa: BLE001
+                return None
+
+            if not isinstance(parsed, dict):
+                return None
+
+            keys = set(parsed.keys())
+            if {"query", "limit", "use_profile"}.issubset(keys):
+                return parsed
+
+            expected = {"query", "limit", "use_profile"}
+            overlap = len(expected.intersection(keys))
+            if overlap >= 2:
+                return parsed
+            return None
+
+        def _looks_like_unfinished_job_search(output_text: str) -> bool:
             if not output_text:
                 return False
             text_lc = str(output_text).lower()
-            patterns = [
-                r"\bplease give me a moment\b",
-                r"\bgive me a moment\b",
-                r"\bi(?:\s+will|'ll)\s+(?:search|look)\b",
-                r"\blet me\b.*\bsearch\b",
-                r"\bfind suitable job opportunities\b",
-                r"\bfind suitable jobs?\b",
-                r"\bsearch for.*jobs?\b",
-            ]
-            return any(re.search(pattern, text_lc) for pattern in patterns)
-
-        def _claims_no_jobs(output_text: str) -> bool:
-            if not output_text:
-                return False
-            text_lc = str(output_text).lower()
-            patterns = [
-                r"\bno (?:listed )?job openings\b",
-                r"\bno jobs found\b",
-                r"\bthere are no\b.*\bjobs?\b",
-                r"\bcurrently,? there are no\b.*\bjobs?\b",
-                r"\bno opportunities\b",
-            ]
-            return any(re.search(pattern, text_lc) for pattern in patterns)
+            return (
+                "search" in text_lc
+                or "job openings" in text_lc
+                or "jobs found" in text_lc
+                or "one moment" in text_lc
+                or "give me a moment" in text_lc
+            )
 
         def _safe_preview(value: Any, max_len: int = 160) -> str:
             try:
@@ -645,7 +672,7 @@ class ConversationService:
                 return text_value[: max_len - 3] + "..."
             return text_value
 
-        response = _call_model("gpt-4.1-mini")
+        response = _call_model("gpt-5-mini")
         if mode == "talentcentral":
             print(
                 "[talentcentral] initial model response",
@@ -678,7 +705,7 @@ class ConversationService:
                     "user_prompt_preview": _safe_preview(text),
                 },
             )
-            response = _call_model("gpt-4.1-mini", system_prompt_override=retry_prompt)
+            response = _call_model("gpt-5-mini", system_prompt_override=retry_prompt)
             print(
                 "[talentcentral] retry response",
                 {
@@ -723,15 +750,32 @@ class ConversationService:
                         tool_result = f"No permits found matching '{query_text}'"
                     
                     # Get the AI's final response with tool results
-                    final_response = self.client.responses.create(
-                        model="gpt-4.1-mini",
-                        input=[
-                            {"role": "system", "content": full_system_prompt},
-                            {"role": "user", "content": text},
-                            output,
-                            {"output": tool_result, "call_id": output.call_id, "type": "function_call_output"},
-                        ],
-                    )
+                    previous_id = getattr(response, "id", None)
+                    if previous_id:
+                        final_response = self.client.responses.create(
+                            **_model_defaults("gpt-5-mini"),
+                            previous_response_id=previous_id,
+                            input=[
+                                {
+                                    "output": tool_result,
+                                    "call_id": output.call_id,
+                                    "type": "function_call_output",
+                                }
+                            ],
+                        )
+                    else:
+                        final_response = self.client.responses.create(
+                            **_model_defaults("gpt-5-mini"),
+                            input=[
+                                {"role": "system", "content": full_system_prompt},
+                                {"role": "user", "content": text},
+                                {
+                                    "output": tool_result,
+                                    "call_id": output.call_id,
+                                    "type": "function_call_output",
+                                },
+                            ],
+                        )
                     response = final_response
                     called_function = True
 
@@ -749,11 +793,16 @@ class ConversationService:
                     )
                 ]
                 if not function_calls:
+                    has_message = _has_message_output(response)
                     print(
                         "[talentcentral] tool loop stopped",
                         {
                             "round": round_index + 1,
-                            "reason": "no_function_calls",
+                            "reason": (
+                                "no_function_calls_with_message"
+                                if has_message
+                                else "no_function_calls_without_message"
+                            ),
                             "response_id": getattr(response, "id", None),
                             "output_preview": _safe_preview(getattr(response, "output_text", "")),
                         },
@@ -761,7 +810,7 @@ class ConversationService:
                     break
 
                 called_function = True
-                follow_up_items = []
+                function_outputs = []
                 print(
                     "[talentcentral] tool round start",
                     {
@@ -988,8 +1037,7 @@ class ConversationService:
                         else:
                             tool_result = "No signed-in profile context was found for this request."
 
-                    follow_up_items.append(output)
-                    follow_up_items.append(
+                    function_outputs.append(
                         {
                             "output": tool_result,
                             "call_id": output.call_id,
@@ -1007,14 +1055,22 @@ class ConversationService:
                         },
                     )
 
-                response = self.client.responses.create(
-                    model="gpt-4.1-mini",
-                    input=[
-                        {"role": "system", "content": full_system_prompt},
-                        {"role": "user", "content": text},
-                        *follow_up_items,
-                    ],
-                )
+                previous_id = getattr(response, "id", None)
+                if previous_id:
+                    response = self.client.responses.create(
+                        **_model_defaults("gpt-5-mini"),
+                        previous_response_id=previous_id,
+                        input=function_outputs,
+                    )
+                else:
+                    response = self.client.responses.create(
+                        **_model_defaults("gpt-5-mini"),
+                        input=[
+                            {"role": "system", "content": full_system_prompt},
+                            {"role": "user", "content": text},
+                            *function_outputs,
+                        ],
+                    )
                 print(
                     "[talentcentral] post-tool model response",
                     {
@@ -1037,19 +1093,21 @@ class ConversationService:
 
         # Fallback: if the model replied with a "please wait / I will search" style message
         # without actually calling search_jobs, execute one forced search and finalize.
+        fallback_args = _extract_search_jobs_fallback_args(getattr(response, "output_text", ""))
         if (
             mode == "talentcentral"
-            and str(user_id).strip().lower() != "anonymous"
             and not search_jobs_called
-            and (_is_job_search_intent(text) or _is_job_filter_followup(text))
+            and (_is_job_search_intent(text) or fallback_args is not None)
             and (
-                _is_deferred_job_search_reply(getattr(response, "output_text", ""))
-                or _claims_no_jobs(getattr(response, "output_text", ""))
+                fallback_args is not None
+                or _looks_like_unfinished_job_search(getattr(response, "output_text", ""))
             )
         ):
-            fallback_reason = "deferred_reply_without_search_jobs_call"
-            if _claims_no_jobs(getattr(response, "output_text", "")):
-                fallback_reason = "no_jobs_claim_without_search_jobs_call"
+            fallback_reason = (
+                "leaked_search_jobs_args_without_completion"
+                if fallback_args is not None
+                else "unfinished_job_search_reply_without_search_jobs_call"
+            )
             print(
                 "[talentcentral] forcing search_jobs fallback",
                 {
@@ -1057,13 +1115,22 @@ class ConversationService:
                     "response_id": getattr(response, "id", None),
                     "user_prompt_preview": _safe_preview(text),
                     "assistant_preview": _safe_preview(getattr(response, "output_text", "")),
+                    "fallback_args": fallback_args,
                 },
             )
             from functions import _search_jobs_tool
 
-            fallback_limit = 10
-            fallback_use_profile = True
-            fallback_query_text = text
+            fallback_args = fallback_args or {}
+            fallback_query_text = str(fallback_args.get("query", "") or text)
+            fallback_limit = fallback_args.get("limit", 10)
+            fallback_use_profile = fallback_args.get("use_profile", True)
+            try:
+                fallback_limit = int(fallback_limit)
+            except Exception:  # noqa: BLE001
+                fallback_limit = 10
+            fallback_limit = max(1, min(fallback_limit, 25))
+            if not isinstance(fallback_use_profile, bool):
+                fallback_use_profile = True
             search_results = _search_jobs_tool(
                 fallback_query_text,
                 user_id=user_id,
@@ -1195,21 +1262,36 @@ class ConversationService:
                     "tool_output_chars": len(tool_result or ""),
                 },
             )
-            response = self.client.responses.create(
-                model="gpt-4.1-mini",
-                input=[
-                    {"role": "system", "content": full_system_prompt},
-                    {"role": "user", "content": text},
-                    {
-                        "role": "assistant",
-                        "content": (
-                            "Internal tool execution summary (forced fallback for deferred reply):\n"
-                            f"{tool_result}\n\n"
-                            "Now provide the user with concrete job matches from these results."
-                        ),
-                    },
-                ],
+            previous_id = getattr(response, "id", None)
+            fallback_instruction = (
+                "Use these verified TalentCentral job results to answer the user's last request. "
+                "Provide a concrete short list and next steps. Do not mention tools, internal calls, "
+                "JSON, or hidden reasoning.\n\n"
+                f"{tool_result}"
             )
+            if previous_id:
+                response = self.client.responses.create(
+                    **_model_defaults("gpt-5-mini"),
+                    previous_response_id=previous_id,
+                    input=[
+                        {
+                            "role": "user",
+                            "content": fallback_instruction,
+                        }
+                    ],
+                )
+            else:
+                response = self.client.responses.create(
+                    **_model_defaults("gpt-5-mini"),
+                    input=[
+                        {"role": "system", "content": full_system_prompt},
+                        {"role": "user", "content": text},
+                        {
+                            "role": "user",
+                            "content": fallback_instruction,
+                        },
+                    ],
+                )
             print(
                 "[talentcentral] post-forced-search response",
                 {
