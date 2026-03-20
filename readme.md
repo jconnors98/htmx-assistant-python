@@ -18,6 +18,7 @@ Behind the UI sits a Mongo-backed conversation log, S3-backed document store, Op
 - Admin APIs for authentication, analytics, document management, password reset (SES), and Cognito token refresh.
 - Scraping pipeline built around Playwright with automatic sitemap crawling, downloadable file discovery, verification passes, and job persistence in MongoDB.
 - Queue-friendly scraper client that can run locally or push work to AWS SQS and a remote worker pool (`services/scraper_worker`).
+- Document-intelligence pipeline that can queue ZIP/PDF/OCR/package work either locally or to an SQS-backed ECS worker (`services/doc_intel_worker`).
 - Compliance-friendly audit trails: prompt/response logs with IP hashing, scrape job records, and scrape verification stats.
 
 ## Architecture Overview
@@ -28,6 +29,9 @@ Browser/UI ──▶ Flask app (`app.py`)
                 ├─ ConversationService → OpenAI Responses + Vector Store
                 ├─ MongoDB (conversations, modes, jobs, scraped content)
                 ├─ AWS Cognito (auth) / SES (email) / S3 (document blobs)
+                ├─ DocumentIntelligenceService
+                │      ├─ local mode → background worker threads
+                │      └─ remote mode → SQS → doc_intel_worker
                 ├─ ScrapeScheduler → ScraperClient
                 │      ├─ local mode → ScrapingService (Playwright)
                 │      └─ remote mode → SQS → scraper_worker → ScrapingService
@@ -57,6 +61,14 @@ Browser/UI ──▶ Flask app (`app.py`)
 - `scrape_scheduler.py` (APScheduler) queues daily/weekly scrapes, triggers verification batches, resumes orphaned jobs, and enforces concurrent job limits.
 - `services/scraper_worker` hosts an SQS consumer that runs the same job processor out-of-process; the accompanying `Dockerfile` builds a slim worker image with Chromium Playwright dependencies.
 
+### Document intelligence subsystem
+
+- `document_intelligence_service.py` coordinates async ingestion, search, package builds, and summary/status reporting.
+- `document_intelligence_jobs.py` executes queued ingest/package jobs while keeping Mongo job records up to date.
+- `assistant_services/doc_intel_client.py` dispatches doc-intel jobs locally or remotely through SQS.
+- `document_intelligence_storage.py` abstracts durable local/S3 storage for uploaded sources and generated package artifacts.
+- `services/doc_intel_worker` hosts the standalone ECS-friendly worker.
+
 ### Admin, analytics, and utilities
 
 - `functions.py` houses shared helpers (JWKS fetch/cache, prompt logging, analytics aggregation, permit search tool hooks, color normalization, etc.).
@@ -82,6 +94,7 @@ Browser/UI ──▶ Flask app (`app.py`)
 | AWS SES | Password reset email delivery | `SES_SENDER_EMAIL`, AWS credentials |
 | AWS S3 | Persistent storage for uploaded files before vector ingestion | `S3_BUCKET`, AWS credentials |
 | AWS SQS | Remote scraper job queue (optional) | `SCRAPER_SQS_QUEUE_URL`, `SCRAPER_SQS_REGION`, `SCRAPER_SQS_MESSAGE_GROUP_ID` |
+| AWS SQS + ECS | Remote document-intelligence worker queue/compute (optional) | `DOC_INTEL_SQS_QUEUE_URL`, `DOC_INTEL_SQS_REGION`, `DOC_INTEL_EXECUTION_MODE` |
 | Playwright (Chromium) | Dynamic website rendering & scraping | Installed via `playwright install chromium` |
 | MySQL | Permits search tool used by `permitsca` mode | `MYSQL_HOST`, `MYSQL_DATABASE`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_CERT_PATH` |
 
@@ -95,10 +108,16 @@ Browser/UI ──▶ Flask app (`app.py`)
 ├── scrape_scheduler.py            # APScheduler wrapper
 ├── scraper_jobs.py                # Shared job processor
 ├── assistant_services/
-│   └── scraper_client.py          # Local vs remote dispatch layer
+│   ├── doc_intel_client.py        # Local vs remote doc-intel dispatch layer
+│   └── scraper_client.py          # Local vs remote scraper dispatch layer
+├── document_intelligence_service.py
+├── document_intelligence_jobs.py
+├── document_intelligence_storage.py
 ├── services/scraper_worker/       # SQS worker + Dockerfile
+├── services/doc_intel_worker/     # Doc-intel SQS worker + Dockerfile
 ├── public/                        # HTMX/chat/admin front-end assets
 ├── documentation/zip_extractor_feature.md
+├── docs/doc_intel_ecs_rollout.md
 ├── functions.py                   # Shared helpers/utilities
 ├── requirements.txt               # Flask app deps
 ├── Dockerfile                     # Worker container image
@@ -134,6 +153,9 @@ Create a `.env` (or export variables) with at least:
 | `API_TOKEN_HMAC_SECRET` | Shared HS256 secret used to verify API tokens and widget user JWTs (`uid`, `role`, `iat`, `exp`) |
 | `SCRAPER_EXECUTION_MODE` | `local` (default) or `remote`; controls whether scraping runs in-process or via SQS |
 | `SCRAPER_SQS_QUEUE_URL`, `SCRAPER_SQS_REGION`, `SCRAPER_SQS_MESSAGE_GROUP_ID` | Required when `SCRAPER_EXECUTION_MODE=remote` |
+| `DOC_INTEL_EXECUTION_MODE` | `local` (default) or `remote`; controls whether doc-intel runs in-process or through SQS/ECS |
+| `DOC_INTEL_STORAGE_BACKEND`, `DOC_INTEL_S3_BUCKET`, `DOC_INTEL_S3_PREFIX` | Storage backend and durable artifact location for doc-intel |
+| `DOC_INTEL_SQS_QUEUE_URL`, `DOC_INTEL_SQS_REGION`, `DOC_INTEL_SQS_MESSAGE_GROUP_ID` | Required when `DOC_INTEL_EXECUTION_MODE=remote` |
 | `SCRAPER_BROWSER_POOL_SIZE`, `SCRAPER_MAX_CONCURRENT_JOBS` | Tunables for crawler concurrency |
 | `MYSQL_*` vars | Host/database/user/password/cert for permits search |
 
@@ -178,6 +200,14 @@ Or build the provided container (includes Chromium dependencies) and deploy to E
 docker build -t scraper-worker -f Dockerfile .
 docker run --env-file ../.env scraper-worker
 ```
+
+### Running the doc-intel worker
+
+```bash
+python services/doc_intel_worker/worker.py
+```
+
+For ECS rollout guidance, see `docs/doc_intel_ecs_rollout.md`.
 
 ### Playwright environment check
 

@@ -15,6 +15,8 @@ from typing import Optional, Dict, Any, List
 from bson import ObjectId
 from decouple import config
 from docx import Document
+from pymongo import MongoClient
+from pymongo.server_api import ServerApi
 
 # Global variables that need to be imported from app.py
 _jwks = None
@@ -455,17 +457,14 @@ def _extract_resume_keywords(text, *, max_terms=12):
 
 
 def _connect_jobs_db():
-    import mysql.connector
-
-    cnx = mysql.connector.connect(
-        host=config("MYSQL_HOST"),
-        database=config("MYSQL_JOBS_DATABASE"),
-        port=3306,
-        user=config("MYSQL_USER"),
-        password=config("MYSQL_PASSWORD"),
-        collation="utf8mb4_unicode_ci",
-    )
-    return cnx, cnx.cursor(dictionary=True)
+    mongo_client = MongoClient(config("MONGO_URI"), server_api=ServerApi("1"))
+    db_name = config("MONGO_DB_TC", default="talentcentral")
+    mongo_db = mongo_client.get_database(db_name)
+    return mongo_client, {
+        "users": mongo_db.get_collection("users"),
+        "jobs": mongo_db.get_collection("jobs"),
+        "locations": mongo_db.get_collection("locations"),
+    }
 
 
 def _load_resume_text_from_path(resume_path):
@@ -673,10 +672,11 @@ def _load_resume_text_from_path(resume_path):
         return ""
 
 
-def _get_talentcentral_user_profile(cursor, user_id):
+def _get_talentcentral_user_profile(collections, user_id):
     user_id_int = _safe_int_value(user_id)
+    user_id_text = str(user_id).strip()
     profile = {
-        "effective_user_id": str(user_id),
+        "effective_user_id": user_id_text,
         "user_id_int": user_id_int,
         "user_profile_found": False,
         "user_city_id": None,
@@ -685,28 +685,36 @@ def _get_talentcentral_user_profile(cursor, user_id):
         "commute_radius_km": None,
         "resume_path": None,
     }
-    if user_id_int is None:
+    users_collection = collections["users"]
+
+    or_filters = []
+    if user_id_text:
+        or_filters.append({"_id": user_id_text})
+    if user_id_int is not None:
+        or_filters.append({"legacyUserId": user_id_int})
+
+    user_doc = users_collection.find_one({"$or": or_filters}) if or_filters else None
+    profile["user_profile_found"] = bool(user_doc)
+    if not user_doc:
         return profile
 
-    cursor.execute(
-        "SELECT id, location, commute_radius, resume_path FROM users WHERE id=%s LIMIT 1",
-        (user_id_int,),
-    )
-    user_row = cursor.fetchone() or {}
-    profile["user_profile_found"] = bool(user_row)
-    profile["user_city_id"] = _safe_int_value(user_row.get("location"))
+    jobseeker_profile = user_doc.get("jobseekerProfile") or {}
+    location_data = jobseeker_profile.get("location") or {}
+
+    profile["user_city_id"] = _safe_int_value(location_data.get("cityId"))
     if profile["user_city_id"] is None:
-        profile["user_location_text_legacy"] = str(user_row.get("location") or "").strip() or None
-    profile["user_location"] = (
-        profile["user_city_id"]
-        if profile["user_city_id"] is not None
-        else profile["user_location_text_legacy"]
-    )
+        city_name = str(location_data.get("city") or "").strip()
+        province_code = str(location_data.get("provinceCode") or "").strip()
+        if city_name and province_code:
+            profile["user_location_text_legacy"] = f"{city_name}, {province_code}"
+        elif city_name:
+            profile["user_location_text_legacy"] = city_name
+    profile["user_location"] = profile["user_city_id"] if profile["user_city_id"] is not None else profile["user_location_text_legacy"]
     try:
-        profile["commute_radius_km"] = int(user_row.get("commute_radius") or 0)
+        profile["commute_radius_km"] = int(jobseeker_profile.get("commuteRadius") or 0)
     except Exception:  # noqa: BLE001
         profile["commute_radius_km"] = None
-    profile["resume_path"] = (user_row.get("resume_path") or "").strip() or None
+    profile["resume_path"] = (jobseeker_profile.get("resumePath") or "").strip() or None
     return profile
 
 
@@ -750,11 +758,11 @@ def _get_resume_context_tool(*, user_id, max_chars=1200):
     This is intentionally compact to keep tool tokens and latency low.
     """
     print("getting resume context", user_id, max_chars)
-    cnx = None
-    cursor = None
+    mongo_client = None
+    collections = None
     try:
-        cnx, cursor = _connect_jobs_db()
-        profile = _get_talentcentral_user_profile(cursor, user_id)
+        mongo_client, collections = _connect_jobs_db()
+        profile = _get_talentcentral_user_profile(collections, user_id)
         resume_path = profile.get("resume_path")
         print("resume path", resume_path)
         if not resume_path:
@@ -799,21 +807,13 @@ def _get_resume_context_tool(*, user_id, max_chars=1200):
             "error": "resume_context_unavailable",
         }
     finally:
-        try:
-            if cursor:
-                cursor.close()
-        finally:
-            if cnx:
-                cnx.close()
+        if mongo_client:
+            mongo_client.close()
 
 
 def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
     """
-    Tool function to search for jobs in MySQL, optionally using the user's profile.
-
-    - Searches across title/description/requirements via LIKE patterns.
-    - If use_profile is True, loads the user's resume from users.resume_path and extracts keywords.
-    - Uses a soft location preference (cities.id in users.location) to rank results.
+    Tool function to search for jobs in MongoDB, optionally using the user's profile.
     """
     print("searching jobs", query_text, user_id, limit, use_profile)
 
@@ -843,61 +843,37 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
         meaningful = [tok for tok in tokens if tok not in generic_tokens]
         return len(meaningful) == 0
 
-    def _resolve_city_ids_from_query(cursor_obj, text):
-        """
-        Best-effort city resolver for location-based job queries.
-        Matches explicit city names embedded in natural-language input
-        (e.g., "find jobs in Surrey").
-        """
+    def _resolve_city_ids_from_query(locations_collection, text):
         if not text:
             return []
-
-        query_text_norm = " ".join(str(text).strip().split())
+        query_text_norm = " ".join(str(text).strip().split()).lower()
         if not query_text_norm:
-            return []
-
-        try:
-            cursor_obj.execute(
-                """
-                SELECT id
-                FROM cities
-                WHERE
-                    (LENGTH(name) >= 3 AND INSTR(LOWER(%s), LOWER(name)) > 0)
-                    OR LOWER(name) = LOWER(%s)
-                    OR LOWER(CONCAT(name, ', ', province_code)) = LOWER(%s)
-                ORDER BY LENGTH(name) DESC
-                LIMIT 10
-                """,
-                (query_text_norm, query_text_norm, query_text_norm),
-            )
-            rows = cursor_obj.fetchall() or []
-        except Exception as e:  # noqa: BLE001
-            print(f"City resolution from query failed: {e}")
             return []
 
         city_ids = []
         seen = set()
-        for row in rows:
-            city_id = _safe_int((row or {}).get("id"))
-            if city_id is None or city_id in seen:
-                continue
-            seen.add(city_id)
-            city_ids.append(city_id)
-        print(
-            "jobs city resolution",
-            {
-                "query": query_text_norm,
-                "matched_city_ids": city_ids,
-                "match_count": len(city_ids),
-            },
-        )
+        try:
+            rows = locations_collection.find({}, {"legacyCityId": 1, "city": 1, "provinceCode": 1})
+            for row in rows:
+                city_name = str((row or {}).get("city") or "").strip().lower()
+                province_code = str((row or {}).get("provinceCode") or "").strip().lower()
+                city_id = _safe_int((row or {}).get("legacyCityId"))
+                if not city_name or city_id is None:
+                    continue
+                if city_name in query_text_norm or f"{city_name}, {province_code}" == query_text_norm:
+                    if city_id not in seen:
+                        seen.add(city_id)
+                        city_ids.append(city_id)
+                    if len(city_ids) >= 10:
+                        break
+        except Exception as e:  # noqa: BLE001
+            print(f"City resolution from query failed: {e}")
+            return []
+
+        print("jobs city resolution", {"query": query_text_norm, "matched_city_ids": city_ids, "match_count": len(city_ids)})
         return city_ids
 
     def _geocode_place(place, _cache={}):  # noqa: B006
-        """
-        Geocode a 'City, ProvinceCode' style string to (lat, lon).
-        Uses OpenStreetMap Nominatim (best-effort) with a tiny in-process cache.
-        """
         if not place:
             return None
         key = str(place).strip().lower()
@@ -905,7 +881,6 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
             return None
         if key in _cache:
             return _cache[key]
-
         try:
             resp = requests.get(
                 "https://nominatim.openstreetmap.org/search",
@@ -931,7 +906,6 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
 
     def _haversine_km(a, b):
         import math
-
         (lat1, lon1) = a
         (lat2, lon2) = b
         r = 6371.0
@@ -939,39 +913,78 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
         phi2 = math.radians(lat2)
         dphi = math.radians(lat2 - lat1)
         dlambda = math.radians(lon2 - lon1)
-        x = (
-            math.sin(dphi / 2) ** 2
-            + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
-        )
+        x = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
         return 2 * r * math.atan2(math.sqrt(x), math.sqrt(1 - x))
 
-    print("searching jobs", query_text, user_id, limit, use_profile)
-    cnx = None
-    cursor = None
+    def _normalize_job(job_doc):
+        salary = job_doc.get("salary") or {}
+        location = job_doc.get("location") or {}
+        city_name = str(location.get("city") or "").strip()
+        province_code = str(location.get("provinceCode") or "").strip()
+        if city_name and province_code:
+            location_text = f"{city_name}, {province_code}"
+        else:
+            location_text = city_name or str(location.get("cityId") or "").strip()
+        return {
+            "id": str(job_doc.get("legacyJobId") or job_doc.get("_id") or ""),
+            "employer_id": job_doc.get("legacyEmployerId"),
+            "title": job_doc.get("title"),
+            "description": job_doc.get("description"),
+            "requirements": job_doc.get("requirements"),
+            "salary_min": salary.get("min"),
+            "salary_max": salary.get("max"),
+            "salary_type": salary.get("type"),
+            "job_type": job_doc.get("jobType"),
+            "experience_level": job_doc.get("experienceLevel"),
+            "is_apprenticeship": bool(job_doc.get("isApprenticeship")),
+            "pre_interview_enabled": bool(job_doc.get("preInterviewEnabled")),
+            "status": job_doc.get("status"),
+            "views_count": job_doc.get("viewsCount", 0),
+            "created_at": job_doc.get("createdAt"),
+            "updated_at": job_doc.get("updatedAt"),
+            "expires_at": job_doc.get("expiresAt"),
+            "city_id": _safe_int(location.get("cityId")),
+            "location": location_text,
+            "city_latitude": location.get("latitude"),
+            "city_longitude": location.get("longitude"),
+            "application_method": job_doc.get("applicationMethod"),
+            "external_url": job_doc.get("externalUrl"),
+            "location_score": 0,
+            "relevance_score": 0,
+        }
+
+    def _calc_relevance(job_doc, terms):
+        title_text = str(job_doc.get("title") or "").lower()
+        description_text = str(job_doc.get("description") or "").lower()
+        requirements_text = str(job_doc.get("requirements") or "").lower()
+        score = 0
+        for term in terms:
+            if term in title_text:
+                score += 3
+            if term in description_text:
+                score += 1
+            if term in requirements_text:
+                score += 1
+        return score
+
+    mongo_client = None
     try:
-        # Sane limit
         try:
             limit = int(limit)
         except Exception:  # noqa: BLE001
             limit = 10
         limit = max(1, min(limit, 25))
         requested_limit = limit
-        fetch_limit = max(limit * 4, limit)
-        fetch_limit = min(fetch_limit, 100)
+        fetch_limit = min(max(limit * 4, limit), 100)
 
-        cnx, cursor = _connect_jobs_db()
+        mongo_client, collections = _connect_jobs_db()
+        jobs_collection = collections["jobs"]
+        locations_collection = collections["locations"]
 
-        user_location = None
-        user_city_id = None
-        user_location_text_legacy = None
-        commute_radius_km = None
-        resume_path = None
-        profile = _get_talentcentral_user_profile(cursor, user_id)
+        profile = _get_talentcentral_user_profile(collections, user_id)
         user_id_int = profile.get("user_id_int")
-        user_row_found = bool(profile.get("user_profile_found"))
         user_city_id = profile.get("user_city_id")
         user_location_text_legacy = profile.get("user_location_text_legacy")
-        user_location = profile.get("user_location")
         commute_radius_km = profile.get("commute_radius_km")
         resume_path = profile.get("resume_path")
         print(
@@ -979,7 +992,7 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
             {
                 "effective_user_id": str(user_id),
                 "user_id_int": user_id_int,
-                "user_profile_found": user_row_found,
+                "user_profile_found": bool(profile.get("user_profile_found")),
                 "user_city_id": user_city_id,
                 "has_legacy_location_text": bool(user_location_text_legacy),
                 "has_resume_path": bool(resume_path),
@@ -988,21 +1001,12 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
 
         if resume_path and not use_profile and _is_vague_job_query(query_text):
             use_profile = True
-            print(
-                "jobs profile usage overridden",
-                {
-                    "reason": "vague_query_with_available_resume",
-                    "query_text": query_text,
-                    "use_profile": use_profile,
-                },
-            )
+            print("jobs profile usage overridden", {"reason": "vague_query_with_available_resume", "query_text": query_text, "use_profile": use_profile})
 
-        # Build term list from query + resume keywords
         query_terms = []
         profile_terms = []
         if query_text and str(query_text).strip():
             qt = str(query_text).strip()
-            # Include the full phrase (trimmed) plus token keywords
             if len(qt) <= 80:
                 query_terms.append(qt.lower())
             query_terms.extend(_extract_keywords(qt, max_terms=8))
@@ -1014,53 +1018,28 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
             )
             resume_text = resume_payload.get("resume_text") or ""
             profile_terms.extend(_extract_keywords(resume_text, max_terms=8))
-            print(
-                "jobs resume context",
-                {
-                    "has_resume_text": bool(resume_text.strip()),
-                    "cache_hit": bool(resume_payload.get("cache_hit")),
-                    "resume_path_present": bool(resume_path),
-                },
-            )
-        terms = query_terms + profile_terms
+            print("jobs resume context", {"has_resume_text": bool(resume_text.strip()), "cache_hit": bool(resume_payload.get("cache_hit")), "resume_path_present": bool(resume_path)})
 
-        # Dedupe while preserving order; keep query-derived terms first.
         seen = set()
         deduped_terms = []
-        for t in terms:
-            if not t:
-                continue
-            key = str(t).strip().lower()
-            if not key or key in seen:
-                continue
-            seen.add(key)
-            deduped_terms.append(key)
-
-        # Avoid massive SQL parameter lists
+        for t in (query_terms + profile_terms):
+            key = str(t or "").strip().lower()
+            if key and key not in seen:
+                seen.add(key)
+                deduped_terms.append(key)
         deduped_terms = deduped_terms[:8]
 
-        # Resolve explicit city mentions from the query before building text clauses.
-        query_city_ids = _resolve_city_ids_from_query(cursor, query_text)
+        query_city_ids = _resolve_city_ids_from_query(locations_collection, query_text)
         city_name_tokens = set()
         if query_city_ids:
-            placeholders = ",".join(["%s"] * len(query_city_ids))
-            cursor.execute(
-                f"SELECT name FROM cities WHERE id IN ({placeholders})",
-                tuple(query_city_ids),
-            )
-            city_rows = cursor.fetchall() or []
-            city_names_lc = []
+            city_rows = list(locations_collection.find({"legacyCityId": {"$in": query_city_ids}}, {"city": 1}))
             for row in city_rows:
-                city_name = str((row or {}).get("name") or "").strip().lower()
+                city_name = str((row or {}).get("city") or "").strip().lower()
                 if not city_name:
                     continue
-                city_names_lc.append(city_name)
                 city_name_tokens.add(city_name)
                 for part in re.findall(r"[a-zA-Z][a-zA-Z0-9\-\+\.]{1,}", city_name):
                     city_name_tokens.add(part.lower())
-
-            # If location is clearly detected from query text, don't force city words
-            # to also match title/description/requirements.
             if city_name_tokens and deduped_terms:
                 generic_job_terms = {
                     "find", "job", "jobs", "role", "roles", "position", "positions",
@@ -1070,137 +1049,72 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
                 filtered_terms = []
                 for term in deduped_terms:
                     t = str(term or "").strip().lower()
-                    if not t:
+                    if not t or t in city_name_tokens or t in generic_job_terms:
                         continue
-                    if t in city_name_tokens or t in generic_job_terms:
-                        continue
-
-                    # Drop phrase-style terms that are only location + generic words
-                    # (e.g., "find me jobs in surrey"), but keep role-specific phrases.
                     phrase_tokens = re.findall(r"[a-zA-Z][a-zA-Z0-9\-\+\.]{1,}", t)
-                    meaningful_tokens = [
-                        tok for tok in phrase_tokens
-                        if tok not in city_name_tokens and tok not in generic_job_terms
-                    ]
+                    meaningful_tokens = [tok for tok in phrase_tokens if tok not in city_name_tokens and tok not in generic_job_terms]
                     if not meaningful_tokens and any(city in t for city in city_name_tokens):
                         continue
-
                     filtered_terms.append(t)
-
                 if filtered_terms != deduped_terms:
-                    print(
-                        "jobs text terms adjusted for location query",
-                        {
-                            "original_terms": deduped_terms,
-                            "filtered_terms": filtered_terms,
-                            "city_tokens": sorted(city_name_tokens),
-                        },
-                    )
+                    print("jobs text terms adjusted for location query", {"original_terms": deduped_terms, "filtered_terms": filtered_terms, "city_tokens": sorted(city_name_tokens)})
                     deduped_terms = filtered_terms
 
-        params = []
-        # Strong pre-limit city preference to avoid losing local jobs before Python re-scoring.
-        if user_city_id is not None:
-            location_score_sql = f"(CASE WHEN jobs.location = {int(user_city_id)} THEN 2 ELSE 0 END) AS location_score"
-        else:
-            location_score_sql = "0 AS location_score"
-
-        if deduped_terms:
-            relevance_parts = []
-            for term in deduped_terms:
-                pattern = f"%{term}%"
-                relevance_parts.append("(CASE WHEN jobs.title LIKE %s THEN 3 ELSE 0 END)")
-                relevance_parts.append("(CASE WHEN jobs.description LIKE %s THEN 1 ELSE 0 END)")
-                relevance_parts.append("(CASE WHEN jobs.requirements LIKE %s THEN 1 ELSE 0 END)")
-                params.extend([pattern, pattern, pattern])
-            relevance_score_sql = f"({'+'.join(relevance_parts)}) AS relevance_score"
-        else:
-            relevance_score_sql = "0 AS relevance_score"
-
-        where_sql = "WHERE status='active' AND (expires_at IS NULL OR expires_at > NOW())"
+        now = datetime.utcnow()
+        where_filter = {
+            "status": "active",
+            "$or": [{"expiresAt": {"$exists": False}}, {"expiresAt": None}, {"expiresAt": {"$gt": now}}],
+        }
         if query_city_ids:
-            placeholders = ",".join(["%s"] * len(query_city_ids))
-            where_sql += f" AND jobs.location IN ({placeholders})"
-            params.extend(query_city_ids)
-            print(
-                "jobs location filter applied",
-                {"query_city_ids": query_city_ids, "query_city_count": len(query_city_ids)},
-            )
+            where_filter["location.cityId"] = {"$in": query_city_ids}
+            print("jobs location filter applied", {"query_city_ids": query_city_ids, "query_city_count": len(query_city_ids)})
         else:
             print("jobs location filter not applied", {"reason": "no_city_match_in_query"})
 
         if deduped_terms:
-            term_groups = []
-            term_params = []
+            text_or = []
             for term in deduped_terms:
-                pattern = f"%{term}%"
-                term_groups.append(
-                    "(jobs.title LIKE %s OR jobs.description LIKE %s OR jobs.requirements LIKE %s)"
-                )
-                term_params.extend([pattern, pattern, pattern])
-            where_sql += " AND (" + " OR ".join(term_groups) + ")"
-            params.extend(term_params)
+                safe_term = re.escape(term)
+                text_or.extend([
+                    {"title": {"$regex": safe_term, "$options": "i"}},
+                    {"description": {"$regex": safe_term, "$options": "i"}},
+                    {"requirements": {"$regex": safe_term, "$options": "i"}},
+                ])
+            where_filter["$and"] = [{"$or": text_or}]
 
-        search_query = f"""
-            SELECT
-                jobs.id,
-                jobs.employer_id,
-                jobs.title,
-                jobs.description,
-                jobs.requirements,
-                jobs.salary_min,
-                jobs.salary_max,
-                jobs.salary_type,
-                jobs.job_type,
-                jobs.experience_level,
-                jobs.is_apprenticeship,
-                jobs.pre_interview_enabled,
-                jobs.status,
-                jobs.views_count,
-                jobs.created_at,
-                jobs.updated_at,
-                jobs.expires_at,
-                jobs.location AS city_id,
-                COALESCE(CONCAT(cities.name, ', ', cities.province_code), CAST(jobs.location AS CHAR)) AS location,
-                cities.latitude AS city_latitude,
-                cities.longitude AS city_longitude,
-                jobs.application_method,
-                jobs.external_url,
-                {location_score_sql},
-                {relevance_score_sql}
-            FROM jobs
-            LEFT JOIN cities ON cities.id = jobs.location
-            {where_sql}
-            ORDER BY location_score DESC, relevance_score DESC, created_at DESC
-            LIMIT %s
-        """
+        print("where_filter", where_filter)
+        raw_jobs = list(jobs_collection.find(where_filter).limit(fetch_limit))
+        results = []
+        for job_doc in raw_jobs:
+            job = _normalize_job(job_doc)
+            if user_city_id is not None and _safe_int(job.get("city_id")) == user_city_id:
+                job["location_score"] = 2
+            job["relevance_score"] = _calc_relevance(job_doc, deduped_terms)
+            results.append(job)
 
-        print("where_sql", where_sql)
-        print("params", params)
+        results.sort(
+            key=lambda job: (
+                int(job.get("location_score") or 0),
+                float(job.get("relevance_score") or 0),
+                job.get("created_at").timestamp() if hasattr(job.get("created_at"), "timestamp") else 0,
+            ),
+            reverse=True,
+        )
 
-        params.append(fetch_limit)
-        cursor.execute(search_query, tuple(params))
-        results = cursor.fetchall()
-
-        # Post-process location scoring using commute radius (km).
-        # Prefer cities table coordinates; fall back to geocoding only if needed.
         if results and (user_city_id is not None or user_location_text_legacy):
             try:
-                # Default to schema default if unset/invalid.
                 if commute_radius_km is None or commute_radius_km <= 0:
                     commute_radius_km = 30
 
                 user_geo = None
                 user_location_display = None
-
                 if user_city_id is not None:
-                    cursor.execute(
-                        "SELECT name, province_code, latitude, longitude FROM cities WHERE id=%s LIMIT 1",
-                        (user_city_id,),
-                    )
-                    user_city = cursor.fetchone() or {}
-                    u_name = user_city.get("name")
-                    u_prov = user_city.get("province_code")
+                    user_city = locations_collection.find_one(
+                        {"legacyCityId": user_city_id},
+                        {"city": 1, "provinceCode": 1, "latitude": 1, "longitude": 1},
+                    ) or {}
+                    u_name = user_city.get("city")
+                    u_prov = user_city.get("provinceCode")
                     u_lat = user_city.get("latitude")
                     u_lon = user_city.get("longitude")
                     if u_name and u_prov:
@@ -1208,31 +1122,20 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
                     if u_lat is not None and u_lon is not None:
                         user_geo = (float(u_lat), float(u_lon))
 
-                # Final fallback: legacy string location geocoding (should disappear after migration).
                 if not user_geo and user_location_text_legacy:
                     user_geo = _geocode_place(user_location_text_legacy)
 
-                user_loc_lc = (
-                    str(user_location_display or user_location_text_legacy or "")
-                    .strip()
-                    .lower()
-                )
-
+                user_loc_lc = str(user_location_display or user_location_text_legacy or "").strip().lower()
                 for job in results:
                     job_loc = (job.get("location") or "").strip()
                     job["distance_km"] = None
-                    job["location_score"] = 0
-
                     if not job_loc:
                         continue
-
-                    # Exact same city => perfect match even if coords are missing.
                     job_city_id = _safe_int(job.get("city_id"))
                     if user_city_id is not None and job_city_id is not None and job_city_id == user_city_id:
                         job["distance_km"] = 0.0
-                        job["location_score"] = 1
+                        job["location_score"] = max(int(job.get("location_score") or 0), 1)
                         continue
-
                     if user_geo:
                         lat = job.get("city_latitude")
                         lon = job.get("city_longitude")
@@ -1242,57 +1145,35 @@ def _search_jobs_tool(query_text, *, user_id, limit=10, use_profile=True):
                                 job_geo = (float(lat), float(lon))
                             except Exception:  # noqa: BLE001
                                 job_geo = None
-
-                        # Fallback: only geocode if we don't have city coordinates
                         if not job_geo:
                             job_geo = _geocode_place(job_loc)
-
                         if job_geo:
                             dist = _haversine_km(user_geo, job_geo)
                             job["distance_km"] = round(dist, 1)
                             if dist <= commute_radius_km:
-                                job["location_score"] = 1
+                                job["location_score"] = max(int(job.get("location_score") or 0), 1)
                                 continue
-
-                    # Fallback: simple city/province substring check
                     if user_loc_lc and user_loc_lc in job_loc.lower():
-                        job["location_score"] = 1
+                        job["location_score"] = max(int(job.get("location_score") or 0), 1)
 
-                # Re-sort by location_score then relevance_score then created_at.
-                def _sort_key(job):
-                    created = job.get("created_at")
-                    created_val = created.timestamp() if hasattr(created, "timestamp") else 0
-                    return (
+                results.sort(
+                    key=lambda job: (
                         int(job.get("location_score") or 0),
                         float(job.get("relevance_score") or 0),
-                        created_val,
-                    )
-
-                results.sort(key=_sort_key, reverse=True)
+                        job.get("created_at").timestamp() if hasattr(job.get("created_at"), "timestamp") else 0,
+                    ),
+                    reverse=True,
+                )
             except Exception as e:  # noqa: BLE001
                 print(f"Location scoring failed: {e}")
 
-        # Apply caller-visible limit after ranking/post-processing.
-        results = results[:requested_limit]
-
-        try:
-            if cursor:
-                cursor.close()
-        finally:
-            if cnx:
-                cnx.close()
-
-        return results
-
+        return results[:requested_limit]
     except Exception as e:  # noqa: BLE001
         print(f"Error searching jobs: {e}")
-        try:
-            if cursor:
-                cursor.close()
-        finally:
-            if cnx:
-                cnx.close()
         return []
+    finally:
+        if mongo_client:
+            mongo_client.close()
 
 
 def _get_analytics_data_for_query(pipeline, match, prompt_logs_collection, modes_collection):

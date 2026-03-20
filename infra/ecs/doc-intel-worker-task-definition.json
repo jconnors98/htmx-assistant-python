@@ -1,0 +1,38 @@
+{
+  "family": "doc-intel-worker",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "2048",
+  "memory": "8192",
+  "executionRoleArn": "arn:aws:iam::123456789012:role/doc-intel-worker-execution-role",
+  "taskRoleArn": "arn:aws:iam::123456789012:role/doc-intel-worker-task-role",
+  "containerDefinitions": [
+    {
+      "name": "doc-intel-worker",
+      "image": "DOC_INTEL_IMAGE_URI",
+      "essential": true,
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/doc-intel-worker",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      },
+      "environment": [
+        { "name": "DOC_INTEL_STORAGE_BACKEND", "value": "s3" },
+        { "name": "DOC_INTEL_S3_BUCKET", "value": "your-doc-intel-bucket" },
+        { "name": "DOC_INTEL_S3_PREFIX", "value": "doc_intel" },
+        { "name": "DOC_INTEL_SQS_QUEUE_URL", "value": "https://sqs.us-east-1.amazonaws.com/123456789012/doc-intel-jobs.fifo" },
+        { "name": "DOC_INTEL_SQS_REGION", "value": "us-east-1" },
+        { "name": "DOC_INTEL_WORKER_ENVIRONMENT", "value": "prod" },
+        { "name": "DOC_INTEL_STORAGE_DIR", "value": "/tmp/doc_intel" },
+        { "name": "MONGO_DB", "value": "bcca-assistant" }
+      ],
+      "secrets": [
+        { "name": "OPENAI_API_KEY", "valueFrom": "arn:aws:secretsmanager:us-east-1:123456789012:secret:doc-intel/openai" },
+        { "name": "MONGO_URI", "valueFrom": "arn:aws:secretsmanager:us-east-1:123456789012:secret:doc-intel/mongo-uri" }
+      ]
+    }
+  ]
+}

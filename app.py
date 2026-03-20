@@ -6,8 +6,7 @@ import secrets
 import logging
 import hmac
 from functools import wraps
-from flask import Flask, Blueprint, request, send_from_directory, Response, url_for, send_file
-from werkzeug.datastructures import FileStorage
+from flask import Flask, Blueprint, request, send_from_directory, Response, redirect, url_for, send_file
 from markdown import markdown
 import bleach
 from decouple import config
@@ -26,8 +25,11 @@ import threading
 from conversation_service import ConversationService
 from scraping_service import ScrapingService
 from scrape_scheduler import ScrapeScheduler
-from assistant_services import ScraperClient
+from assistant_services import DocumentIntelligenceClient, ScraperClient
+from document_intelligence_jobs import DocumentIntelligenceJobProcessor
+from document_intelligence_storage import DocumentIntelligenceStorage
 from packages.common.scraper_contracts import ScraperQueueConfig
+from packages.common.doc_intel_contracts import DocumentIntelligenceQueueConfig
 from document_intelligence_service import DocumentIntelligenceService
 from tools import DocumentToolbox
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -64,6 +66,8 @@ reset_tokens_collection = db.get_collection("password_reset_tokens")
 scraped_content_collection = db.get_collection("scraped_content")
 scraping_jobs_collection = db.get_collection("scraping_jobs")
 document_projects_collection = db.get_collection("document_projects")
+document_project_documents_collection = db.get_collection("document_project_documents")
+document_intel_jobs_collection = db.get_collection("document_intel_jobs")
 blocked_pages_collection = db.get_collection("blocked_pages")
 api_tokens_collection = db.get_collection("api_tokens")
 tequila_draw_entries_collection = db.get_collection("tequila_draw_entries")
@@ -109,6 +113,28 @@ DOC_INTEL_ALLOWED_EXTENSIONS = set(
     if ext.strip()
 )
 DOC_INTEL_EXPIRY_MINUTES = int(config("DOC_INTEL_EXPIRY_MINUTES", default="30"))
+DOC_INTEL_STORAGE_BACKEND = config("DOC_INTEL_STORAGE_BACKEND", default="local").lower()
+DOC_INTEL_S3_BUCKET = config("DOC_INTEL_S3_BUCKET", default=None)
+DOC_INTEL_S3_PREFIX = config("DOC_INTEL_S3_PREFIX", default="doc_intel")
+DOC_INTEL_SIGNED_URL_SECONDS = int(config("DOC_INTEL_SIGNED_URL_SECONDS", default="3600"))
+DOC_INTEL_EXECUTION_MODE = config("DOC_INTEL_EXECUTION_MODE", default="local").lower()
+DOC_INTEL_WORKER_ENVIRONMENT = config(
+    "DOC_INTEL_WORKER_ENVIRONMENT",
+    default="dev" if localDevMode == "true" else "prod",
+)
+DOC_INTEL_SQS_QUEUE_URL = config("DOC_INTEL_SQS_QUEUE_URL", default=None)
+DOC_INTEL_SQS_REGION = config("DOC_INTEL_SQS_REGION", default=COGNITO_REGION or "us-east-1")
+DOC_INTEL_SQS_MESSAGE_GROUP_ID = config("DOC_INTEL_SQS_MESSAGE_GROUP_ID", default=None)
+DOC_INTEL_MAX_ZIP_DEPTH = int(config("DOC_INTEL_MAX_ZIP_DEPTH", default="3"))
+DOC_INTEL_MAX_ZIP_MEMBERS = int(config("DOC_INTEL_MAX_ZIP_MEMBERS", default="500"))
+DOC_INTEL_MAX_ZIP_MEMBER_MB = int(config("DOC_INTEL_MAX_ZIP_MEMBER_MB", default="200"))
+DOC_INTEL_MAX_ZIP_TOTAL_MB = int(config("DOC_INTEL_MAX_ZIP_TOTAL_MB", default="2048"))
+DOC_INTEL_MAX_ZIP_COMPRESSION_RATIO = float(config("DOC_INTEL_MAX_ZIP_COMPRESSION_RATIO", default="150"))
+DOC_INTEL_MAX_TEXT_FILE_MB = int(config("DOC_INTEL_MAX_TEXT_FILE_MB", default="20"))
+DOC_INTEL_MAX_TEXT_CHARS = int(config("DOC_INTEL_MAX_TEXT_CHARS", default="180000"))
+DOC_INTEL_MAX_TEXT_EXCERPT_CHARS = int(config("DOC_INTEL_MAX_TEXT_EXCERPT_CHARS", default="24000"))
+DOC_INTEL_MAX_EMBED_CHARS = int(config("DOC_INTEL_MAX_EMBED_CHARS", default="24000"))
+DOC_INTEL_MAX_IMAGE_PIXELS = int(config("DOC_INTEL_MAX_IMAGE_PIXELS", default="35000000"))
 
 def _log_access_denied(action: str, *, mode_id=None, content_id=None, mode_owner_id=None, content_owner_id=None, extra=None):
     """Log consistent auth debug info to help diagnose 403s (especially mixed user_id types in Mongo)."""
@@ -252,13 +278,73 @@ document_toolbox = DocumentToolbox(
     storage_dir=DOC_INTEL_STORAGE_DIR,
 )
 
-doc_intelligence_service = DocumentIntelligenceService(
-    modes_collection=modes_collection,
-    projects_collection=document_projects_collection,
-    storage_dir=DOC_INTEL_STORAGE_DIR,
-    toolbox=document_toolbox,
-    expiry_minutes=DOC_INTEL_EXPIRY_MINUTES,
-) if DOC_INTEL_ENABLED else None
+doc_intel_storage = None
+doc_intelligence_service = None
+doc_intel_client = None
+
+if DOC_INTEL_ENABLED:
+    doc_intel_storage = DocumentIntelligenceStorage(
+        backend=DOC_INTEL_STORAGE_BACKEND,
+        local_storage_dir=DOC_INTEL_STORAGE_DIR,
+        s3_client=s3 if DOC_INTEL_STORAGE_BACKEND == "s3" else None,
+        bucket=(DOC_INTEL_S3_BUCKET or S3_BUCKET) if DOC_INTEL_STORAGE_BACKEND == "s3" else None,
+        key_prefix=DOC_INTEL_S3_PREFIX,
+        presign_expiry_seconds=DOC_INTEL_SIGNED_URL_SECONDS,
+    )
+    doc_intelligence_service = DocumentIntelligenceService(
+        modes_collection=modes_collection,
+        projects_collection=document_projects_collection,
+        documents_collection=document_project_documents_collection,
+        jobs_collection=document_intel_jobs_collection,
+        storage_dir=DOC_INTEL_STORAGE_DIR,
+        toolbox=document_toolbox,
+        storage=doc_intel_storage,
+        expiry_minutes=DOC_INTEL_EXPIRY_MINUTES,
+        max_zip_depth=DOC_INTEL_MAX_ZIP_DEPTH,
+        max_zip_members=DOC_INTEL_MAX_ZIP_MEMBERS,
+        max_zip_member_size_bytes=DOC_INTEL_MAX_ZIP_MEMBER_MB * 1024 * 1024,
+        max_zip_total_size_bytes=DOC_INTEL_MAX_ZIP_TOTAL_MB * 1024 * 1024,
+        max_zip_compression_ratio=DOC_INTEL_MAX_ZIP_COMPRESSION_RATIO,
+        max_text_file_bytes=DOC_INTEL_MAX_TEXT_FILE_MB * 1024 * 1024,
+        max_text_chars=DOC_INTEL_MAX_TEXT_CHARS,
+        max_excerpt_chars=DOC_INTEL_MAX_TEXT_EXCERPT_CHARS,
+        max_embed_chars=DOC_INTEL_MAX_EMBED_CHARS,
+        max_image_pixels=DOC_INTEL_MAX_IMAGE_PIXELS,
+    )
+    if DOC_INTEL_EXECUTION_MODE == "remote":
+        if not DOC_INTEL_SQS_QUEUE_URL:
+            raise RuntimeError("DOC_INTEL_SQS_QUEUE_URL is required when DOC_INTEL_EXECUTION_MODE='remote'")
+        doc_intel_sqs = boto3.client(
+            "sqs",
+            aws_access_key_id=AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+            region_name=DOC_INTEL_SQS_REGION,
+        )
+        doc_intel_queue_config = DocumentIntelligenceQueueConfig(
+            queue_url=DOC_INTEL_SQS_QUEUE_URL,
+            region_name=DOC_INTEL_SQS_REGION,
+            message_group_id=DOC_INTEL_SQS_MESSAGE_GROUP_ID or None,
+        )
+        doc_intel_client = DocumentIntelligenceClient(
+            mode="remote",
+            jobs_collection=document_intel_jobs_collection,
+            environment=DOC_INTEL_WORKER_ENVIRONMENT,
+            sqs_client=doc_intel_sqs,
+            queue_config=doc_intel_queue_config,
+        )
+    else:
+        doc_intel_processor = DocumentIntelligenceJobProcessor(
+            service=doc_intelligence_service,
+            jobs_collection=document_intel_jobs_collection,
+            environment=DOC_INTEL_WORKER_ENVIRONMENT,
+        )
+        doc_intel_client = DocumentIntelligenceClient(
+            mode="local",
+            jobs_collection=document_intel_jobs_collection,
+            environment=DOC_INTEL_WORKER_ENVIRONMENT,
+            job_processor=doc_intel_processor,
+        )
+    doc_intelligence_service.doc_client = doc_intel_client
 
 conversation_service = ConversationService(
     db,
@@ -593,43 +679,36 @@ def _resolve_api_token_user_id():
 
 def _list_talentcentral_test_users(limit=200):
     """
-    Return a best-effort list of TalentCentral users from MySQL for local testing.
+    Return a best-effort list of TalentCentral users from MongoDB for local testing.
     """
-    cnx = None
-    cursor = None
     try:
-        import mysql.connector
-
         safe_limit = max(1, min(int(limit), 500))
-        cnx = mysql.connector.connect(
-            host=config("MYSQL_HOST"),
-            database=config("MYSQL_JOBS_DATABASE"),
-            port=3306,
-            user=config("MYSQL_USER"),
-            password=config("MYSQL_PASSWORD"),
-            collation="utf8mb4_unicode_ci",
-        )
-        cursor = cnx.cursor(dictionary=True)
-        cursor.execute(
-            "SELECT id FROM users ORDER BY id DESC LIMIT %s",
-            (safe_limit,),
-        )
-        rows = cursor.fetchall() or []
-        return [
-            {"id": str(row.get("id")), "label": f"User #{row.get('id')}"}
-            for row in rows
-            if row.get("id") is not None
-        ]
+        tc_db_name = config("MONGO_DB_TC", default="talentcentral")
+        tc_users_collection = mongo_client.get_database(tc_db_name).get_collection("users")
+        users_cursor = tc_users_collection.find(
+            {},
+            {"_id": 1, "legacyUserId": 1},
+        ).sort(
+            [("legacyUserId", -1), ("createdAt", -1)]
+        ).limit(safe_limit)
+        rows = list(users_cursor)
+        users = []
+        for row in rows:
+            display_id = row.get("legacyUserId")
+            if display_id is None:
+                display_id = str(row.get("_id") or "").strip()
+            if not display_id:
+                continue
+            users.append(
+                {
+                    "id": str(display_id),
+                    "label": f"User #{display_id}",
+                }
+            )
+        return users
     except Exception as e:  # noqa: BLE001
         print(f"Failed to list TalentCentral test users: {e}")
         return []
-    finally:
-        try:
-            if cursor:
-                cursor.close()
-        finally:
-            if cnx:
-                cnx.close()
 
 
 def _generate_password_reset_email_html(reset_link, token_expiry_minutes=15):
@@ -846,7 +925,6 @@ def upload_files():
     if mode_name:
         mode_doc = modes_collection.find_one({"name": mode_name})
     file_ids = []
-    doc_intel_candidates = []
     doc_intel_active = (
         doc_intelligence_service
         and mode_doc
@@ -855,39 +933,40 @@ def upload_files():
         and doc_intel_session_id
     )
 
+    if doc_intel_active:
+        validation_error = _doc_intel_validate_files(files)
+        if validation_error:
+            return validation_error
+
     for file in files:
         if file and file.filename:
             logger.info(f"Processing upload: {file.filename}")
-            data = file.read()
-            file_stream = io.BytesIO(data)
             # Only upload to OpenAI when not in doc-intel-only flow, or when explicitly requested.
             if (not doc_intel_active) or upload_to_openai_flag:
                 uploaded = client.files.create(
-                    file=(file.filename, file_stream), purpose="assistants"
+                    file=(file.filename, file.stream), purpose="assistants"
                 )
                 file_ids.append(uploaded.id)
                 logger.info(f"Uploaded to OpenAI: {uploaded.id}")
+                seek = getattr(file.stream, "seek", None)
+                if callable(seek):
+                    seek(0)
             else:
                 logger.info("Skipped OpenAI upload (doc-intel flow)")
-            
-            if doc_intel_active:
-                doc_intel_candidates.append(
-                    FileStorage(
-                        stream=io.BytesIO(data),
-                        filename=file.filename,
-                        content_type=getattr(file, "content_type", None),
-                    )
-                )
 
-    if doc_intel_candidates and mode_doc and doc_intel_session_id:
+    doc_intel_result = None
+    if doc_intel_active and mode_doc and doc_intel_session_id and files:
         try:
-            logger.info(f"Handoff to DocIntel: {len(doc_intel_candidates)} candidates")
-            doc_intelligence_service.ingest_files(mode_doc, doc_intel_session_id, doc_intel_candidates)
+            logger.info(f"Handoff to DocIntel: {len(files)} candidates")
+            doc_intel_result = doc_intelligence_service.ingest_files(mode_doc, doc_intel_session_id, files)
         except Exception as exc:  # noqa: BLE001
             logger.error(f"Doc intelligence ingest failed: {exc}", exc_info=True)
             print(f"Doc intelligence ingest failed: {exc}")
-    
-    return {"file_ids": file_ids}
+
+    response = {"file_ids": file_ids}
+    if doc_intel_result:
+        response["doc_intel"] = doc_intel_result
+    return response
 
 
 @routes.post("/clear-conversation")
@@ -2683,7 +2762,25 @@ def doc_intel_search():
     if trade:
         filters["trade"] = trade
     results = doc_intelligence_service.search(session_id, query_text, filters or None)
-    return {"results": results}
+    trimmed_results = []
+    for hit in results:
+        document = hit.get("document", {})
+        trimmed_results.append(
+            {
+                "score": hit.get("score"),
+                "document": {
+                    "file_id": document.get("file_id"),
+                    "original_filename": document.get("original_filename"),
+                    "mime_type": document.get("mime_type"),
+                    "trade_tags": document.get("trade_tags", []),
+                    "topics": document.get("topics", []),
+                    "is_drawing": document.get("is_drawing", False),
+                    "is_spec": document.get("is_spec", False),
+                    "created_at": document.get("created_at"),
+                },
+            }
+        )
+    return {"results": trimmed_results}
 
 
 @routes.post("/doc-intel/query-search")
@@ -2775,15 +2872,16 @@ def doc_intel_build_package():
         return {"error": "plan is required"}, 400
     try:
         package = doc_intelligence_service.build_package(mode_doc, session_id, plan, output)
-        package["download_url"] = url_for(
-            "routes.doc_intel_package_download",
-            package_id=package["package_id"],
-            mode=mode_name,
-            session_id=session_id,
-            file_type="zip" if package.get("output_zip_path") else "pdf",
-            _external=False,
-        )
-        return {"package": package}
+        if package.get("status") == "ready":
+            package["download_url"] = url_for(
+                "routes.doc_intel_package_download",
+                package_id=package["package_id"],
+                mode=mode_name,
+                session_id=session_id,
+                file_type=package.get("file_type") or ("zip" if package.get("output_zip_path") else "pdf"),
+                _external=False,
+            )
+        return {"package": package, "accepted": package.get("status") != "ready"}
     except Exception as exc:  # noqa: BLE001
         return {"error": str(exc)}, 500
 
@@ -2804,7 +2902,19 @@ def doc_intel_package_download(package_id):
     package = doc_intelligence_service.get_package(session_id, package_id)
     if not package:
         return {"error": "Package not found"}, 404
-    file_path = package.output_zip_path if file_type == "zip" else package.output_pdf_path
+    if package.status != "ready":
+        return {"error": "Package is still being built"}, 409
+    presigned_url = None
+    if doc_intel_storage:
+        presigned_url = doc_intel_storage.build_download_url(
+            package.to_dict(),
+            download_filename=f"{package.title}.{file_type}",
+        )
+    if presigned_url:
+        return redirect(presigned_url)
+    file_path = (package.output_zip_path if file_type == "zip" else package.output_pdf_path) or None
+    if not file_path and doc_intel_storage:
+        file_path = doc_intel_storage.resolve_local_path(package.to_dict())
     if not file_path or not os.path.exists(file_path):
         return {"error": "Package file unavailable"}, 404
     return send_file(file_path, as_attachment=True, download_name=os.path.basename(file_path))
@@ -2859,11 +2969,12 @@ def doc_intel_auto_package():
             query=instructions,
         )
         package = result["package"]
-        file_type = "zip" if package.get("output_zip_path") else "pdf"
-        package["download_url"] = (
-            f"/flask/doc-intel/package/{package['package_id']}?mode={mode_name}"
-            f"&session_id={session_id}&file_type={file_type}"
-        )
+        if package.get("status") == "ready":
+            file_type = package.get("file_type") or ("zip" if package.get("output_zip_path") else "pdf")
+            package["download_url"] = (
+                f"/flask/doc-intel/package/{package['package_id']}?mode={mode_name}"
+                f"&session_id={session_id}&file_type={file_type}"
+            )
         return result
     except Exception as exc:  # noqa: BLE001
         app.logger.error(f"Error building package: {exc}", exc_info=True)
@@ -2933,12 +3044,13 @@ def doc_intel_build_package_selection():
             plan_details,
             output
         )
-        file_type = "zip" if package.get("output_zip_path") else "pdf"
-        package["download_url"] = (
-            f"/flask/doc-intel/package/{package['package_id']}?mode={mode_name}"
-            f"&session_id={session_id}&file_type={file_type}"
-        )
-        return {"package": package}
+        if package.get("status") == "ready":
+            file_type = package.get("file_type") or ("zip" if package.get("output_zip_path") else "pdf")
+            package["download_url"] = (
+                f"/flask/doc-intel/package/{package['package_id']}?mode={mode_name}"
+                f"&session_id={session_id}&file_type={file_type}"
+            )
+        return {"package": package, "accepted": package.get("status") != "ready"}
     except Exception as exc:  # noqa: BLE001
         app.logger.error(f"Error building package from selection: {exc}", exc_info=True)
         return {"error": str(exc)}, 500
