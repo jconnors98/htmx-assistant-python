@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from . import classifier, embeddings, extract, ocr, package_builder, pdf_tools, search
 
@@ -18,7 +18,7 @@ class DocumentToolbox:
         self.storage_dir.mkdir(parents=True, exist_ok=True)
 
     # Extraction utilities -------------------------------------------------
-    def extract_zip(self, zip_file_path: str, output_dir: Optional[str] = None) -> List[str]:
+    def extract_zip(self, zip_file_path: str, output_dir: Optional[str] = None, **kwargs) -> List[str]:
         if not output_dir:
             import tempfile
             # Create a dedicated temp directory within storage_dir to ensure it uses the main volume
@@ -27,7 +27,16 @@ class DocumentToolbox:
             tmp_root.mkdir(exist_ok=True)
             output_dir = tempfile.mkdtemp(prefix="zip_extract_", dir=str(tmp_root))
             
-        return extract.extract_zip(zip_file_path, output_dir)
+        return extract.extract_zip(zip_file_path, output_dir, **kwargs)
+
+    def iter_extract_zip(self, zip_file_path: str, output_dir: Optional[str] = None, **kwargs) -> Iterable[str]:
+        if not output_dir:
+            import tempfile
+            tmp_root = self.storage_dir / "tmp"
+            tmp_root.mkdir(exist_ok=True)
+            output_dir = tempfile.mkdtemp(prefix="zip_extract_", dir=str(tmp_root))
+
+        return extract.iter_extract_zip(zip_file_path, output_dir, **kwargs)
 
     def detect_file_type(self, file_path: str) -> Dict[str, Any]:
         return extract.detect_file_type(file_path)

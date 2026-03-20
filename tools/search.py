@@ -19,8 +19,13 @@ def search_documents(query: str, documents: List[Dict[str, Any]], *, filters: Op
     results: List[Dict[str, Any]] = []
     for document in documents:
         text = " ".join(
-            str(document.get(field, ""))
-            for field in ["raw_text", "ocr_text", "original_filename"]
+            str(part or "")
+            for part in [
+                document.get("search_text"),
+                document.get("raw_text"),
+                document.get("ocr_text"),
+                document.get("original_filename"),
+            ]
         ).lower()
 
         if filter_trade and filter_trade not in document.get("trade_tags", []):

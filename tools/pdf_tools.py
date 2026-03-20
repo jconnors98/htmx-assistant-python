@@ -12,10 +12,12 @@ def _parse_pdf_inline(file_path: str, max_seconds: Optional[int]) -> Dict[str, L
     text_chunks: List[str] = []
     extracted_images: List[str] = []
     truncated = False
+    page_count = 0
     start = time.time()
 
     with pdfplumber.open(file_path) as pdf:
         for page_index, page in enumerate(pdf.pages, start=1):
+            page_count = page_index
             if max_seconds and (time.time() - start) > max_seconds:
                 truncated = True
                 break
@@ -39,6 +41,7 @@ def _parse_pdf_inline(file_path: str, max_seconds: Optional[int]) -> Dict[str, L
         "text": "\n\n".join(text_chunks),
         "images": extracted_images,
         "truncated": truncated,
+        "page_count": page_count,
     }
 
 
@@ -46,7 +49,7 @@ def _worker(file_path: str, max_seconds: Optional[int], queue):
     try:
         queue.put(_parse_pdf_inline(file_path, max_seconds))
     except Exception as exc:  # noqa: BLE001
-        queue.put({"error": str(exc), "text": "", "images": [], "truncated": True})
+        queue.put({"error": str(exc), "text": "", "images": [], "truncated": True, "page_count": 0})
 
 
 def parse_pdf(file_path: str, *, max_seconds: Optional[int] = 90) -> Dict[str, List[str]]:
@@ -66,13 +69,13 @@ def parse_pdf(file_path: str, *, max_seconds: Optional[int] = 90) -> Dict[str, L
     if proc.is_alive():
         proc.terminate()
         proc.join()
-        return {"text": "", "images": [], "truncated": True}
+        return {"text": "", "images": [], "truncated": True, "page_count": 0}
 
     if not queue.empty():
         result = queue.get()
         if result.get("error"):
-            return {"text": "", "images": [], "truncated": True}
+            return {"text": "", "images": [], "truncated": True, "page_count": 0}
         return result
 
-    return {"text": "", "images": [], "truncated": True}
+    return {"text": "", "images": [], "truncated": True, "page_count": 0}
 
