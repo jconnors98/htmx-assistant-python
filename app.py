@@ -2581,29 +2581,32 @@ def download_document(doc_id):
     if not request.user.get("is_super_admin"):
         if not doc.get("user_id") or str(doc.get("user_id")) != str(request.user.get("sub")):
             return {"error": "Access denied"}, 403
-    
+
     s3_key = doc.get("s3_key")
     if not s3_key:
         return {"error": "No file associated with this document"}, 404
-    
+
+    # Hand the client a short-lived S3 presigned URL instead of streaming the
+    # file body back through Flask/mod_wsgi. Streaming large bodies through the
+    # WSGI app was causing Apache to fall through to the Django app mounted at
+    # "/", which then 500'd with a DisallowedHost ("Invalid HTTP_HOST header:
+    # 'bcca.ai'") because that host isn't in Django's ALLOWED_HOSTS.
+    filename = s3_key.split('/')[-1]
     try:
-        # Get the file from S3
-        response = s3.get_object(Bucket=S3_BUCKET, Key=s3_key)
-        
-        # Extract filename from s3_key (format: mode/tag/filename)
-        filename = s3_key.split('/')[-1]
-        
-        # Return the file as a downloadable response
-        return Response(
-            response['Body'].read(),
-            mimetype=response['ContentType'],
-            headers={
-                'Content-Disposition': f'attachment; filename="{filename}"'
-            }
+        download_url = s3.generate_presigned_url(
+            "get_object",
+            Params={
+                "Bucket": S3_BUCKET,
+                "Key": s3_key,
+                "ResponseContentDisposition": f'attachment; filename="{filename}"',
+            },
+            ExpiresIn=300,
         )
-    except Exception as e:
-        print("s3 download failed", e)
-        return {"error": "Failed to download file"}, 500
+    except Exception as e:  # noqa: BLE001
+        print("s3 presign failed", e)
+        return {"error": "Failed to build download url"}, 500
+
+    return {"download_url": download_url, "filename": filename}
 
 
 def _doc_intel_guard():

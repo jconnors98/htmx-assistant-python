@@ -830,14 +830,17 @@
                 alert('Failed to download file');
                 return;
               }
-              const blob = await res.blob();
-              const url = window.URL.createObjectURL(blob);
+              const data = await res.json();
+              if (!data || !data.download_url) {
+                alert('Failed to download file');
+                return;
+              }
               const a = document.createElement('a');
-              a.href = url;
-              a.download = doc.s3_key.split('/').pop();
+              a.href = data.download_url;
+              a.download = data.filename || doc.s3_key.split('/').pop();
+              a.rel = 'noopener';
               document.body.appendChild(a);
               a.click();
-              window.URL.revokeObjectURL(url);
               document.body.removeChild(a);
             } catch (error) {
               console.error('Download failed:', error);

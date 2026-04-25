@@ -8,4 +8,5 @@ app.wsgi
 /public/override
 /temp
 /docs
+/bidpack
 pitch.txt
