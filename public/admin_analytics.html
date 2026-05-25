@@ -162,10 +162,31 @@
 
       <section class="bg-white border border-[#82002d]/10 shadow rounded-lg p-6">
         <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-          <h2 class="text-lg font-semibold text-[#82002d]">Recent conversations</h2>
-          <span class="text-xs text-gray-500">Latest 20 conversations matching filters</span>
+          <div>
+            <h2 class="text-lg font-semibold text-[#82002d]">Conversations</h2>
+            <p class="text-xs text-gray-500">All conversations matching the current filters</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <label for="conversations-page-size" class="text-xs text-gray-500">Per page</label>
+            <select id="conversations-page-size" class="border border-[#82002d] rounded px-2 py-1 text-sm">
+              <option value="10">10</option>
+              <option value="25" selected>25</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+          </div>
         </div>
-        <div id="recent-conversations" class="mt-4 grid gap-3"></div>
+        <div id="conversations-loading" class="hidden mt-4 p-4 text-center text-sm text-gray-500">Loading conversations...</div>
+        <div id="conversations-empty" class="hidden mt-4 text-sm text-gray-500">No conversations match these filters.</div>
+        <div id="conversations-list" class="mt-4 grid gap-3"></div>
+        <div id="conversations-pagination" class="hidden mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p id="conversations-range" class="text-xs text-gray-500"></p>
+          <div class="flex items-center gap-2">
+            <button type="button" id="conversations-prev" class="px-3 py-1.5 text-sm secondary rounded disabled:opacity-50 disabled:cursor-not-allowed">Previous</button>
+            <span id="conversations-page-indicator" class="text-sm text-gray-700"></span>
+            <button type="button" id="conversations-next" class="px-3 py-1.5 text-sm secondary rounded disabled:opacity-50 disabled:cursor-not-allowed">Next</button>
+          </div>
+        </div>
       </section>
     </div>
   </div>
@@ -193,9 +214,20 @@
     const topCitiesContainer = document.getElementById('top-cities');
     const dailyBreakdown = document.getElementById('daily-breakdown');
     const hourlyBreakdown = document.getElementById('hourly-breakdown');
-    const recentConversationsContainer = document.getElementById('recent-conversations');
     const topModesSection = document.getElementById('top-modes-section');
     const modeContext = document.getElementById('mode-context');
+    const conversationsList = document.getElementById('conversations-list');
+    const conversationsLoading = document.getElementById('conversations-loading');
+    const conversationsEmpty = document.getElementById('conversations-empty');
+    const conversationsPagination = document.getElementById('conversations-pagination');
+    const conversationsRange = document.getElementById('conversations-range');
+    const conversationsPageIndicator = document.getElementById('conversations-page-indicator');
+    const conversationsPrev = document.getElementById('conversations-prev');
+    const conversationsNext = document.getElementById('conversations-next');
+    const conversationsPageSize = document.getElementById('conversations-page-size');
+    
+    let currentAnalyticsFilters = {};
+    let conversationsPage = 1;
     
     // Natural language search elements
     const nlSearchInput = document.getElementById('nl-search-input');
@@ -217,6 +249,7 @@
       if (hasLockedMode) {
         modeSelect.value = lockedMode;
       }
+      conversationsPage = 1;
       loadAnalytics(hasLockedMode ? { mode: lockedMode } : {});
     };
 
@@ -239,6 +272,7 @@
 
     filterForm.addEventListener('submit', (event) => {
       event.preventDefault();
+      conversationsPage = 1;
       const filters = {
         start_date: startDateInput.value,
         end_date: endDateInput.value,
@@ -246,6 +280,23 @@
         search: searchInput.value.trim(),
       };
       loadAnalytics(filters);
+    });
+
+    conversationsPageSize.addEventListener('change', () => {
+      conversationsPage = 1;
+      loadConversations(currentAnalyticsFilters);
+    });
+
+    conversationsPrev.addEventListener('click', () => {
+      if (conversationsPage > 1) {
+        conversationsPage -= 1;
+        loadConversations(currentAnalyticsFilters);
+      }
+    });
+
+    conversationsNext.addEventListener('click', () => {
+      conversationsPage += 1;
+      loadConversations(currentAnalyticsFilters);
     });
 
     const numberFormatter = new Intl.NumberFormat();
@@ -576,33 +627,37 @@
       nlSearchContent.appendChild(errorDiv);
     }
 
-    function renderRecentConversations(conversations) {
-      recentConversationsContainer.innerHTML = '';
+    function renderConversations(conversations, pagination = {}) {
+      const total = pagination.total || 0;
+      const page = pagination.page || 1;
+      const pageSize = pagination.page_size || Number(conversationsPageSize.value);
+      const totalPages = pagination.total_pages || 0;
+
+      conversationsPage = page;
+      conversationsList.innerHTML = '';
+
       if (!conversations || !conversations.length) {
-        const message = document.createElement('p');
-        message.className = 'text-sm text-gray-500';
-        message.textContent = 'No conversations match these filters yet.';
-        recentConversationsContainer.appendChild(message);
+        conversationsEmpty.classList.remove('hidden');
+        conversationsPagination.classList.add('hidden');
         return;
       }
-      
+
+      conversationsEmpty.classList.add('hidden');
       conversations.forEach((conversation) => {
         const card = document.createElement('article');
         card.className = 'border border-gray-200 rounded-lg bg-white shadow-sm overflow-hidden';
         card.dataset.conversationId = conversation.conversation_id;
 
-        // Conversation header (always visible)
         const header = document.createElement('div');
         header.className = 'p-4 cursor-pointer hover:bg-gray-50 transition-colors';
         header.onclick = () => toggleConversation(conversation.conversation_id);
 
         const headerTop = document.createElement('div');
         headerTop.className = 'flex flex-wrap items-center justify-between gap-2';
-        
+
         const leftSection = document.createElement('div');
         leftSection.className = 'flex items-center gap-2 flex-wrap';
-        
-        // Mode badges
+
         if (conversation.modes && conversation.modes.length) {
           conversation.modes.forEach((mode) => {
             const modeBadge = document.createElement('span');
@@ -611,22 +666,20 @@
             leftSection.appendChild(modeBadge);
           });
         }
-        
-        // Message count badge
+
         const countBadge = document.createElement('span');
         countBadge.className = 'px-2 py-1 bg-gray-100 text-gray-700 rounded-full text-xs font-medium';
         countBadge.textContent = `${conversation.message_count} user prompt${conversation.message_count !== 1 ? 's' : ''}`;
         leftSection.appendChild(countBadge);
-        
+
         const timeStamp = document.createElement('span');
         timeStamp.className = 'text-xs text-gray-600';
         timeStamp.textContent = `Last: ${formatDateTime(conversation.last_updated)}`;
-        
+
         headerTop.appendChild(leftSection);
         headerTop.appendChild(timeStamp);
         header.appendChild(headerTop);
 
-        // Preview text
         if (conversation.preview) {
           const preview = document.createElement('p');
           preview.className = 'mt-2 text-sm text-gray-700 line-clamp-2';
@@ -634,7 +687,6 @@
           header.appendChild(preview);
         }
 
-        // Expand indicator
         const expandIcon = document.createElement('div');
         expandIcon.className = 'mt-2 flex items-center gap-1 text-xs text-[#82002d] font-medium';
         expandIcon.innerHTML = '<span class="expand-text">Click to expand conversation</span> <span class="expand-arrow">▼</span>';
@@ -642,14 +694,67 @@
 
         card.appendChild(header);
 
-        // Conversation messages container (hidden by default)
         const messagesContainer = document.createElement('div');
         messagesContainer.className = 'hidden border-t border-gray-200 bg-gray-50';
         messagesContainer.id = `conversation-messages-${conversation.conversation_id}`;
         card.appendChild(messagesContainer);
 
-        recentConversationsContainer.appendChild(card);
+        conversationsList.appendChild(card);
       });
+
+      if (totalPages > 1 || total > pageSize) {
+        const start = (page - 1) * pageSize + 1;
+        const end = Math.min(page * pageSize, total);
+        conversationsRange.textContent = `Showing ${numberFormatter.format(start)}–${numberFormatter.format(end)} of ${numberFormatter.format(total)} conversations`;
+        conversationsPageIndicator.textContent = `Page ${page} of ${totalPages}`;
+        conversationsPrev.disabled = page <= 1;
+        conversationsNext.disabled = page >= totalPages;
+        conversationsPagination.classList.remove('hidden');
+      } else if (total) {
+        conversationsRange.textContent = `Showing ${numberFormatter.format(total)} conversation${total === 1 ? '' : 's'}`;
+        conversationsPageIndicator.textContent = '';
+        conversationsPrev.disabled = true;
+        conversationsNext.disabled = true;
+        conversationsPagination.classList.remove('hidden');
+      }
+    }
+
+    async function loadConversations(filters = {}) {
+      currentAnalyticsFilters = { ...filters };
+      conversationsLoading.classList.remove('hidden');
+      conversationsEmpty.classList.add('hidden');
+      conversationsPagination.classList.add('hidden');
+      conversationsList.innerHTML = '';
+
+      const params = new URLSearchParams();
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value) {
+          params.append(key, value);
+        }
+      });
+      params.append('page', String(conversationsPage));
+      params.append('page_size', conversationsPageSize.value);
+
+      try {
+        const response = await fetch(`/flask/admin/analytics/conversations?${params.toString()}`, {
+          headers: { Authorization: `Bearer ${idToken}` },
+        });
+        if (response.status === 401) {
+          localStorage.removeItem('idToken');
+          window.location.href = '/flask/admin/login';
+          return;
+        }
+        if (!response.ok) {
+          throw new Error('Failed to load conversations');
+        }
+        const data = await response.json();
+        renderConversations(data.conversations || [], data.pagination || {});
+      } catch (error) {
+        console.error('Error loading conversations:', error);
+        conversationsList.innerHTML = '<p class="text-sm text-red-600">Unable to load conversations right now.</p>';
+      } finally {
+        conversationsLoading.classList.add('hidden');
+      }
     }
 
     async function toggleConversation(conversationId) {
@@ -920,7 +1025,9 @@
 
       renderDaily();
       renderHourly();
-      renderRecentConversations(data.recent_conversations || []);
+      currentAnalyticsFilters = { ...filters };
+      conversationsPage = 1;
+      loadConversations(filters);
 
       analyticsContent.classList.remove('hidden');
       emptyState.classList.add('hidden');

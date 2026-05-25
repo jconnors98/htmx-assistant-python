@@ -2128,56 +2128,6 @@ def admin_analytics_summary():
         )
     ]
 
-    # Get recent conversations (grouped by conversation_id)
-    recent_conversations = []
-    conversation_aggregation = prompt_logs_collection.aggregate([
-        {"$match": prompt_match},
-        {"$group": {
-            "_id": "$conversation_id",
-            "last_updated": {"$max": "$created_at"},
-            "first_message": {"$min": "$created_at"},
-            "message_count": {"$sum": 1},  # Already filtered to prompts only
-            "modes": {"$addToSet": "$mode"},
-            "first_prompt": {"$first": "$prompt"}
-        }},
-        {"$sort": {"last_updated": -1}},
-        {"$limit": 20}
-    ])
-    
-    for conv in conversation_aggregation:
-        conversation_id = conv.get("_id")
-        if not conversation_id:
-            continue
-        
-        last_updated = conv.get("last_updated")
-        first_message = conv.get("first_message")
-        message_count = conv.get("message_count", 0)
-        mode_ids = conv.get("modes", [])
-        first_prompt = conv.get("first_prompt", "")
-        
-        # Convert mode IDs to mode titles
-        mode_titles = []
-        for mode_id in mode_ids:
-            if mode_id:
-                try:
-                    mode_doc = modes_collection.find_one({"_id": ObjectId(mode_id)})
-                    mode_title = mode_doc.get("title") or mode_doc.get("name") if mode_doc else "Unknown"
-                    mode_titles.append(mode_title)
-                except Exception as e:
-                    print(f"Error converting mode ID to title: {e}")
-        
-        # Get a preview of the first prompt (truncate if too long)
-        preview = first_prompt[:150] + "..." if len(first_prompt) > 150 else first_prompt
-        
-        recent_conversations.append({
-            "conversation_id": conversation_id,
-            "last_updated": _isoformat_with_z(last_updated),
-            "first_message": _isoformat_with_z(first_message),
-            "message_count": message_count,
-            "modes": mode_titles,
-            "preview": preview
-        })
-
     # Convert available mode IDs to mode titles and return both
     available_mode_ids = [m for m in prompt_logs_collection.distinct("mode") if m]
     available_modes = []
@@ -2218,7 +2168,6 @@ def admin_analytics_summary():
         "top_locations": top_locations,
         "top_cities": top_cities,
         "hourly_counts": hourly_counts,
-        "recent_conversations": recent_conversations,
         "available_modes": available_modes,
         "global_date_range": global_date_range,
     }
@@ -2267,6 +2216,126 @@ def admin_analytics_search():
     except Exception as e:
         print(f"Error processing natural language query: {e}")
         return {"error": "Unable to process your question. Please try rephrasing it."}, 500
+
+
+@routes.get("/admin/analytics/conversations")
+@cognito_auth_required
+def admin_analytics_conversations():
+    """Return paginated conversations matching analytics filters."""
+    start_param = (request.args.get("start_date") or "").strip()
+    end_param = (request.args.get("end_date") or "").strip()
+    mode = (request.args.get("mode") or "").strip()
+    search = (request.args.get("search") or "").strip()
+
+    try:
+        page = max(1, int(request.args.get("page", 1) or 1))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        page_size = min(100, max(1, int(request.args.get("page_size", 25) or 25)))
+    except (TypeError, ValueError):
+        page_size = 25
+
+    match = {}
+    date_filter = {}
+    start_dt = _parse_date(start_param)
+    end_dt = _parse_date(end_param, end=True)
+    if start_dt:
+        date_filter["$gte"] = start_dt
+    if end_dt:
+        date_filter["$lte"] = end_dt
+    if date_filter:
+        match["created_at"] = date_filter
+    if mode:
+        match["mode"] = mode
+    if search:
+        match["prompt"] = {"$regex": re.escape(search), "$options": "i"}
+
+    prompt_match = {**match, "prompt": {"$exists": True}}
+    if search:
+        prompt_match["prompt"] = {"$regex": re.escape(search), "$options": "i"}
+
+    def _isoformat_with_z(dt):
+        if not dt:
+            return None
+        iso_value = dt.isoformat()
+        if iso_value.endswith("Z") or "+" in iso_value[10:]:
+            return iso_value
+        return f"{iso_value}Z"
+
+    total_result = list(
+        prompt_logs_collection.aggregate([
+            {"$match": prompt_match},
+            {"$group": {"_id": "$conversation_id"}},
+            {"$match": {"_id": {"$ne": None}}},
+            {"$count": "total"},
+        ])
+    )
+    total = total_result[0]["total"] if total_result else 0
+    total_pages = max(1, (total + page_size - 1) // page_size) if total else 0
+    if total and page > total_pages:
+        page = total_pages
+
+    skip = (page - 1) * page_size
+    mode_title_cache = {}
+
+    def _mode_title(mode_id):
+        if not mode_id:
+            return "Unknown"
+        if mode_id in mode_title_cache:
+            return mode_title_cache[mode_id]
+        title = "Unknown"
+        try:
+            mode_doc = modes_collection.find_one({"_id": ObjectId(mode_id)})
+            title = mode_doc.get("title") or mode_doc.get("name") if mode_doc else "Unknown"
+        except Exception as e:
+            print(f"Error converting mode ID to title: {e}")
+        mode_title_cache[mode_id] = title
+        return title
+
+    conversations = []
+    for conv in prompt_logs_collection.aggregate([
+        {"$match": prompt_match},
+        {"$sort": {"created_at": 1}},
+        {"$group": {
+            "_id": "$conversation_id",
+            "last_updated": {"$max": "$created_at"},
+            "first_message": {"$min": "$created_at"},
+            "message_count": {"$sum": 1},
+            "modes": {"$addToSet": "$mode"},
+            "first_prompt": {"$first": "$prompt"},
+        }},
+        {"$match": {"_id": {"$ne": None}}},
+        {"$sort": {"last_updated": -1}},
+        {"$skip": skip},
+        {"$limit": page_size},
+    ]):
+        conversation_id = conv.get("_id")
+        if not conversation_id:
+            continue
+
+        first_prompt = conv.get("first_prompt") or ""
+        preview = first_prompt[:150] + "..." if len(first_prompt) > 150 else first_prompt
+        mode_titles = [_mode_title(mode_id) for mode_id in conv.get("modes", []) if mode_id]
+
+        conversations.append({
+            "conversation_id": conversation_id,
+            "last_updated": _isoformat_with_z(conv.get("last_updated")),
+            "first_message": _isoformat_with_z(conv.get("first_message")),
+            "message_count": conv.get("message_count", 0),
+            "modes": mode_titles,
+            "preview": preview,
+        })
+
+    return {
+        "conversations": conversations,
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "total_pages": total_pages,
+        },
+    }
 
 
 @routes.get("/admin/analytics/conversations/<conversation_id>/prompts")
