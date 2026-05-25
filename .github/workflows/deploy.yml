@@ -25,6 +25,6 @@ jobs:
           request_pty: true
           script_stop: true
           script: |
-            cd /opt/projects/htmx-assistant-python
+            cd /opt/bitnami/projects/htmx-assistant-python
             sudo git -c core.sshCommand="ssh -i /home/admin/.ssh/id_rsa" pull
             sudo systemctl restart apache2
