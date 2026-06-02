@@ -6,6 +6,9 @@
  *         data-mode="your-mode-id" 
  *         data-theme="#82002d"
  *         data-position="bottom-right"></script>
+ * 
+ * Host pages can trigger a one-click prompt with:
+ * window.ChatWidget.sendPrompt('How can I get started?');
  */
 
 (function() {
@@ -94,13 +97,13 @@
     container.style.pointerEvents = 'none';
     iframe.style.pointerEvents = 'auto';
 
-    const postWidgetCommand = function(command) {
+    const postWidgetCommand = function(command, payload) {
       if (!iframe.contentWindow) return false;
-      iframe.contentWindow.postMessage({
+      iframe.contentWindow.postMessage(Object.assign({
         source: 'chat-widget-loader',
         type: 'COMMAND',
         command
-      }, widgetOrigin || '*');
+      }, payload || {}), widgetOrigin || '*');
       return true;
     };
 
@@ -114,6 +117,16 @@
       },
       toggle: function() {
         return postWidgetCommand('TOGGLE_WIDGET');
+      },
+      sendPrompt: function(prompt) {
+        const promptText = typeof prompt === 'string'
+          ? prompt.trim()
+          : (prompt == null ? '' : String(prompt).trim());
+        if (!promptText) {
+          console.warn('Chat Widget: sendPrompt requires a non-empty prompt');
+          return false;
+        }
+        return postWidgetCommand('SEND_PROMPT', { prompt: promptText });
       }
     });
     

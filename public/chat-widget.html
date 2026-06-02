@@ -811,6 +811,8 @@
     let uploadedFileIds = [];
     let isUploading = false;
     let currentPrompts = [];
+    let isWidgetReady = false;
+    let widgetReadyWaiters = [];
     document.body.style.margin = '0';
     
     // Elements
@@ -942,15 +944,18 @@
           sendBtnExpanded.disabled = false;
           searchInput.placeholder = data.intro || "Ask me anything...";
           searchInput.focus();
+          markWidgetReady();
           requestAnimationFrame(() => notifyParentSize('init-complete'));
         } else {
           searchInput.placeholder = "Failed to load mode settings";
           searchInput.disabled = false;
+          markWidgetReady();
         }
       } catch (err) {
         console.error('Failed to load mode settings', err);
         searchInput.placeholder = "Failed to load mode settings";
         searchInput.disabled = false;
+        markWidgetReady();
       }
       
       requestAnimationFrame(() => notifyParentSize('init'));
@@ -1131,6 +1136,46 @@
     function collapseWidget() {
       // Logic moved to closeWidget
       closeWidget();
+    }
+
+    function markWidgetReady() {
+      if (isWidgetReady) return;
+      isWidgetReady = true;
+      const waiters = widgetReadyWaiters;
+      widgetReadyWaiters = [];
+      waiters.forEach(resolve => resolve());
+    }
+
+    function waitForWidgetReady(timeoutMs = 8000) {
+      if (isWidgetReady) return Promise.resolve();
+      return new Promise(resolve => {
+        let settled = false;
+        const complete = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeoutId);
+          resolve();
+        };
+        const timeoutId = setTimeout(complete, timeoutMs);
+        widgetReadyWaiters.push(complete);
+      });
+    }
+
+    async function sendExternalPrompt(prompt) {
+      const promptText = typeof prompt === 'string'
+        ? prompt.trim()
+        : (prompt == null ? '' : String(prompt).trim());
+      if (!promptText) return false;
+
+      await waitForWidgetReady();
+      if (isFabVisible) {
+        openWidget();
+      } else if (!isExpanded) {
+        expandWidget();
+      }
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      await sendMessage(promptText);
+      return true;
     }
     
     // Clear chat
@@ -1569,6 +1614,11 @@
         } else {
           closeWidget();
         }
+        return;
+      }
+
+      if (data.command === 'SEND_PROMPT') {
+        sendExternalPrompt(data.prompt);
       }
     });
     
