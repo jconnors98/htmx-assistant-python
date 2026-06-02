@@ -27,4 +27,4 @@ jobs:
           script: |
             cd /opt/bitnami/projects/htmx-assistant-python
             sudo git -c core.sshCommand="ssh -i /home/bitnami/.ssh/id_rsa_new" pull
-            sudo systemctl restart apache2
+            sudo /opt/bitnami/ctlscript.sh restart apache
